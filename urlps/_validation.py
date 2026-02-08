@@ -3,9 +3,18 @@
 This module provides validation for individual URL components without
 any security-related concerns. For security checks, see _security.py.
 
+Naming Convention:
+    All validation functions follow the is_valid_*() pattern and return bool.
+    They check format compliance (RFC 3986) without security implications.
+    Examples: is_valid_host(), is_valid_port(), is_valid_scheme()
+
 Public API:
     - Validator: Class with static methods for validating URL components.
     - is_valid_userinfo: Function to validate userinfo strings.
+
+Performance:
+    Frequently-called validators are LRU cached for performance.
+    Use Validator.get_cache_info() to monitor cache effectiveness.
 
 All public methods and arguments are type-annotated and documented.
 """
@@ -205,12 +214,15 @@ class Validator:
     @staticmethod
     @lru_cache(maxsize=512)
     def is_url_safe_string(url: str) -> bool:
-        """Check if string contains only URL-safe characters.
+        """Check if string contains only URL-safe characters (no control characters).
+
+        This is a predicate function that checks character safety without
+        performing full validation logic.
 
         Args:
             url: The string to check.
         Returns:
-            True if safe, False otherwise.
+            True if string contains only URL-safe characters, False otherwise.
         """
         if not isinstance(url, str):
             return False
@@ -218,23 +230,27 @@ class Validator:
 
     @staticmethod
     def is_valid_path(path: str) -> bool:
-        """Validate URL path.
+        """Check if URL path contains only safe characters.
+
+        This delegates to is_url_safe_string() for consistency.
 
         Args:
             path: The path string.
         Returns:
-            True if valid, False otherwise.
+            True if path contains only safe characters, False otherwise.
         """
         return Validator.is_url_safe_string(path)
 
     @staticmethod
     def is_valid_query_param(param: str) -> bool:
-        """Validate query parameter.
+        """Check if query parameter contains only safe characters.
+
+        This delegates to is_url_safe_string() for consistency.
 
         Args:
             param: The query parameter string.
         Returns:
-            True if valid, False otherwise.
+            True if parameter contains only safe characters, False otherwise.
         """
         return Validator.is_url_safe_string(param)
 
