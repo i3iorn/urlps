@@ -1,4 +1,14 @@
-"""Unified security checks for URL validation (SSRF, path traversal, homograph attacks)."""
+"""Unified security checks for URL validation (SSRF, path traversal, homograph attacks).
+
+Naming Convention:
+    - is_*(): Pure predicates returning bool (e.g., is_ssrf_risk, is_private_ip)
+    - has_*(): Predicates checking for presence of patterns (e.g., has_mixed_scripts, has_double_encoding)
+    - check_*(): Functions with side effects like DNS lookups (e.g., check_dns_rebinding)
+    - validate_*(): Functions that raise exceptions on failure (e.g., validate_url_security)
+
+All functions are designed to be defensive - returning False on invalid input types
+rather than raising exceptions, except for validate_* functions.
+"""
 from __future__ import annotations
 
 import ipaddress
@@ -12,7 +22,16 @@ from urllib import request
 from urllib.error import URLError
 from urllib.parse import unquote
 
-from .constants import BLOCKED_HOSTNAMES, DEFAULT_DNS_TIMEOUT, DANGEROUS_PORTS
+from .constants import (
+    BLOCKED_HOSTNAMES,
+    DEFAULT_DNS_TIMEOUT,
+    DANGEROUS_PORTS,
+    DEFAULT_DNS_LOOKUPS_PER_SECOND,
+    DEFAULT_DNS_LOOKUPS_PER_HOST,
+    DEFAULT_DNS_TIME_WINDOW_SECONDS,
+    DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS,
+    PHISHING_DATABASE_URL,
+)
 from ._patterns import PATTERNS
 
 
@@ -248,10 +267,12 @@ def get_phishing_db_info() -> dict:
 
 
 def _download_phishing_db() -> Set[str]:
-    """Download and return a set of known phishing hostnames."""
-    PHISHING_DB_URL = "https://phish.co.za/latest/ALL-phishing-domains.lst"
+    """Download and return a set of known phishing hostnames.
+
+    The database URL can be configured via the PHISHING_DATABASE_URL constant.
+    """
     try:
-        response = request.urlopen(PHISHING_DB_URL, timeout=DEFAULT_DNS_TIMEOUT)
+        response = request.urlopen(PHISHING_DATABASE_URL, timeout=DEFAULT_DNS_TIMEOUT)
         if response.status != 200:
             return set()
         content = response.read().decode('utf-8', errors='ignore')
@@ -353,74 +374,136 @@ def is_malicious_ipv6_zone_id(host: str) -> bool:
     return False
 
 
+def _has_mixed_path_separators(after_scheme: str) -> bool:
+    """Check if URL has mixed forward slashes and backslashes.
+
+    Some parsers treat backslash as forward slash, creating parser confusion.
+    Example: http://example.com\/path is ambiguous.
+    """
+    return '/' in after_scheme and '\\' in after_scheme
+
+
+def _has_slash_before_domain_dot(after_scheme: str) -> bool:
+    """Check if forward slash appears before first dot in hostname.
+
+    This indicates unusual structure that may confuse parsers about authority boundaries.
+    Example: http://example/com is ambiguous (is 'example' the full host?).
+    """
+    slash_pos = after_scheme.find('/')
+    dot_pos = after_scheme.find('.')
+    return slash_pos != -1 and dot_pos != -1 and slash_pos < dot_pos
+
+
+def _extract_authority_and_rest(after_scheme: str) -> Tuple[str, str]:
+    """Extract authority component and remaining URL parts.
+
+    Authority ends at first occurrence of '/', '?', or '#'.
+    Returns (authority, rest) tuple.
+    """
+    end = len(after_scheme)
+    for terminator in ('/', '?', '#'):
+        idx = after_scheme.find(terminator)
+        if idx != -1:
+            end = min(end, idx)
+    return after_scheme[:end], after_scheme[end:]
+
+
+def _has_component_ordering_confusion(rest: str) -> bool:
+    """Check if query or fragment appears before path.
+
+    Standard order is path -> query -> fragment. Deviation may confuse parsers.
+    Example: http://example.com#fragment/path is ambiguous.
+    """
+    if '#' in rest:
+        slash_pos = rest.find('/')
+        hash_pos = rest.find('#')
+        if slash_pos == -1 or hash_pos < slash_pos:
+            return True
+
+    if '?' in rest:
+        slash_pos = rest.find('/')
+        query_pos = rest.find('?')
+        if slash_pos == -1 or query_pos < slash_pos:
+            return True
+
+    return False
+
+
+def _has_multiple_at_symbols(authority: str) -> bool:
+    """Check if authority has multiple '@' symbols.
+
+    Multiple @ symbols create ambiguity about userinfo parsing.
+    Example: http://user@host@attacker.com is ambiguous.
+    """
+    return authority.count('@') > 1
+
+
+def _has_confusing_userinfo_markers(authority: str) -> bool:
+    """Check if authority terminators appear before '@' symbol.
+
+    When '/', '?', or '#' appear before '@', parsers may disagree about
+    whether '@' belongs to userinfo or path component.
+    Example: http://user/path@host is ambiguous.
+    """
+    at_count = authority.count('@')
+    if at_count == 0:
+        return False
+
+    before_last_at, _ = authority.rsplit('@', 1)
+    return any(terminator in before_last_at for terminator in ('/', '?', '#'))
+
+
 def has_parser_confusion(url: str) -> bool:
     """Detect ambiguous URLs that could be parsed differently by different parsers.
 
-    Heuristics (conservative):
-    - If a backslash appears in the authority portion -> ambiguous (some parsers treat backslash as '/')
-    - If both backslash and forward slash appear after scheme -> mixed separators, ambiguous
-    - If the authority contains more than one raw '@' -> ambiguous (userinfo parsing confusion)
-    - If characters that terminate authority ("/", "?", "#") appear before the last '@' in the authority
-      that indicates the parser might treat the "@" as part of the path rather than userinfo, or vice versa.
+    This function implements conservative heuristics to identify URLs that may be
+    interpreted differently across URL parsers, which attackers exploit to bypass
+    security filters. False positives are acceptable to maintain security.
 
-    Notes:
-    - This function only inspects the authority substring (between '://' and the first '/', '?', or '#').
-    - Percent-encoded '@' (i.e., '%40') is not treated as an '@' here (we only check raw characters).
-    - The goal is to conservatively flag inputs that are likely to be parsed differently; false positives
-      are acceptable, but we try to avoid flagging perfectly well-formed, unambiguous URLs.
+    Detection Categories:
+    - Mixed separators: Backslash and forward slash usage
+    - Authority boundary confusion: Unusual placement of path/query/fragment markers
+    - Userinfo ambiguity: Multiple '@' symbols or misplaced terminators
+
+    Args:
+        url: The URL string to analyze
+
+    Returns:
+        True if the URL structure is ambiguous, False if unambiguous
+
+    Note:
+        Only checks raw characters, not percent-encoded equivalents (e.g., %40 for @).
     """
-    if not isinstance(url, str):
-        return False
-    if '://' not in url:
+    if not isinstance(url, str) or '://' not in url:
         return False
 
-    # Work on the substring after the scheme
     after_scheme = url.split('://', 1)[1]
 
-    # Mixed separators anywhere after scheme (e.g., "\\" + "/") is suspicious
-    if '/' in after_scheme and '\\' in after_scheme:
+    # Check for mixed separator confusion
+    if _has_mixed_path_separators(after_scheme):
         return True
 
-    # If there is "/" before "." in after_scheme, it may indicate mixed separators in authority
-    slash_pos = after_scheme.find('/')
-    dot_pos = after_scheme.find('.')
-    if slash_pos != -1 and dot_pos != -1 and slash_pos < dot_pos:
+    if _has_slash_before_domain_dot(after_scheme):
         return True
 
-    # Extract authority: substring before first '/', '?', or '#'
-    end = len(after_scheme)
-    for ch in ('/', '?', '#'):
-        idx = after_scheme.find(ch)
-        if idx != -1:
-            end = min(end, idx)
-    authority = after_scheme[:end]
-    rest = after_scheme[end:]
+    # Extract and analyze authority component
+    authority, rest = _extract_authority_and_rest(after_scheme)
 
-    # if the rest contains a # before any /, it may indicate confusion about authority vs path
-    if '#' in rest and (rest.find('/') == -1 or rest.find('#') < rest.find('/')):
-        return True
-    if '?' in rest and (rest.find('/') == -1 or rest.find('?') < rest.find('/')):
+    if _has_component_ordering_confusion(rest):
         return True
 
     if not authority:
         return False
 
-    # Backslash in authority is a common source of parser confusion
+    # Backslash in authority is always suspicious
     if '\\' in authority:
         return True
 
-    # Count raw @ characters in authority (ignore percent-encoded %40)
-    at_count = authority.count('@')
-    if at_count > 1:
+    # Check for userinfo-related confusion
+    if _has_multiple_at_symbols(authority):
         return True
-    if at_count == 0:
-        return False
 
-    # There is exactly one '@' in authority. If characters that normally end authority
-    # appear before the last '@', parsers may disagree about whether the '@' belongs
-    # to the authority/userinfo or to the path/other component.
-    before_last, _ = authority.rsplit('@', 1)
-    if any(c in before_last for c in ('/', '?', '#')):
+    if _has_confusing_userinfo_markers(authority):
         return True
 
     return False
@@ -448,18 +531,22 @@ class DNSRateLimiter:
 
     def __init__(
         self,
-        max_lookups_per_second: float = 10.0,
-        max_lookups_per_host: int = 3,
-        time_window: float = 60.0,
-        cleanup_interval: float = 300.0
+        max_lookups_per_second: float = DEFAULT_DNS_LOOKUPS_PER_SECOND,
+        max_lookups_per_host: int = DEFAULT_DNS_LOOKUPS_PER_HOST,
+        time_window: float = DEFAULT_DNS_TIME_WINDOW_SECONDS,
+        cleanup_interval: float = DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS
     ):
         """Initialize DNS rate limiter.
 
         Args:
-            max_lookups_per_second: Global rate limit (lookups/second)
-            max_lookups_per_host: Max lookups for same host in time_window
-            time_window: Seconds for per-host rate limit window
-            cleanup_interval: Seconds between cleanup of old data
+            max_lookups_per_second: Global rate limit (lookups/second).
+                Default from constants.DEFAULT_DNS_LOOKUPS_PER_SECOND.
+            max_lookups_per_host: Max lookups for same host in time_window.
+                Default from constants.DEFAULT_DNS_LOOKUPS_PER_HOST.
+            time_window: Seconds for per-host rate limit window.
+                Default from constants.DEFAULT_DNS_TIME_WINDOW_SECONDS.
+            cleanup_interval: Seconds between cleanup of old data.
+                Default from constants.DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS.
         """
         self.max_lookups_per_second = max_lookups_per_second
         self.max_lookups_per_host = max_lookups_per_host
