@@ -1,6 +1,6 @@
 """urlps - Lightweight, secure, and RFC-compliant URL parsing and building.
 
-Quick start:
+Quick Start:
     >>> from urlps import parse_url, build
     >>> url = parse_url("https://example.com/path?query=value")
     >>> url.host
@@ -8,12 +8,44 @@ Quick start:
     >>> build("https", "example.com", path="/api", query="v=1")
     'https://example.com/api?v=1'
 
-Main entry points:
-    - parse_url: Secure parsing with SSRF, phishing, and traversal protection
-    - parse_url_unsafe: Parsing without security checks (trusted sources only)
-    - build: Build a URL string from components
-    - compose_url: Build a URL string from a dict of components
-    - URL: Immutable URL object with manipulation methods
+Main Entry Points:
+    parse_url(url, **options) -> URL
+        Secure-by-default parsing with comprehensive security checks:
+        - SSRF protection (blocks private IPs, localhost, metadata endpoints)
+        - Path traversal detection (.., null bytes, encoded variants)
+        - Homograph attack detection (mixed Unicode scripts)
+        - Parser confusion detection (ambiguous URL structures)
+        - Double-encoding detection
+
+        Use this for parsing URLs from untrusted sources (user input, external APIs).
+
+    parse_url_unsafe(url, **options) -> URL
+        Parsing WITHOUT security validations. Use ONLY for:
+        - Internal/development URLs (localhost, 192.168.x.x)
+        - Trusted configuration files
+        - URLs from verified sources
+
+        WARNING: Never use with user input or external data.
+
+    build(scheme_and_host, **components) -> str
+        Construct URLs from components with proper encoding.
+        Components: port, path, query, fragment, userinfo
+        Examples:
+            build("example.com")  # Scheme-less URL
+            build("https", "example.com", port=8443)
+
+    compose_url(components: dict) -> str
+        Build URL from dictionary of components.
+        Useful when working with structured data.
+
+    URL
+        Immutable URL object with rich manipulation API.
+        Created by parse_url() or parse_url_unsafe().
+        Methods: with_host(), with_port(), with_query_param(), etc.
+
+Performance:
+    - get_cache_info(): View cache statistics for optimization
+    - clear_all_caches(): Clear internal caches (useful for long-running apps)
 """
 from __future__ import annotations
 
@@ -34,18 +66,52 @@ def parse_url(
     check_dns: bool = False,
     check_phishing: bool = False
 ) -> "URL":
-    """Parse URL with security checks enabled (SECURE BY DEFAULT).
+    """Parse URL with comprehensive security checks enabled (SECURE BY DEFAULT).
 
-    This is the recommended function for parsing URLs. It enables:
-    - SSRF protection (blocks private IPs, localhost, etc.)
-    - Double-encoding detection
-    - Path traversal detection
-    - Open redirect detection
-    - Homograph attack detection
-    - Phishing domain checks (if enabled) (https://phish.co.za/latest/ALL-phishing-domains.lst)
+    This is the recommended function for parsing URLs from untrusted sources.
+    It provides defense-in-depth against common URL-based attacks.
 
-    For parsing URLs without security checks (e.g., internal/development URLs),
-    use `parse_url_unsafe()` instead.
+    Security Features (Always Enabled):
+        - SSRF protection: Blocks private IPs (10.x, 192.168.x, 172.16-31.x)
+        - Localhost blocking: Rejects localhost, 127.0.0.1, ::1, *.local domains
+        - Cloud metadata blocking: Prevents access to 169.254.169.254, metadata.google.internal
+        - Path traversal detection: Identifies ../, null bytes, encoded variants
+        - Double-encoding detection: Catches %25 patterns used to bypass filters
+        - Open redirect detection: Blocks URLs with backslashes, leading //
+        - Homograph attacks: Detects mixed Unicode scripts (e.g., Cyrillic 'а' vs Latin 'a')
+        - Parser confusion: Identifies ambiguous URLs parsed differently across parsers
+
+    Optional Security Checks:
+        - DNS rebinding (check_dns=True): Verifies hostname resolves to safe IPs
+        - Phishing domains (check_phishing=True): Checks against known phishing database
+
+    Args:
+        url: The URL string to parse
+        allow_custom_scheme: If True, allow non-standard schemes (default: False)
+            Standard schemes: http, https, ftp, ftps, sftp, file, ws, wss
+        check_dns: If True, perform DNS lookup to verify host resolves to safe IP.
+            WARNING: Has performance impact and is rate-limited to prevent DoS.
+            Use only when DNS rebinding is a concern (default: False)
+        check_phishing: If True, check hostname against known phishing database.
+            Downloads database on first use (~10MB). Best for user-facing applications
+            where phishing is a concern (default: False)
+
+    Returns:
+        URL: Immutable URL object with all parsed components
+
+    Raises:
+        InvalidURLError: If URL fails security validation
+        URLParseError: If URL structure is invalid
+
+    Examples:
+        >>> url = parse_url("https://api.example.com/users?id=123")
+        >>> url.host
+        'api.example.com'
+
+        >>> parse_url("http://localhost/admin")  # Raises InvalidURLError
+        >>> parse_url("http://192.168.1.1/")     # Raises InvalidURLError
+
+    For internal/development URLs, use parse_url_unsafe() instead.
     """
     from . import _security as _security
     from . import _parser as _parser
@@ -64,10 +130,46 @@ def parse_url_unsafe(
     debug: bool = False,
     check_dns: bool = False
 ) -> "URL":
-    """Parse a URL string WITHOUT security checks.
+    """Parse a URL string WITHOUT security checks (for trusted sources only).
 
-    WARNING: This function does not perform security validations by default.
-    Use `parse_url()` instead for security-sensitive contexts.
+    WARNING: This function DISABLES security validations. Use ONLY for:
+        - Internal URLs (localhost, 192.168.x.x, 10.x.x.x)
+        - Development/testing environments
+        - Configuration files from trusted sources
+        - URLs already validated by upstream security layers
+
+    NEVER use this function with:
+        - User-provided input
+        - URLs from external APIs
+        - Data from untrusted sources
+        - URLs forwarded to other services
+
+    Args:
+        url: The URL string to parse
+        allow_custom_scheme: If True, allow non-standard URL schemes (default: False)
+        strict: If True, enable SSRF checks (negates "unsafe" mode). Rarely needed.
+            Use parse_url() instead if you need security (default: False)
+        debug: If True, include raw input in error traces for debugging (default: False)
+        check_dns: If True, verify hostname resolves (but doesn't check if IP is safe).
+            Mainly useful for detecting typos in internal hostnames (default: False)
+
+    Returns:
+        URL: Immutable URL object with all parsed components
+
+    Raises:
+        URLParseError: If URL structure is invalid (format errors only, not security)
+
+    Examples:
+        >>> url = parse_url_unsafe("http://localhost:3000/api")
+        >>> url.port
+        3000
+
+        >>> url = parse_url_unsafe("http://192.168.1.100/metrics")
+        >>> url.host
+        '192.168.1.100'
+
+    Security Note:
+        For production use with untrusted input, always use parse_url() instead.
     """
     from . import _parser as _parser
     from . import url as _url
@@ -86,21 +188,53 @@ def build(
     fragment: Optional[str] = None,
     userinfo: Optional[str] = None,
 ) -> str:
-    """Build a URL string from components.
+    """Build a URL string from individual components with automatic encoding.
+
+    This function constructs a properly-formatted and encoded URL from its parts.
+    Components are automatically percent-encoded as needed per RFC 3986.
 
     Args:
-        scheme_and_host: Variable arguments for scheme and host.
-            If one argument is provided, it's treated as host only.
-            If two or more arguments are provided, the first is scheme, second is host,
-            remaining are ignored.
-        port: Optional port number
-        path: URL path (defaults to '/')
-        query: Optional query string (without '?')
-        fragment: Optional fragment (without '#')
-        userinfo: Optional userinfo (user:pass format)
+        scheme_and_host: Flexible positional arguments for scheme and host:
+            - One argument: Treated as host only (scheme-less URL)
+              Example: build("example.com") -> "example.com/"
+            - Two arguments: First is scheme, second is host
+              Example: build("https", "example.com") -> "https://example.com/"
+            - Three+ arguments: Extra arguments are ignored
+        port: Port number (1-65535). Default ports (80 for http, 443 for https)
+            are automatically omitted from the output (default: None)
+        path: URL path component. Automatically normalized (resolves .. and .)
+            and percent-encoded. Leading / is added if missing when host is present
+            (default: "/")
+        query: Query string without leading '?'. Raw string or use compose_url()
+            with query_pairs for automatic encoding (default: None)
+        fragment: Fragment identifier without leading '#'. Automatically
+            percent-encoded (default: None)
+        userinfo: User authentication info in 'user:password' format.
+            WARNING: Including passwords in URLs is deprecated and insecure
+            (default: None)
 
     Returns:
-        The composed URL string.
+        str: The fully-composed URL string
+
+    Raises:
+        URLBuildError: If host is required but not provided, or if components are invalid
+
+    Examples:
+        >>> build("example.com")
+        'example.com/'
+
+        >>> build("https", "example.com", port=443, path="/api")
+        'https://example.com/api'  # Port 443 omitted (default for https)
+
+        >>> build("https", "api.example.com", path="/users", query="limit=10", fragment="results")
+        'https://api.example.com/users?limit=10#results'
+
+        >>> build("http", "admin:secret@example.com", port=8080)
+        'http://admin:secret@example.com:8080/'
+
+    Note:
+        For building URLs from dictionaries or with query parameter lists,
+        see compose_url() which provides a dict-based interface.
     """
     from . import _builder as _builder
 
