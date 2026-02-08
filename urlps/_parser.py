@@ -84,11 +84,29 @@ def parse_userinfo(authority: str) -> Tuple[Optional[str], str]:
 
 
 def parse_port(candidate: str) -> int:
-    """Parse and validate port number."""
+    """Parse and validate port number.
+
+    Args:
+        candidate: Port string to parse (must be numeric)
+
+    Returns:
+        Validated port number as integer
+
+    Raises:
+        PortValidationError: If port is non-numeric or out of valid range (1-65535)
+    """
     if not candidate or not candidate.isdigit():
-        raise PortValidationError("Port must be numeric.", value=candidate, component="port")
+        raise PortValidationError(
+            f"Port must be a positive integer. Received: {candidate!r}",
+            value=candidate,
+            component="port"
+        )
     if not Validator.is_valid_port(candidate):
-        raise PortValidationError("Port must be between 1 and 65535.", value=candidate, component="port")
+        raise PortValidationError(
+            f"Port must be between 1 and 65535. Received: {candidate}",
+            value=candidate,
+            component="port"
+        )
     return int(candidate)
 
 
@@ -248,8 +266,18 @@ def apply_port_defaults(scheme: Optional[str], port: Optional[int], host: Option
 
 def parse_url(url: str, allow_custom_scheme: bool = False) -> ParseResult:
     """Parse a URL string into a ParseResult with all components."""
-    if not isinstance(url, str) or not url.strip():
-        raise URLParseError("A non-empty URL string is required.", value=url, component="url")
+    if not isinstance(url, str):
+        raise URLParseError(
+            f"URL must be a string, not {type(url).__name__}.",
+            value=url,
+            component="url"
+        )
+    if not url.strip():
+        raise URLParseError(
+            f"URL cannot be empty or whitespace-only. Received: {url!r}",
+            value=url,
+            component="url"
+        )
     working = url.strip()
     scheme, remainder, recognized = parse_scheme(working, allow_custom_scheme)
     
