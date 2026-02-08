@@ -129,6 +129,16 @@ BLOCKED_HOSTNAMES: FrozenSet[str] = frozenset({  # nosec B104
 
 DEFAULT_DNS_TIMEOUT: float = 2.0
 
+# DNS Rate Limiting Configuration
+# These values prevent DNS-based DoS attacks while allowing legitimate usage
+DEFAULT_DNS_LOOKUPS_PER_SECOND: float = 10.0  # Global rate limit
+DEFAULT_DNS_LOOKUPS_PER_HOST: int = 3  # Per-hostname limit
+DEFAULT_DNS_TIME_WINDOW_SECONDS: float = 60.0  # Time window for per-host tracking
+DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS: float = 300.0  # Cleanup old tracking data
+
+# Phishing Database Configuration
+PHISHING_DATABASE_URL: str = "https://phish.co.za/latest/ALL-phishing-domains.lst"
+
 PASSWORD_MASK: str = "***"
 
 
@@ -150,5 +160,10 @@ __all__ = [
     "MAX_IPV6_STRING_LENGTH",
     "BLOCKED_HOSTNAMES",
     "DEFAULT_DNS_TIMEOUT",
+    "DEFAULT_DNS_LOOKUPS_PER_SECOND",
+    "DEFAULT_DNS_LOOKUPS_PER_HOST",
+    "DEFAULT_DNS_TIME_WINDOW_SECONDS",
+    "DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS",
+    "PHISHING_DATABASE_URL",
     "PASSWORD_MASK",
 ]
