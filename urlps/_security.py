@@ -12,15 +12,17 @@ rather than raising exceptions, except for validate_* functions.
 from __future__ import annotations
 
 import ipaddress
+import logging
+import random
 import socket
 import time
 import unicodedata
 from collections import defaultdict, deque
 from functools import lru_cache
-from typing import Optional, Set, Tuple, Union, Deque, Dict
+from typing import Any, Optional, Set, Tuple, Union, Deque, Dict, cast
 from urllib import request
 from urllib.error import URLError
-from urllib.parse import unquote
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from .constants import (
     BLOCKED_HOSTNAMES,
@@ -33,6 +35,26 @@ from .constants import (
     PHISHING_DATABASE_URL,
 )
 from ._patterns import PATTERNS
+from ._components import SecurityFinding
+from .exceptions import ErrorCode, InvalidURLError
+from .security_policy import SecurityPolicy
+
+logger = logging.getLogger(__name__)
+
+_SENSITIVE_QUERY_KEYS = frozenset(
+    {
+        "token",
+        "access_token",
+        "refresh_token",
+        "apikey",
+        "api_key",
+        "password",
+        "passwd",
+        "secret",
+        "auth",
+        "authorization",
+    }
+)
 
 
 def _is_ip_safe(ip: Union[ipaddress.IPv4Address, ipaddress.IPv6Address]) -> bool:
@@ -186,8 +208,15 @@ def is_ssrf_risk(host: str) -> bool:
             _is_decimal_ip_private(host) or _is_octal_hex_ip_private(host) or is_private_ip(host))
 
 
-def check_dns_rebinding(host: str, timeout: Optional[float] = None, enforce_rate_limit: bool = True) -> bool:
-    """Check if hostname resolves to safe (non-private) IPs.
+def check_dns_rebinding_detailed(
+    host: str,
+    timeout: Optional[float] = None,
+    enforce_rate_limit: bool = True,
+    retries: int = 2,
+    backoff_base_seconds: float = 0.05,
+    backoff_jitter_seconds: float = 0.02,
+) -> Tuple[bool, Optional[ErrorCode]]:
+    """Check DNS rebinding risk and return deterministic status.
 
     Args:
         host: The hostname to check
@@ -195,43 +224,91 @@ def check_dns_rebinding(host: str, timeout: Optional[float] = None, enforce_rate
         enforce_rate_limit: If True, apply DNS rate limiting
 
     Returns:
-        True if hostname is safe, False otherwise
+        Tuple of (is_safe, error_code). error_code is None when safe.
     """
     if not isinstance(host, str) or not host:
-        return False
-
-    # Check rate limit if enabled
-    if enforce_rate_limit:
-        limiter = get_dns_rate_limiter()
-        if not limiter.is_allowed(host):
-            # Rate limited - return False to prevent lookup
-            return False
+        return False, ErrorCode.DNS_RESOLUTION_FAILED
 
     if timeout is None:
         timeout = DEFAULT_DNS_TIMEOUT
     host = _strip_ipv6_brackets(host)
     direct_result = _check_direct_ip_safe(host)
     if direct_result is not None:
-        return direct_result
-    try:
-        addr_info = socket.getaddrinfo(host, 80, socket.AF_UNSPEC, socket.SOCK_STREAM)
-        if not _check_resolved_ips_safe(addr_info):
-            return False
-        return _verify_connection_safe(addr_info, timeout)
-    except (socket.gaierror, socket.timeout, OSError):
-        return False
+        return direct_result, None if direct_result else ErrorCode.SSRF_RISK
+
+    # Check rate limit only for actual DNS lookups (not direct IP checks).
+    if enforce_rate_limit:
+        limiter = get_dns_rate_limiter()
+        if not limiter.is_allowed(host):
+            logger.warning("dns_check_blocked rate_limit host=%s", host)
+            return False, ErrorCode.DNS_RATE_LIMITED
+
+    last_error: Optional[ErrorCode] = None
+    attempt = 0
+    max_attempts = max(1, retries + 1)
+    while attempt < max_attempts:
+        try:
+            addr_info = socket.getaddrinfo(host, 80, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            if not _check_resolved_ips_safe(addr_info):
+                return False, ErrorCode.SSRF_RISK
+            if not _verify_connection_safe(addr_info, timeout):
+                return False, ErrorCode.DNS_CONNECTION_FAILED
+            return True, None
+        except socket.gaierror:
+            last_error = ErrorCode.DNS_RESOLUTION_FAILED
+        except (socket.timeout, OSError):
+            last_error = ErrorCode.DNS_CONNECTION_FAILED
+
+        attempt += 1
+        if attempt < max_attempts:
+            sleep_seconds = (backoff_base_seconds * (2 ** (attempt - 1))) + random.uniform(0.0, backoff_jitter_seconds)
+            time.sleep(sleep_seconds)
+
+    return False, last_error or ErrorCode.DNS_RESOLUTION_FAILED
+
+
+def check_dns_rebinding(
+    host: str,
+    timeout: Optional[float] = None,
+    enforce_rate_limit: bool = True,
+    retries: int = 2,
+    backoff_base_seconds: float = 0.05,
+    backoff_jitter_seconds: float = 0.02,
+) -> bool:
+    """Backward-compatible boolean wrapper around detailed DNS rebinding checks."""
+    safe, _ = check_dns_rebinding_detailed(
+        host,
+        timeout=timeout,
+        enforce_rate_limit=enforce_rate_limit,
+        retries=retries,
+        backoff_base_seconds=backoff_base_seconds,
+        backoff_jitter_seconds=backoff_jitter_seconds,
+    )
+    return safe
 
 PHISHING_SET: Optional[Set[str]] = None
+_PHISHING_META: Dict[str, Any] = {
+    "loaded": False,
+    "size": 0,
+    "last_refresh_epoch": None,
+    "last_error": None,
+    "error_count": 0,
+}
 
 def check_against_phishing_db(host: str) -> bool:
     """Check if hostname is in known phishing database."""
     global PHISHING_SET
     if PHISHING_SET is None:
         PHISHING_SET = _download_phishing_db()
+        current_set = PHISHING_SET if PHISHING_SET is not None else set()
+        _PHISHING_META["loaded"] = True
+        _PHISHING_META["size"] = len(current_set)
+        _PHISHING_META["last_refresh_epoch"] = time.time()
     if not isinstance(host, str):
         return False
     host_lower = host.lower().rstrip('.')
-    return host_lower in PHISHING_SET
+    current_set = PHISHING_SET if PHISHING_SET is not None else set()
+    return host_lower in current_set
 
 
 def refresh_phishing_db() -> int:
@@ -249,7 +326,11 @@ def refresh_phishing_db() -> int:
     """
     global PHISHING_SET
     PHISHING_SET = _download_phishing_db()
-    return len(PHISHING_SET)
+    current_set = PHISHING_SET if PHISHING_SET is not None else set()
+    _PHISHING_META["loaded"] = True
+    _PHISHING_META["size"] = len(current_set)
+    _PHISHING_META["last_refresh_epoch"] = time.time()
+    return len(current_set)
 
 
 def get_phishing_db_info() -> dict:
@@ -263,6 +344,9 @@ def get_phishing_db_info() -> dict:
     return {
         "loaded": PHISHING_SET is not None,
         "size": len(PHISHING_SET) if PHISHING_SET is not None else 0,
+        "last_refresh_epoch": _PHISHING_META.get("last_refresh_epoch"),
+        "last_error": _PHISHING_META.get("last_error"),
+        "error_count": int(_PHISHING_META.get("error_count", 0)),
     }
 
 
@@ -274,11 +358,32 @@ def _download_phishing_db() -> Set[str]:
     try:
         response = request.urlopen(PHISHING_DATABASE_URL, timeout=DEFAULT_DNS_TIMEOUT)
         if response.status != 200:
+            _PHISHING_META["last_error"] = f"unexpected_status:{response.status}"
+            _PHISHING_META["error_count"] = int(_PHISHING_META.get("error_count", 0)) + 1
             return set()
         content = response.read().decode('utf-8', errors='ignore')
-        hostnames = {line.strip().lower() for line in content.splitlines() if line.strip()}
+        hostnames: Set[str] = set()
+        for line in content.splitlines():
+            candidate = line.strip().lower()
+            if not candidate:
+                continue
+            if len(candidate) > 253:
+                continue
+            if not PATTERNS["host"].fullmatch(candidate):
+                continue
+            hostnames.add(candidate)
+
+        # Defensive cap to avoid unbounded memory growth with malicious feeds.
+        if len(hostnames) > 5_000_000:
+            _PHISHING_META["last_error"] = "phishing_db_too_large"
+            _PHISHING_META["error_count"] = int(_PHISHING_META.get("error_count", 0)) + 1
+            return set()
+
+        _PHISHING_META["last_error"] = None
         return hostnames
-    except (URLError, socket.timeout, OSError, ValueError):
+    except (URLError, socket.timeout, OSError, ValueError) as exc:
+        _PHISHING_META["last_error"] = f"download_error:{type(exc).__name__}"
+        _PHISHING_META["error_count"] = int(_PHISHING_META.get("error_count", 0)) + 1
         return set()
 
 
@@ -378,7 +483,7 @@ def _has_mixed_path_separators(after_scheme: str) -> bool:
     """Check if URL has mixed forward slashes and backslashes.
 
     Some parsers treat backslash as forward slash, creating parser confusion.
-    Example: http://example.com\/path is ambiguous.
+    Example: http://example.com\\/path is ambiguous.
     """
     return '/' in after_scheme and '\\' in after_scheme
 
@@ -417,13 +522,13 @@ def _has_component_ordering_confusion(rest: str) -> bool:
     if '#' in rest:
         slash_pos = rest.find('/')
         hash_pos = rest.find('#')
-        if slash_pos == -1 or hash_pos < slash_pos:
+        if slash_pos != -1 and hash_pos < slash_pos:
             return True
 
     if '?' in rest:
         slash_pos = rest.find('/')
         query_pos = rest.find('?')
-        if slash_pos == -1 or query_pos < slash_pos:
+        if slash_pos != -1 and query_pos < slash_pos:
             return True
 
     return False
@@ -699,7 +804,7 @@ def get_dns_rate_limiter() -> DNSRateLimiter:
     global _dns_rate_limiter
     if _dns_rate_limiter is None:
         _dns_rate_limiter = DNSRateLimiter()
-    return _dns_rate_limiter
+    return cast(DNSRateLimiter, _dns_rate_limiter)
 
 
 def reset_dns_rate_limiter() -> None:
@@ -773,6 +878,7 @@ def is_non_canonical_url(url: str) -> bool:
     if '://' not in url:
         return False
 
+    raw_host = ""
     try:
         from urllib.parse import urlparse, unquote
 
@@ -881,7 +987,6 @@ def is_non_canonical_url(url: str) -> bool:
             # Use the raw_host we extracted earlier
             if raw_host and raw_host.startswith('[') and ']' in raw_host:
                 try:
-                    import ipaddress
                     bracket_end = raw_host.index(']')
                     ipv6_str = raw_host[1:bracket_end]
                     # Remove zone ID if present
@@ -893,7 +998,7 @@ def is_non_canonical_url(url: str) -> bool:
                     # Check if original matches canonical
                     if ipv6_str.lower() != canonical.lower():
                         return True
-                except (ValueError, ipaddress.AddressValueError, NameError):
+                except ValueError:
                     # Invalid IPv6 or raw_host not defined, that's a different validation issue
                     pass
 
@@ -993,7 +1098,6 @@ def get_canonical_url(url: str) -> Optional[str]:
             # Canonicalize IPv6
             if host.startswith('[') and host.endswith(']'):
                 try:
-                    import ipaddress
                     ipv6_str = host[1:-1]
                     zone_id = ""
                     if '%' in ipv6_str:
@@ -1001,7 +1105,7 @@ def get_canonical_url(url: str) -> Optional[str]:
                         zone_id = '%' + zone_id
                     ipv6_obj = ipaddress.IPv6Address(ipv6_str)
                     host = f"[{ipv6_obj}{zone_id}]"
-                except (ValueError, ipaddress.AddressValueError):
+                except ValueError:
                     pass  # Keep original if invalid
 
             # Remove default port
@@ -1422,13 +1526,53 @@ def normalize_url_unicode(url: str) -> str:
         return url
 
 
-def validate_url_security(url: str) -> None:
-    """Run comprehensive security validations. Raises InvalidURLError if issue detected.
+def redact_url_for_logs(url: str) -> str:
+    """Redact credentials and sensitive query values for logging/auditing."""
+    if not isinstance(url, str) or not url:
+        return url
+    try:
+        split = urlsplit(url)
+        netloc = split.netloc
+        if '@' in netloc:
+            userinfo, _, host_part = netloc.rpartition('@')
+            if ':' in userinfo:
+                username, _, _ = userinfo.partition(':')
+                netloc = f"{username}:***@{host_part}"
+            else:
+                netloc = f"***@{host_part}"
 
-    Performance: Fast-path for pure ASCII URLs skips expensive Unicode checks.
-    """
-    from .exceptions import InvalidURLError
+        if split.query:
+            redacted_pairs = []
+            for key, value in parse_qsl(split.query, keep_blank_values=True):
+                if key.lower() in _SENSITIVE_QUERY_KEYS:
+                    redacted_pairs.append((key, "***"))
+                else:
+                    redacted_pairs.append((key, value))
+            query = urlencode(redacted_pairs, doseq=True)
+        else:
+            query = split.query
 
+        return urlunsplit((split.scheme, netloc, split.path, query, split.fragment))
+    except (ValueError, AttributeError):
+        return url
+
+
+def _finding(severity: str, code: ErrorCode, message: str, component: Optional[str]) -> SecurityFinding:
+    return SecurityFinding(severity=severity, code=code.value, message=message, component=component)
+
+
+def collect_security_findings(
+    url: str,
+    *,
+    policy: Optional[SecurityPolicy] = None,
+    check_dns: Optional[bool] = None,
+    check_phishing: Optional[bool] = None,
+) -> list[SecurityFinding]:
+    """Collect policy-aware security findings without raising exceptions."""
+    if policy is None:
+        policy = SecurityPolicy.strict()
+
+    findings: list[SecurityFinding] = []
     url = normalize_url_unicode(url)
 
     is_ascii = True
@@ -1437,22 +1581,88 @@ def validate_url_security(url: str) -> None:
     except (UnicodeEncodeError, UnicodeDecodeError):
         is_ascii = False
 
-    if has_double_encoding(url):
-        raise InvalidURLError("URL contains double-encoded characters.")
+    split_for_double = urlsplit(url) if '://' in url else None
+    double_encoding_target = (
+        f"{split_for_double.path}?{split_for_double.query}" if split_for_double is not None else url
+    )
+    if policy.enforce_double_encoding and has_double_encoding(double_encoding_target):
+        findings.append(_finding("critical", ErrorCode.DOUBLE_ENCODING, "URL contains double-encoded characters.", "url"))
+
     if '://' not in url:
-        return
+        return findings
+
     host, path = extract_host_and_path(url)
+    split = urlsplit(url)
+    query = split.query
+    try:
+        port = split.port
+    except ValueError:
+        port = None
+
     if host and is_malicious_ipv6_zone_id(host):
-        raise InvalidURLError("IPv6 zone identifier contains invalid characters.")
-    if host and not is_ascii and has_mixed_scripts(host):
-        raise InvalidURLError("URL host contains mixed Unicode scripts.")
-    if path:
-        if has_path_traversal(path):
-            raise InvalidURLError("URL path contains path traversal patterns.")
-        if is_open_redirect_risk(path):
-            raise InvalidURLError("URL path contains open redirect risk patterns.")
-    if has_parser_confusion(url):
-        raise InvalidURLError("URL contains ambiguous syntax that could cause parser confusion.")
+        findings.append(
+            _finding("critical", ErrorCode.INVALID_IPV6_ZONE_ID, "IPv6 zone identifier contains invalid characters.", "host")
+        )
+    if host and policy.enforce_ssrf and is_ssrf_risk(host):
+        findings.append(_finding("critical", ErrorCode.SSRF_RISK, "Host poses SSRF risk and is disallowed.", "host"))
+    if host and policy.enforce_mixed_scripts and not is_ascii and has_mixed_scripts(host):
+        findings.append(_finding("major", ErrorCode.MIXED_SCRIPTS, "URL host contains mixed Unicode scripts.", "host"))
+    if path and policy.enforce_path_traversal and has_path_traversal(path):
+        findings.append(_finding("critical", ErrorCode.PATH_TRAVERSAL, "URL path contains path traversal patterns.", "path"))
+    if path and policy.enforce_open_redirect and is_open_redirect_risk(path):
+        findings.append(_finding("major", ErrorCode.OPEN_REDIRECT, "URL path contains open redirect risk patterns.", "path"))
+    if policy.enforce_parser_confusion and has_parser_confusion(url):
+        findings.append(
+            _finding(
+                "critical",
+                ErrorCode.PARSER_CONFUSION,
+                "URL contains ambiguous syntax that could cause parser confusion.",
+                "url",
+            )
+        )
+    if policy.enforce_query_injection and query and has_query_injection(query):
+        findings.append(_finding("major", ErrorCode.QUERY_INJECTION, "URL query contains injection-like patterns.", "query"))
+    if policy.reject_credentials and has_credentials(url):
+        findings.append(_finding("major", ErrorCode.CREDENTIALS_IN_URL, "URL credentials are disallowed by policy.", "userinfo"))
+    if policy.block_dangerous_ports and is_dangerous_port(port, block_dangerous_ports=True):
+        findings.append(_finding("major", ErrorCode.DANGEROUS_PORT, "URL uses a blocked dangerous port.", "port"))
+    if policy.require_canonical and is_non_canonical_url(url):
+        findings.append(_finding("major", ErrorCode.NON_CANONICAL_URL, "URL is not in canonical form.", "url"))
+
+    effective_check_dns = policy.check_dns if check_dns is None else check_dns
+    if effective_check_dns and host:
+        safe, dns_error = check_dns_rebinding_detailed(
+            host,
+            enforce_rate_limit=policy.enforce_dns_rate_limit,
+            retries=policy.dns_retries,
+            backoff_base_seconds=policy.dns_backoff_base_seconds,
+            backoff_jitter_seconds=policy.dns_backoff_jitter_seconds,
+        )
+        if not safe and dns_error is not None:
+            findings.append(_finding("critical", dns_error, "DNS rebinding validation failed.", "host"))
+
+    effective_check_phishing = policy.check_phishing if check_phishing is None else check_phishing
+    if effective_check_phishing and host and check_against_phishing_db(host):
+        findings.append(_finding("critical", ErrorCode.PHISHING_DOMAIN, "Host is identified as a phishing domain.", "host"))
+
+    return findings
+
+
+def validate_url_security(
+    url: str,
+    *,
+    policy: Optional[SecurityPolicy] = None,
+    check_dns: Optional[bool] = None,
+    check_phishing: Optional[bool] = None,
+    raise_on_error: bool = True,
+) -> list[SecurityFinding]:
+    """Run policy-based security validation and optionally raise on first finding."""
+    findings = collect_security_findings(url, policy=policy, check_dns=check_dns, check_phishing=check_phishing)
+    if findings and raise_on_error:
+        first = findings[0]
+        code = ErrorCode(first.code)
+        raise InvalidURLError(first.message, component=first.component, value=url, code=code)
+    return findings
 
 
 _CACHED_FUNCTIONS = [is_private_ip, is_ssrf_risk, has_mixed_scripts]
@@ -1479,6 +1689,7 @@ __all__ = [
     "has_double_encoding", "has_path_traversal", "is_open_redirect_risk",
     "has_parser_confusion", "is_malicious_ipv6_zone_id", "normalize_url_unicode",
     "is_dangerous_port", "extract_host_and_path", "validate_url_security",
+    "collect_security_findings", "redact_url_for_logs", "check_dns_rebinding_detailed",
     "get_cache_info", "clear_caches",
     "check_against_phishing_db", "refresh_phishing_db", "get_phishing_db_info",
     "has_credentials", "has_query_injection", "has_suspicious_punycode",

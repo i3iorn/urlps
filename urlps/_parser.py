@@ -305,7 +305,7 @@ def parse_url(url: str, allow_custom_scheme: bool = False) -> ParseResult:
     return ParseResult(
         scheme=scheme, userinfo=userinfo, host=host, port=port, path=path,
         query=query, fragment=fragment, query_pairs=list(query_pairs),
-        recognized_scheme=recognized,
+        recognized_scheme=recognized, security_findings=[],
     )
 
 

@@ -50,12 +50,17 @@ Performance:
 from __future__ import annotations
 
 from typing import Any, Mapping, Optional
-import importlib
 
 __version__ = "0.4.0"
 
-from urlps._audit import set_audit_callback, get_audit_callback
+from urlps._audit import (
+    set_audit_callback,
+    get_audit_callback,
+    set_audit_event_callback,
+    get_audit_event_callback,
+)
 from urlps.exceptions import URLpError, InvalidURLError, URLParseError, URLBuildError
+from urlps.security_policy import SecurityPolicy, PolicyInput, resolve_security_policy
 from urlps.url import URL
 
 
@@ -64,7 +69,9 @@ def parse_url(
     url: str, *,
     allow_custom_scheme: bool = False,
     check_dns: bool = False,
-    check_phishing: bool = False
+    check_phishing: bool = False,
+    policy: PolicyInput = None,
+    correlation_id: Optional[str] = None,
 ) -> "URL":
     """Parse URL with comprehensive security checks enabled (SECURE BY DEFAULT).
 
@@ -113,14 +120,21 @@ def parse_url(
 
     For internal/development URLs, use parse_url_unsafe() instead.
     """
-    from . import _security as _security
     from . import _parser as _parser
     from . import url as _url
 
-    _security.validate_url_security(url)
+    resolved_policy = resolve_security_policy(policy, check_dns=check_dns, check_phishing=check_phishing)
     parser = _parser.Parser()
     parser.custom_scheme = allow_custom_scheme
-    return _url.URL(url, parser=parser, strict=True, check_dns=check_dns, check_phishing=check_phishing)
+    return _url.URL(
+        url,
+        parser=parser,
+        strict=resolved_policy.enforce_ssrf,
+        check_dns=resolved_policy.check_dns,
+        check_phishing=resolved_policy.check_phishing,
+        security_policy=resolved_policy,
+        correlation_id=correlation_id,
+    )
 
 
 def parse_url_unsafe(
@@ -128,7 +142,9 @@ def parse_url_unsafe(
     allow_custom_scheme: bool = False,
     strict: bool = False,
     debug: bool = False,
-    check_dns: bool = False
+    check_dns: bool = False,
+    policy: PolicyInput = None,
+    correlation_id: Optional[str] = None,
 ) -> "URL":
     """Parse a URL string WITHOUT security checks (for trusted sources only).
 
@@ -150,8 +166,8 @@ def parse_url_unsafe(
         strict: If True, enable SSRF checks (negates "unsafe" mode). Rarely needed.
             Use parse_url() instead if you need security (default: False)
         debug: If True, include raw input in error traces for debugging (default: False)
-        check_dns: If True, verify hostname resolves (but doesn't check if IP is safe).
-            Mainly useful for detecting typos in internal hostnames (default: False)
+        check_dns: If True, verify hostname resolution and block private/reserved targets.
+            Useful for DNS rebinding protection in internal environments (default: False)
 
     Returns:
         URL: Immutable URL object with all parsed components
@@ -174,9 +190,24 @@ def parse_url_unsafe(
     from . import _parser as _parser
     from . import url as _url
 
+    resolved_policy = (
+        resolve_security_policy(policy, check_dns=check_dns, check_phishing=False)
+        if policy is not None
+        else SecurityPolicy.internal(check_dns=check_dns, enforce_ssrf=strict)
+    )
+
     parser = _parser.Parser()
     parser.custom_scheme = allow_custom_scheme
-    return _url.URL(url, parser=parser, strict=strict, debug=debug, check_dns=check_dns)
+    return _url.URL(
+        url,
+        parser=parser,
+        strict=resolved_policy.enforce_ssrf,
+        debug=debug,
+        check_dns=resolved_policy.check_dns,
+        check_phishing=resolved_policy.check_phishing,
+        security_policy=resolved_policy,
+        correlation_id=correlation_id,
+    )
 
 
 
@@ -271,6 +302,37 @@ def compose_url(components: Mapping[str, Any]) -> str:
     return _builder.Builder().compose(components)
 
 
+def build_secure(
+    *scheme_and_host: str,
+    policy: PolicyInput = None,
+    check_dns: bool = False,
+    check_phishing: bool = False,
+    correlation_id: Optional[str] = None,
+    port: Optional[int] = None,
+    path: str = "/",
+    query: Optional[str] = None,
+    fragment: Optional[str] = None,
+    userinfo: Optional[str] = None,
+) -> str:
+    """Build then validate a URL under a security policy, raising on policy violations."""
+    composed = build(
+        *scheme_and_host,
+        port=port,
+        path=path,
+        query=query,
+        fragment=fragment,
+        userinfo=userinfo,
+    )
+    parsed = parse_url(
+        composed,
+        check_dns=check_dns,
+        check_phishing=check_phishing,
+        policy=policy,
+        correlation_id=correlation_id,
+    )
+    return parsed.as_string()
+
+
 
 def get_cache_info() -> dict:
     """Get statistics about all internal caches.
@@ -353,6 +415,10 @@ __all__ = [
     "URLBuildError",
     "set_audit_callback",
     "get_audit_callback",
+    "set_audit_event_callback",
+    "get_audit_event_callback",
+    "SecurityPolicy",
+    "build_secure",
     "get_cache_info",
     "clear_all_caches",
 ]

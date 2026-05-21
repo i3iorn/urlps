@@ -18,7 +18,9 @@ We will acknowledge receipt within 48 hours and provide updates on progress towa
 
 urlps is designed with security as a priority and includes comprehensive protections:
 
-### Built-in Protections (enabled by default with `parse_url()`)
+### Built-in Protections
+
+`parse_url()` uses the `balanced` policy by default for compatibility, and `policy="strict"` enables maximum hardening.
 
 1. **SSRF Protection**: Blocks private IPs, localhost, loopback addresses, link-local addresses, `.local` and `.internal` domains
 2. **Path Traversal Detection**: Prevents `../` attacks and path normalization attacks
@@ -40,6 +42,7 @@ urlps is designed with security as a priority and includes comprehensive protect
 - **DNS Rate Limiting**: Automatic protection against DoS attacks via DNS lookup flooding (10 lookups/second globally, 3 per host per 60 seconds)
 - **Phishing Domain Checking**: Enable with `check_phishing=True` to check against known phishing domains
 - **Audit Logging**: Use `set_audit_callback()` for security monitoring
+- **Structured Audit Events**: Use `set_audit_event_callback()` for machine-readable telemetry
 
 ## Usage Guidelines
 
@@ -72,6 +75,9 @@ internal = parse_url_unsafe("http://192.168.1.100/metrics")
 ```python
 # DNS rebinding protection (performs DNS lookup)
 url = parse_url("https://api.example.com/", check_dns=True)
+
+# Policy-based control (strict, balanced, internal)
+url = parse_url("https://api.example.com/", policy="strict")
 
 # Password masking for logs
 url = parse_url("https://user:pass@example.com/")
@@ -112,6 +118,7 @@ Override component length limits via environment variables (e.g., `URLPS_MAX_URL
 
 ✅ **Do:**
 - Use `parse_url()` for all user-supplied URLs
+- Use `policy="strict"` (default) for untrusted input
 - Enable `check_dns=True` when making network requests to untrusted domains
 - Use `mask_password=True` when logging URLs
 - Keep urlps updated to receive security patches

@@ -15,6 +15,16 @@ _SUPPORTS_SLOTS = sys.version_info >= (3, 10)
 
 
 @dataclass(frozen=True, slots=_SUPPORTS_SLOTS)
+class SecurityFinding:
+    """Structured finding emitted by URL security validation."""
+
+    severity: str
+    code: str
+    message: str
+    component: Optional[str] = None
+
+
+@dataclass(frozen=True, slots=_SUPPORTS_SLOTS)
 class ParseResult:
     """Result of parsing a URL string.
 
@@ -32,6 +42,7 @@ class ParseResult:
     fragment: Optional[str] = None
     query_pairs: QueryPairs = field(default_factory=list)
     recognized_scheme: Optional[bool] = None
+    security_findings: List[SecurityFinding] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Convert to dictionary of URL components."""
@@ -43,6 +54,7 @@ class ParseResult:
             "path": self.path,
             "query": self.query,
             "fragment": self.fragment,
+            "security_findings": list(self.security_findings),
         }
 
 
@@ -87,4 +99,4 @@ class URLComponents:
         )
 
 
-__all__ = ["ParseResult", "URLComponents", "QueryPairs"]
+__all__ = ["ParseResult", "URLComponents", "QueryPairs", "SecurityFinding"]

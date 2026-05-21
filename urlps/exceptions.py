@@ -6,6 +6,7 @@ and the URL component involved (if applicable). This enables precise error handl
 and better diagnostics for users and tools.
 """
 
+from enum import Enum
 from typing import Any, Optional
 
 # Maximum length for value representation in error messages
@@ -32,18 +33,49 @@ class URLpError(Exception):
         value (Any): The value that caused the error, if available.
         component (Optional[str]): The URL component involved, if available.
     """
-    def __init__(self, message: str = "", value: Any = None, component: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        message: str = "",
+        value: Any = None,
+        component: Optional[str] = None,
+        code: Optional["ErrorCode"] = None,
+    ) -> None:
         super().__init__(message)
         self.value: Any = value
         self.component: Optional[str] = component
         self.message: str = message
+        self.code: Optional[ErrorCode] = code
 
     def __str__(self) -> str:
         base = super().__str__()
         if self.value is not None or self.component:
             truncated_value = _truncate_value(self.value)
+            if self.code is not None:
+                return f"{base} (code={self.code.value}, component={self.component!r}, value={truncated_value})"
             return f"{base} (component={self.component!r}, value={truncated_value})"
+        if self.code is not None:
+            return f"{base} (code={self.code.value})"
         return base
+
+
+class ErrorCode(Enum):
+    """Typed error codes for stable downstream error handling."""
+
+    SSRF_RISK = "ssrf_risk"
+    DNS_RATE_LIMITED = "dns_rate_limited"
+    DNS_RESOLUTION_FAILED = "dns_resolution_failed"
+    DNS_CONNECTION_FAILED = "dns_connection_failed"
+    PHISHING_DOMAIN = "phishing_domain"
+    DOUBLE_ENCODING = "double_encoding"
+    PATH_TRAVERSAL = "path_traversal"
+    OPEN_REDIRECT = "open_redirect"
+    MIXED_SCRIPTS = "mixed_scripts"
+    PARSER_CONFUSION = "parser_confusion"
+    QUERY_INJECTION = "query_injection"
+    CREDENTIALS_IN_URL = "credentials_in_url"
+    DANGEROUS_PORT = "dangerous_port"
+    NON_CANONICAL_URL = "non_canonical_url"
+    INVALID_IPV6_ZONE_ID = "invalid_ipv6_zone_id"
 
 class InvalidURLError(URLpError):
     """Exception raised for invalid URLs or components.
@@ -154,7 +186,24 @@ class MissingPortError(InvalidURLError):
     pass
 
 
+class DNSRebindingError(InvalidURLError):
+    """Base exception for DNS rebinding validation failures."""
+
+
+class DNSRateLimitError(DNSRebindingError):
+    """Raised when DNS checks are blocked by rate limiting."""
+
+
+class DNSResolutionError(DNSRebindingError):
+    """Raised when DNS resolution fails."""
+
+
+class DNSConnectionError(DNSRebindingError):
+    """Raised when post-resolution connection safety verification fails."""
+
+
 __all__ = [
+    "ErrorCode",
     "URLpError",
     "InvalidURLError",
     "URLParseError",
@@ -171,4 +220,8 @@ __all__ = [
     "UserInfoParsingError",
     "MissingHostError",
     "MissingPortError",
+    "DNSRebindingError",
+    "DNSRateLimitError",
+    "DNSResolutionError",
+    "DNSConnectionError",
 ]

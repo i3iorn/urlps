@@ -33,6 +33,10 @@ url_str = build("https", "example.com", port=8443, path="/api", query="x=1")
 url = parse_url("https://example.com/path")
 new_url = url.with_host("other.com").with_port(8080)
 print(new_url)  # https://other.com:8080/path
+
+# Policy-based validation
+strict_url = parse_url("https://example.com", policy="strict")
+balanced_url = parse_url("HTTP://EXAMPLE.com", policy="balanced")
 ```
 
 ### Security
@@ -46,9 +50,12 @@ print(new_url)  # https://other.com:8080/path
 - Double-encoded characters
 - Mixed Unicode scripts (homograph attacks)
 - URL parser confusion attacks
+
+`parse_url(..., policy="strict")` additionally blocks:
 - Query parameter injection
 - Dangerous ports (commonly exploited)
 - Non-canonical URL forms (filter bypass prevention)
+- Credentials in URL userinfo by default (`user:pass@host`)
 
 Use `parse_url_unsafe()` for internal/development URLs:
 ```python
@@ -57,6 +64,11 @@ from urlps import parse_url_unsafe
 dev_url = parse_url_unsafe("http://localhost:3000/api")
 internal = parse_url_unsafe("http://192.168.1.100/metrics")
 ```
+
+Need selective hardening? Use policy presets:
+- `policy="strict"` (default): maximum protections
+- `policy="balanced"`: fewer false positives
+- `policy="internal"`: trusted/internal traffic
 
 ## Core Features
 
@@ -114,6 +126,17 @@ def audit_url_parsing(raw_url, parsed_url, exception):
         logging.info(f"Parsed URL to host: {parsed_url.host}")
 
 set_audit_callback(audit_url_parsing)
+```
+
+Structured event callback:
+```python
+from urlps import set_audit_event_callback
+
+def on_event(event):
+    # event includes: timestamp, level, operation, host, error_code, correlation_id
+    print(event)
+
+set_audit_event_callback(on_event)
 ```
 
 ### Component Length Limits

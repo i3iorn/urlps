@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Iterable, List, Mapping, Optional, Tuple
 from urllib.parse import quote, quote_plus, unquote_plus
 from functools import lru_cache
 
@@ -107,8 +107,30 @@ class Builder:
         if serialized_query is not None:
             url += f"?{serialized_query}"
         if fragment:
-            url += f"#{self.percent_encode(fragment, safe=self.FRAGMENT_SAFE)}"
+            url += f"#{self.percent_encode(str(fragment), safe=self.FRAGMENT_SAFE)}"
         return url
+
+    def compose_secure(
+        self,
+        components: Mapping[str, Any],
+        *,
+        policy: Any = None,
+        check_dns: bool = False,
+        check_phishing: bool = False,
+        correlation_id: Optional[str] = None,
+    ) -> str:
+        """Compose then validate a URL under a security policy."""
+        from . import parse_url
+
+        url = self.compose(components)
+        validated = parse_url(
+            url,
+            policy=policy,
+            check_dns=check_dns,
+            check_phishing=check_phishing,
+            correlation_id=correlation_id,
+        )
+        return validated.as_string()
 
     def build_netloc(
         self,
