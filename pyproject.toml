@@ -4,7 +4,6 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "urlps"
-version = "0.4.0"
 description = "Lightweight URL parsing and building helpers (RFC 3986-like)."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
@@ -32,6 +31,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = []
+dynamic = ["version"]
 
 [project.optional-dependencies]
 idna = ["idna>=3.11"]
@@ -46,8 +46,11 @@ Issues = "https://github.com/micro/urlps/issues"
 "Bug Tracker" = "https://github.com/micro/urlps/issues"
 
 [tool.setuptools.packages.find]
-include = ["urlps*"]
+include = ["src.urlps*"]
 exclude = ["tests*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "src.urlps.__version__"}
 
 [tool.black]
 line-length = 120
@@ -92,7 +95,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = ["-v", "--strict-markers", "--tb=short"]
+addopts = ["-v", "--strict-markers", "--tb=short", "--cov=src.urlps", "--cov-report=html", "--cov-report=term-missing"]
 markers = [
     "slow: marks tests as slow",
     "integration: marks tests as integration tests",
@@ -102,7 +105,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["urlps"]
+source = ["src.urlps"]
 branch = true
 
 [tool.coverage.report]

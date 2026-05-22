@@ -18,7 +18,7 @@ pip install -e ".[dev]"
 ## Quick Start
 
 ```python
-from urlps import parse_url, build
+from src.urlps import parse_url, build
 
 # Secure by default - blocks SSRF, private IPs, localhost
 url = parse_url("https://api.example.com/data?token=abc#section")
@@ -59,22 +59,29 @@ balanced_url = parse_url("HTTP://EXAMPLE.com", policy="balanced")
 
 Use `parse_url_unsafe()` for internal/development URLs:
 ```python
-from urlps import parse_url_unsafe
+from src.urlps import parse_url_unsafe
 
 dev_url = parse_url_unsafe("http://localhost:3000/api")
 internal = parse_url_unsafe("http://192.168.1.100/metrics")
 ```
 
 Need selective hardening? Use policy presets:
-- `policy="strict"` (default): maximum protections
-- `policy="balanced"`: fewer false positives
+- `policy="strict"`: maximum protections
+- `policy="balanced"` (default): fewer false positives
 - `policy="internal"`: trusted/internal traffic
+
+## Changelog
+
+- Version history: `CHANGELOG.md`
+- Detailed 0.5.0 notes: `changelogs/0.5.0.md`
 
 ## Core Features
 
 ### Immutable URL Objects
 
 ```python
+from src.urlps import parse_url
+
 url = parse_url("https://user:pass@example.com:8080/path?token=abc")
 print(url.netloc)         # user:pass@example.com:8080
 print(url.effective_port) # 8080
@@ -89,7 +96,7 @@ url5 = url.without_query_param("token")
 ### Security Checks
 
 ```python
-from urlps import parse_url, InvalidURLError
+from src.urlps import parse_url, InvalidURLError
 
 # SSRF protection (enabled by default)
 try:
@@ -98,11 +105,11 @@ except InvalidURLError as e:
     print(f"Rejected: {e}")
 
 # DNS rebinding detection (optional - rate-limited to prevent DoS)
-url = parse_url("https://api.example.com/", check_dns=True)
+url_dns = parse_url("https://api.example.com/", check_dns=True)
 
 # URL canonicalization
-url = parse_url("HTTP://EXAMPLE.COM:80/path?z=1&a=2")
-canonical = url.canonicalize()
+url_raw = parse_url("HTTP://EXAMPLE.COM:80/path?z=1&a=2")
+canonical = url_raw.canonicalize()
 print(canonical.scheme)  # "http"
 print(canonical.host)    # "example.com"
 print(canonical.port)    # None (default port removed)
@@ -116,7 +123,7 @@ print(url.as_string(mask_password=True))  # https://admin:***@api.example.com/
 ### Audit Logging
 
 ```python
-from urlps import set_audit_callback
+from src.urlps import set_audit_callback
 import logging
 
 def audit_url_parsing(raw_url, parsed_url, exception):
@@ -130,7 +137,7 @@ set_audit_callback(audit_url_parsing)
 
 Structured event callback:
 ```python
-from urlps import set_audit_event_callback
+from src.urlps import set_audit_event_callback
 
 def on_event(event):
     # event includes: timestamp, level, operation, host, error_code, correlation_id
@@ -160,11 +167,11 @@ Override length limits via environment variables:
 ```bash
 # PowerShell
 $env:URLPS_MAX_URL_LENGTH = "65536"
-python -c "import urlps.constants as c; print(c.MAX_URL_LENGTH)"
+python -c "import src.urlps.constants as c; print(c.MAX_URL_LENGTH)"
 
 # Bash
 export URLPS_MAX_URL_LENGTH=65536
-python -c 'import urlps.constants as c; print(c.MAX_URL_LENGTH)'
+python -c 'import src.urlps.constants as c; print(c.MAX_URL_LENGTH)'
 ```
 
 Supported variables:
@@ -183,9 +190,10 @@ Supported variables:
 
 | Function | Description |
 | --- | --- |
-| `parse_url(url, *, allow_custom_scheme=False, check_dns=False)` | Parse URL with security checks enabled (recommended) |
-| `parse_url_unsafe(url, *, allow_custom_scheme=False, strict=False)` | Parse URL without security checks (trusted input only) |
+| `parse_url(url, *, allow_custom_scheme=False, check_dns=False, check_phishing=False, policy=None, correlation_id=None)` | Parse URL with policy-aware security checks (recommended) |
+| `parse_url_unsafe(url, *, allow_custom_scheme=False, strict=False, debug=False, check_dns=False, policy=None, correlation_id=None)` | Parse URL for trusted/internal input with optional policy overrides |
 | `build(*scheme_and_host, port=None, path="/", query=None, fragment=None, userinfo=None)` | Build URL string from components |
+| `build_secure(*scheme_and_host, policy=None, check_dns=False, check_phishing=False, correlation_id=None, ...)` | Build and then validate a URL under a selected security policy |
 | `compose_url(components)` | Build URL from components dict |
 
 ### URL Methods
@@ -203,7 +211,7 @@ Supported variables:
 ### Cache Management
 
 ```python
-from urlps import get_cache_info, clear_all_caches
+from src.urlps import get_cache_info, clear_all_caches
 
 # Get cache statistics
 stats = get_cache_info()
@@ -215,7 +223,7 @@ previous = clear_all_caches()
 
 ## Comparison with urllib.parse
 
-| Feature | urllib.parse | urlps |
+| Feature | urllib.parse | src.urlps |
 | --- | --- | --- |
 | Basic URL parsing | ✓ | ✓ |
 | RFC 3986 strict compliance | Partial | ✓ |
@@ -235,19 +243,21 @@ previous = clear_all_caches()
 
 **Use urllib.parse when:** You need zero dependencies and basic parsing is sufficient.
 
-**Use urlps when:** Security matters, you need RFC 3986 strict compliance, or you want immutable URL objects with ergonomic manipulation methods.
+**Use src.urlps when:** Security matters, you need RFC 3986 strict compliance, or you want immutable URL objects with ergonomic manipulation methods.
 
 ## Exceptions
 
 ```python
-from urlps import InvalidURLError, HostValidationError, parse_url
+from src.urlps import InvalidURLError, URLParseError, parse_url
+
+user_input = "https://example.com"
 
 try:
     url = parse_url(user_input)
-except HostValidationError:
-    print("Invalid hostname")
+except URLParseError:
+    print("Malformed URL")
 except InvalidURLError:
-    print("Invalid URL")
+    print("Rejected by security policy")
 ```
 
 Exception hierarchy:

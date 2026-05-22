@@ -51,17 +51,17 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
-from urlps._audit import (
+from ._audit import (
     set_audit_callback,
     get_audit_callback,
     set_audit_event_callback,
     get_audit_event_callback,
 )
-from urlps.exceptions import URLpError, InvalidURLError, URLParseError, URLBuildError
-from urlps.security_policy import SecurityPolicy, PolicyInput, resolve_security_policy
-from urlps.url import URL
+from .exceptions import URLpError, InvalidURLError, URLParseError, URLBuildError
+from .security_policy import SecurityPolicy, PolicyInput, resolve_security_policy
+from .url import URL
 
 
 
