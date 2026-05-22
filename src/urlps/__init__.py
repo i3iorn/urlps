@@ -51,7 +51,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 from ._audit import (
     set_audit_callback,
