@@ -37,7 +37,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install --upgrade build twine
           # test / dev tools
-          pip install pytest bandit pip-audit mypy
+          pip install pytest pytest-cov bandit pip-audit mypy
           # install package (will install runtime dependencies declared in pyproject.toml)
           pip install .
 
