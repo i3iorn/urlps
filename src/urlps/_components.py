@@ -1,12 +1,13 @@
-"""URL component dataclasses.
-
-This module defines immutable dataclasses for URL components,
-used throughout the library for structured data passing.
 """
+URL component dataclasses.
+
+Immutable, auditable, security‑first structures for URL parsing and manipulation.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, Dict
 import sys
 
 QueryPairs = List[Tuple[str, Optional[str]]]
@@ -14,10 +15,28 @@ QueryPairs = List[Tuple[str, Optional[str]]]
 _SUPPORTS_SLOTS = sys.version_info >= (3, 10)
 
 
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+class URLComponentError(Exception):
+    """Raised when invalid URL component data is provided."""
+
+
+# ---------------------------------------------------------------------------
+# Data Models
+# ---------------------------------------------------------------------------
+
 @dataclass(frozen=True, slots=_SUPPORTS_SLOTS)
 class SecurityFinding:
-    """Structured finding emitted by URL security validation."""
+    """Structured security finding emitted by URL validation.
 
+    Attributes:
+        severity: Severity level (e.g., "low", "medium", "high").
+        code: Machine‑readable identifier for the finding.
+        message: Human‑readable description of the issue.
+        component: Optional URL component associated with the finding.
+    """
     severity: str
     code: str
     message: str
@@ -26,13 +45,21 @@ class SecurityFinding:
 
 @dataclass(frozen=True, slots=_SUPPORTS_SLOTS)
 class ParseResult:
-    """Result of parsing a URL string.
+    """Immutable result of parsing a URL string.
 
-    This immutable dataclass contains all components extracted from a URL,
-    making the parser stateless and thread-safe.
-
-    Performance: Uses __slots__ on Python 3.10+ for reduced memory footprint.
+    Attributes:
+        scheme: URL scheme (e.g., "https").
+        userinfo: User information section.
+        host: Hostname or IP literal.
+        port: Port number if present.
+        path: URL path component.
+        query: Raw query string.
+        fragment: Fragment identifier.
+        query_pairs: Parsed query key/value pairs.
+        recognized_scheme: Whether the scheme is recognized by the parser.
+        security_findings: List of security findings discovered during parsing.
     """
+
     scheme: Optional[str] = None
     userinfo: Optional[str] = None
     host: Optional[str] = None
@@ -44,8 +71,8 @@ class ParseResult:
     recognized_scheme: Optional[bool] = None
     security_findings: List[SecurityFinding] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
-        """Convert to dictionary of URL components."""
+    def to_dict(self) -> Dict[str, Any]:
+        """Return a dictionary representation of the URL components."""
         return {
             "scheme": self.scheme,
             "userinfo": self.userinfo,
@@ -60,13 +87,11 @@ class ParseResult:
 
 @dataclass(frozen=True, slots=_SUPPORTS_SLOTS)
 class URLComponents:
-    """Components of a URL for building or manipulation.
+    """Immutable URL components for construction or manipulation.
 
-    Unlike ParseResult, this can be used for constructing URLs
-    with all components optional.
-
-    Performance: Uses __slots__ on Python 3.10+ for reduced memory footprint.
+    Attributes mirror ParseResult but are intended for building URLs.
     """
+
     scheme: Optional[str] = None
     userinfo: Optional[str] = None
     host: Optional[str] = None
@@ -76,27 +101,74 @@ class URLComponents:
     fragment: Optional[str] = None
     query_pairs: QueryPairs = field(default_factory=list)
 
-    def with_updates(self, **kwargs: Any) -> 'URLComponents':
-        """Create a new URLComponents with specified fields updated."""
-        scheme = kwargs.get("scheme", self.scheme)
-        userinfo = kwargs.get("userinfo", self.userinfo)
-        host = kwargs.get("host", self.host)
-        port_val = kwargs.get("port", self.port)
-        port = int(port_val) if port_val is not None else None
-        path = kwargs.get("path", self.path)
-        query = kwargs.get("query", self.query)
-        fragment = kwargs.get("fragment", self.fragment)
-        query_pairs = kwargs.get("query_pairs", self.query_pairs)
-        return URLComponents(
-            scheme=scheme,
-            userinfo=userinfo,
-            host=host,
-            port=port,
-            path=path,
-            query=query,
-            fragment=fragment,
-            query_pairs=query_pairs,
-        )
+    # -----------------------------------------------------------------------
+    # Public API
+    # -----------------------------------------------------------------------
+
+    def with_updates(self, **updates: Any) -> "URLComponents":
+        """Return a new URLComponents with validated updates applied.
+
+        Raises:
+            URLComponentError: If an update contains invalid data.
+        """
+        validated = {
+            "scheme": self._validated_str(updates.get("scheme", self.scheme)),
+            "userinfo": self._validated_str(updates.get("userinfo", self.userinfo)),
+            "host": self._validated_str(updates.get("host", self.host)),
+            "port": self._validated_port(updates.get("port", self.port)),
+            "path": self._validated_str(updates.get("path", self.path), allow_empty=True),
+            "query": self._validated_str(updates.get("query", self.query)),
+            "fragment": self._validated_str(updates.get("fragment", self.fragment)),
+            "query_pairs": self._validated_query_pairs(
+                updates.get("query_pairs", self.query_pairs)
+            ),
+        }
+
+        return URLComponents(**validated)
+
+    # -----------------------------------------------------------------------
+    # Validation Helpers
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _validated_str(value: Any, allow_empty: bool = False) -> Optional[str]:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise URLComponentError("Expected string or None for text fields.")
+        if not allow_empty and value == "":
+            raise URLComponentError("Empty string not allowed for this field.")
+        return value
+
+    @staticmethod
+    def _validated_port(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        if isinstance(value, int) and 0 < value <= 65535:
+            return value
+        raise URLComponentError("Port must be an integer in range 1–65535.")
+
+    @staticmethod
+    def _validated_query_pairs(value: Any) -> QueryPairs:
+        if not isinstance(value, list):
+            raise URLComponentError("query_pairs must be a list of (key, value) tuples.")
+        validated_pairs: QueryPairs = []
+        for pair in value:
+            if (
+                not isinstance(pair, tuple)
+                or len(pair) != 2
+                or not isinstance(pair[0], str)
+                or (pair[1] is not None and not isinstance(pair[1], str))
+            ):
+                raise URLComponentError("Invalid query pair structure.")
+            validated_pairs.append(pair)
+        return validated_pairs
 
 
-__all__ = ["ParseResult", "URLComponents", "QueryPairs", "SecurityFinding"]
+__all__ = [
+    "ParseResult",
+    "URLComponents",
+    "QueryPairs",
+    "SecurityFinding",
+    "URLComponentError",
+]

@@ -1,65 +1,35 @@
 """
-Exception hierarchy for urlps: all errors raised by urlps are subclasses of URLpError.
+Security‑focused exception hierarchy for urlps.
 
-Each exception provides a message, the value that caused the error (if applicable),
-and the URL component involved (if applicable). This enables precise error handling
-and better diagnostics for users and tools.
+All exceptions inherit from URLpError and provide:
+- A human‑readable message
+- Optional offending value (safely truncated)
+- Optional URL component name
+- Optional typed error code
 """
 
+from __future__ import annotations
+
 from enum import Enum
-from typing import Any, Optional
-
-# Maximum length for value representation in error messages
-_MAX_VALUE_LENGTH = 200
+from typing import Any, Optional, Final
 
 
-def _truncate_value(value: Any, max_length: int = _MAX_VALUE_LENGTH) -> str:
-    """Truncate a value's repr if it exceeds max_length."""
-    value_repr = repr(value)
-    if len(value_repr) > max_length:
-        return value_repr[:max_length - 3] + "..."
-    return value_repr
+_MAX_VALUE_LENGTH: Final[int] = 200
 
 
-class URLpError(Exception):
-    """Base exception for URLp errors.
-
-    Args:
-        message: Human-readable error message.
-        value: The value that caused the error (optional).
-        component: The URL component involved (optional).
-    Attributes:
-        message (str): The error message.
-        value (Any): The value that caused the error, if available.
-        component (Optional[str]): The URL component involved, if available.
-    """
-    def __init__(
-        self,
-        message: str = "",
-        value: Any = None,
-        component: Optional[str] = None,
-        code: Optional["ErrorCode"] = None,
-    ) -> None:
-        super().__init__(message)
-        self.value: Any = value
-        self.component: Optional[str] = component
-        self.message: str = message
-        self.code: Optional[ErrorCode] = code
-
-    def __str__(self) -> str:
-        base = super().__str__()
-        if self.value is not None or self.component:
-            truncated_value = _truncate_value(self.value)
-            if self.code is not None:
-                return f"{base} (code={self.code.value}, component={self.component!r}, value={truncated_value})"
-            return f"{base} (component={self.component!r}, value={truncated_value})"
-        if self.code is not None:
-            return f"{base} (code={self.code.value})"
-        return base
+def _safe_truncated_repr(value: Any, max_length: int = _MAX_VALUE_LENGTH) -> str:
+    """Return a truncated repr(value) with strict length limits."""
+    try:
+        raw = repr(value)
+    except Exception:
+        return "<unrepresentable>"
+    if len(raw) > max_length:
+        return raw[: max_length - 3] + "..."
+    return raw
 
 
 class ErrorCode(Enum):
-    """Typed error codes for stable downstream error handling."""
+    """Stable error codes for structured downstream handling."""
 
     SSRF_RISK = "ssrf_risk"
     DNS_RATE_LIMITED = "dns_rate_limited"
@@ -77,121 +47,126 @@ class ErrorCode(Enum):
     NON_CANONICAL_URL = "non_canonical_url"
     INVALID_IPV6_ZONE_ID = "invalid_ipv6_zone_id"
 
-class InvalidURLError(URLpError):
-    """Exception raised for invalid URLs or components.
 
-    Args:
-        message: Error message.
-        value: The invalid value.
-        component: The URL component (e.g., 'host', 'port').
+class URLpError(Exception):
+    """Base class for all urlps exceptions.
+
+    Attributes:
+        message: Human‑readable description.
+        value: Offending value (optional).
+        component: URL component name (optional).
+        code: Typed error code (optional).
     """
-    pass
+
+    __slots__ = ("message", "value", "component", "code")
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        value: Any = None,
+        component: Optional[str] = None,
+        code: Optional[ErrorCode] = None,
+    ) -> None:
+        super().__init__(message)
+        self.message: str = message
+        self.value: Any = value
+        self.component: Optional[str] = component
+        self.code: Optional[ErrorCode] = code
+
+    def __str__(self) -> str:
+        base = self.message
+
+        parts = []
+        if self.code is not None:
+            parts.append(f"code={self.code.value}")
+        if self.component is not None:
+            parts.append(f"component={self.component!r}")
+        if self.value is not None:
+            parts.append(f"value={_safe_truncated_repr(self.value)}")
+
+        if parts:
+            return f"{base} ({', '.join(parts)})"
+        return base
+
+
+# ---------------------------------------------------------------------------
+# Specific Exception Types
+# ---------------------------------------------------------------------------
+
+class SecurityPolicyError(URLpError):
+    """Raised when an invalid or unsupported security policy is requested."""
+
+class InvalidURLError(URLpError):
+    """Raised for invalid URLs or invalid URL components."""
+
 
 class URLParseError(InvalidURLError):
-    """Exception raised for errors during URL parsing.
+    """Raised when parsing a URL fails."""
 
-    Raised when a URL string cannot be parsed or fails validation.
-    """
-    pass
 
 class URLBuildError(InvalidURLError):
-    """Exception raised for errors during URL building.
+    """Raised when constructing a URL from components fails."""
 
-    Raised when constructing a URL from components fails validation.
-    """
-    pass
 
 class UnsupportedSchemeError(InvalidURLError):
-    """Exception raised for unsupported URL schemes.
+    """Raised when a scheme is unrecognized or disallowed."""
 
-    Raised when a scheme is not recognized or not allowed by the parser.
-    """
-    pass
 
 class RelativeReferenceError(InvalidURLError):
-    """Exception raised for errors in relative URL references.
+    """Raised when a relative reference is invalid."""
 
-    Raised when parsing or building a relative reference fails.
-    """
-    pass
 
 class QuerySerializationError(InvalidURLError):
-    """Exception raised for errors during query serialization.
+    """Raised when serializing query parameters fails."""
 
-    Raised when serializing query parameters fails.
-    """
-    pass
 
 class QueryParsingError(InvalidURLError):
-    """Exception raised for errors during query parsing.
+    """Raised when parsing a query string fails."""
 
-    Raised when parsing a query string fails or is invalid.
-    """
-    pass
 
 class HostValidationError(InvalidURLError):
-    """Exception raised for invalid hostnames.
+    """Raised when a host component is invalid."""
 
-    Raised when a host component is invalid or fails validation.
-    """
-    pass
 
 class PortValidationError(InvalidURLError):
-    """Exception raised for invalid port numbers.
+    """Raised when a port is missing or invalid."""
 
-    Raised when a port is missing, out of range, or not numeric.
-    """
-    pass
 
 class PathNormalizationError(InvalidURLError):
-    """Exception raised for errors during path normalization.
+    """Raised when a path cannot be normalized."""
 
-    Raised when a path cannot be normalized or is invalid.
-    """
-    pass
 
 class FragmentEncodingError(InvalidURLError):
-    """Exception raised for errors during fragment encoding.
+    """Raised when a fragment is invalid or cannot be encoded."""
 
-    Raised when a fragment is invalid or cannot be encoded.
-    """
-    pass
 
 class NetlocBuildingError(InvalidURLError):
-    """Exception raised for errors during netloc building.
+    """Raised when constructing userinfo@host:port fails."""
 
-    Raised when constructing the netloc (userinfo@host:port) fails.
-    """
-    pass
 
 class UserInfoParsingError(InvalidURLError):
-    """Exception raised for errors during userinfo parsing.
+    """Raised when userinfo is invalid or cannot be parsed."""
 
-    Raised when the userinfo component is invalid or cannot be parsed.
-    """
-    pass
 
 class MissingHostError(InvalidURLError):
-    """Exception raised when a required host is missing.
+    """Raised when a required host is missing."""
 
-    Raised when a host is required but not provided.
-    """
-    pass
 
 class MissingPortError(InvalidURLError):
-    """Exception raised when a required port is missing.
+    """Raised when a required port is missing."""
 
-    Raised when a port is required but not provided.
-    """
-    pass
 
+# ---------------------------------------------------------------------------
+# DNS‑related Exceptions
+# ---------------------------------------------------------------------------
 
 class DNSRebindingError(InvalidURLError):
-    """Base exception for DNS rebinding validation failures."""
+    """Base class for DNS rebinding validation failures."""
 
 
 class DNSRateLimitError(DNSRebindingError):
-    """Raised when DNS checks are blocked by rate limiting."""
+    """Raised when DNS checks exceed rate limits."""
 
 
 class DNSResolutionError(DNSRebindingError):
@@ -199,7 +174,7 @@ class DNSResolutionError(DNSRebindingError):
 
 
 class DNSConnectionError(DNSRebindingError):
-    """Raised when post-resolution connection safety verification fails."""
+    """Raised when post‑resolution connection checks fail."""
 
 
 __all__ = [

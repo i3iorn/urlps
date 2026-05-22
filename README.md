@@ -70,11 +70,6 @@ Need selective hardening? Use policy presets:
 - `policy="balanced"` (default): fewer false positives
 - `policy="internal"`: trusted/internal traffic
 
-## Changelog
-
-- Version history: `CHANGELOG.md`
-- Detailed 0.5.0 notes: `changelogs/0.5.0.md`
-
 ## Core Features
 
 ### Immutable URL Objects
