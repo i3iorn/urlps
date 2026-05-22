@@ -1,6 +1,6 @@
 """Tests for enhanced Punycode/IDN validation."""
 import pytest
-from urlps._security import has_suspicious_punycode
+from src.urlps._security import has_suspicious_punycode
 
 
 class TestPunycodeDetection:

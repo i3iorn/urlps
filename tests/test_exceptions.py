@@ -1,5 +1,5 @@
 """Tests for exception handling and formatting."""
-from urlps.exceptions import (
+from src.urlps.exceptions import (
     URLpError,
     InvalidURLError,
     URLParseError,

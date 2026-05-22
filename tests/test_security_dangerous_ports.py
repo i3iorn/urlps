@@ -1,7 +1,7 @@
 """Tests for dangerous port validation."""
 import pytest
-from urlps._security import is_dangerous_port
-from urlps.constants import DANGEROUS_PORTS
+from src.urlps._security import is_dangerous_port
+from src.urlps.constants import DANGEROUS_PORTS
 
 
 class TestDangerousPorts:

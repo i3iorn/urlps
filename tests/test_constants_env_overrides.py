@@ -17,8 +17,8 @@ DEFAULT_MAX_URL_LENGTH = 32 * 1024
 def _import_constants_fresh():
     # Make sure local package is importable and re-import module to run import-time overrides
     _ensure_project_in_path()
-    sys.modules.pop('urlps.constants', None)
-    return importlib.import_module('urlps.constants')
+    sys.modules.pop('src.urlps.constants', None)
+    return importlib.import_module('src.urlps.constants')
 
 
 def test_valid_override(monkeypatch):
@@ -29,17 +29,17 @@ def test_valid_override(monkeypatch):
 
 def test_non_integer_warns_and_ignores(monkeypatch):
     monkeypatch.setenv('URLPS_MAX_URL_LENGTH', 'not-an-int')
-    sys.modules.pop('urlps.constants', None)
+    sys.modules.pop('src.urlps.constants', None)
     with pytest.warns(UserWarning, match="not an integer"):
-        const = importlib.import_module('urlps.constants')
+        const = importlib.import_module('src.urlps.constants')
     assert const.MAX_URL_LENGTH == DEFAULT_MAX_URL_LENGTH
 
 
 def test_non_positive_warns_and_ignores(monkeypatch):
     monkeypatch.setenv('URLPS_MAX_URL_LENGTH', '0')
-    sys.modules.pop('urlps.constants', None)
+    sys.modules.pop('src.urlps.constants', None)
     with pytest.warns(UserWarning, match="must be a positive integer"):
-        const = importlib.import_module('urlps.constants')
+        const = importlib.import_module('src.urlps.constants')
     assert const.MAX_URL_LENGTH == DEFAULT_MAX_URL_LENGTH
 
 

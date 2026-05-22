@@ -1,7 +1,7 @@
 """Tests for DNS rate limiting."""
 import time
 import pytest
-from urlps._security import (
+from src.urlps._security import (
     DNSRateLimiter,
     get_dns_rate_limiter,
     reset_dns_rate_limiter,

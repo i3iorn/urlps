@@ -1,7 +1,7 @@
 import pytest
 
-from urlps._builder import Builder
-from urlps.exceptions import InvalidURLError
+from src.urlps._builder import Builder
+from src.urlps.exceptions import InvalidURLError
 
 
 def test_compose_infers_root_path_when_host_present() -> None:

@@ -14,7 +14,7 @@ Tests for:
 import pytest
 from unittest.mock import Mock, patch
 
-from urlps import (
+from src.urlps import (
     parse_url,
     parse_url_unsafe,
     InvalidURLError,
@@ -22,16 +22,16 @@ from urlps import (
     set_audit_callback,
     get_audit_callback,
 )
-from urlps._audit import get_callback_failure_metrics, reset_callback_failure_metrics
-from urlps.constants import PASSWORD_MASK
-from urlps._security import (
+from src.urlps._audit import get_callback_failure_metrics, reset_callback_failure_metrics
+from src.urlps.constants import PASSWORD_MASK
+from src.urlps._security import (
     is_open_redirect_risk,
     check_dns_rebinding,
     has_double_encoding,
     has_mixed_scripts,
     has_path_traversal,
 )
-from urlps._validation import Validator
+from src.urlps._validation import Validator
 
 
 class TestOpenRedirectDetection:
@@ -148,7 +148,7 @@ class TestDNSRebindingProtection:
         url2 = parse_url_unsafe("http://google.com/", check_dns=False)
         assert url2.host == "google.com"
 
-    @patch('urlps._security.socket.getaddrinfo')
+    @patch('src.urlps._security.socket.getaddrinfo')
     def test_dns_resolves_to_private_blocked(self, mock_getaddrinfo):
         """DNS that resolves to private IP should be blocked with check_dns."""
         mock_getaddrinfo.return_value = [
@@ -157,7 +157,7 @@ class TestDNSRebindingProtection:
 
         assert not check_dns_rebinding("evil.example.com")
 
-    @patch('urlps._security.socket.getaddrinfo')
+    @patch('src.urlps._security.socket.getaddrinfo')
     def test_dns_resolves_to_public_allowed(self, mock_getaddrinfo):
         """DNS that resolves to public IP should be allowed."""
         mock_getaddrinfo.return_value = [

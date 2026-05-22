@@ -1,7 +1,7 @@
 """Tests for dangerous URL scheme blocking."""
 import pytest
-from urlps import parse_url, parse_url_unsafe, InvalidURLError
-from urlps.constants import UNSAFE_SCHEMES
+from src.urlps import parse_url, parse_url_unsafe, InvalidURLError
+from src.urlps.constants import UNSAFE_SCHEMES
 
 
 class TestDangerousSchemes:

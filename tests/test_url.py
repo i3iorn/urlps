@@ -1,9 +1,9 @@
 """Tests for the URL class and related functionality."""
 import pytest
 
-from urlps import InvalidURLError, URL
-from urlps._relative import parse_relative_reference, build_relative_reference, round_trip_relative
-from urlps._parser import Parser
+from src.urlps import InvalidURLError, URL
+from src.urlps._relative import parse_relative_reference, build_relative_reference, round_trip_relative
+from src.urlps._parser import Parser
 
 
 def test_netloc_parsing_with_userinfo_and_port() -> None:
@@ -244,7 +244,7 @@ def test_without_query() -> None:
 
 def test_url_components_with_updates() -> None:
     """Test URLComponents.with_updates() works with partial kwargs."""
-    from urlps._components import URLComponents
+    from src.urlps._components import URLComponents
 
     # Create initial components
     components = URLComponents(

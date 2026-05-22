@@ -1,6 +1,6 @@
 import pytest
 
-from urlps import (
+from src.urlps import (
     SecurityPolicy,
     InvalidURLError,
     build_secure,

@@ -1,5 +1,5 @@
-from urlps._validation import Validator
-from urlps._builder import Builder
+from src.urlps._builder import Builder
+from src.urlps._validation import Validator
 
 
 def test_is_valid_ipv6_various():
