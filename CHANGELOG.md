@@ -2,6 +2,12 @@
 
 All notable changes to `urlps` are documented here.
 
+## 0.5.1 - 2026-06-22
+
+- Added focused coverage suites (`tests/test_coverage_gaps.py`, `tests/test_coverage_gaps2.py`) for parser, security, validation, URL helpers, and facade flows.
+- Added regression tests for defensive error-handling paths (IDNA failures, query parsing errors, DNS failures/rate limiting, parser-confusion and canonicalization branches).
+- Improved confidence in secure defaults and fallback behavior without introducing breaking API changes.
+
 ## 0.5.0 - 2026-05-22
 
 - Added policy-based security controls via `SecurityPolicy` (`strict`, `balanced`, `internal`).
