@@ -199,4 +199,5 @@ __all__ = [
     "DNSRateLimitError",
     "DNSResolutionError",
     "DNSConnectionError",
+    "SecurityPolicyError"
 ]

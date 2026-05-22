@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Optional, Type, cast
 
+from ._security import SecurityPolicy, has_parser_confusion, extract_host_and_path, is_open_redirect_risk, \
+    has_path_traversal, redact_url_for_logs, validate_url_security
 from ._builder import Builder, QueryPairs
 from ._audit import (
     set_audit_callback,
@@ -27,8 +29,6 @@ from .exceptions import InvalidURLError, URLParseError
 from ._parser import Parser
 from ._components import SecurityFinding
 from ._validation import Validator, is_valid_userinfo
-from . import _security
-from .security_policy import SecurityPolicy
 
 
 def _check_type(value: Any, expected: Type, name: str) -> None:
@@ -106,13 +106,13 @@ class URL:
             raise URLParseError("URL contains invalid control characters.")
 
         try:
-            if self._security_policy.enforce_parser_confusion and _security.has_parser_confusion(url):
-                _, pre_path = _security.extract_host_and_path(url)
+            if self._security_policy.enforce_parser_confusion and has_parser_confusion(url):
+                _, pre_path = extract_host_and_path(url)
                 if not (
                     pre_path
                     and (
-                        _security.is_open_redirect_risk(pre_path)
-                        or _security.has_path_traversal(pre_path)
+                        is_open_redirect_risk(pre_path)
+                        or has_path_traversal(pre_path)
                     )
                 ):
                     raise InvalidURLError(
@@ -372,7 +372,7 @@ class URL:
         """Validate this URL against a security policy and return findings."""
         effective_policy = policy if policy is not None else self._security_policy
         candidate_url = raw_url if raw_url is not None else self.as_string()
-        findings = _security.validate_url_security(
+        findings = validate_url_security(
             candidate_url,
             policy=effective_policy,
             check_dns=self._check_dns,
@@ -384,7 +384,7 @@ class URL:
 
     def redacted(self) -> str:
         """Return a log-safe representation with sensitive values redacted."""
-        return _security.redact_url_for_logs(self.as_string())
+        return redact_url_for_logs(self.as_string())
 
     def _to_dict(self) -> Dict[str, Any]:
         """Convert URL to dictionary of components."""

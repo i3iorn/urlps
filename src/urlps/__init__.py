@@ -60,7 +60,7 @@ from ._audit import (
     get_audit_event_callback,
 )
 from .exceptions import URLpError, InvalidURLError, URLParseError, URLBuildError
-from .security_policy import SecurityPolicy, PolicyInput, resolve_security_policy
+from ._security.policy import SecurityPolicy, PolicyInput, resolve_security_policy
 from .url import URL
 
 

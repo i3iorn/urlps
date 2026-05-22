@@ -246,4 +246,4 @@ def resolve_security_policy(
     )
 
 
-__all__ = ["SecurityPolicy", "PolicyInput", "SecurityPolicyError", "resolve_security_policy"]
+__all__ = ["SecurityPolicy", "PolicyInput", "resolve_security_policy"]
