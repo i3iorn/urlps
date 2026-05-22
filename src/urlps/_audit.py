@@ -73,31 +73,36 @@ def invoke_audit_callback(
         event_callback = _audit_event_callback
         redact_urls = _audit_callback_redact_urls
 
+    # Fast path for the common case where auditing is disabled.
+    if callback is None and event_callback is None:
+        return
+
     logged_url = redact_url_for_logs(raw_url) if redact_urls else raw_url
-    event: Dict[str, Any] = {
-        "timestamp": time.time(),
-        "level": "error" if exception is not None else "info",
-        "operation": "url_parse",
-        "raw_url": logged_url,
-        "host": parsed_url.host if parsed_url is not None else None,
-        "error_type": type(exception).__name__ if exception is not None else None,
-        "error_code": getattr(exception, "code", None).value if getattr(exception, "code", None) else None,
-        "correlation_id": correlation_id,
-    }
 
     if callback is not None:
-        callback_fn = callback
+        assert callback is not None
         try:
-            callback_fn(logged_url, parsed_url, exception)
+            callback(logged_url, parsed_url, exception)
         except Exception as e:
             with _audit_callback_lock:
                 _callback_failure_count += 1
                 _last_callback_error = e
 
     if event_callback is not None:
-        event_callback_fn = event_callback
+        assert event_callback is not None
+        exception_code = getattr(exception, "code", None) if exception is not None else None
+        event: Dict[str, Any] = {
+            "timestamp": time.time(),
+            "level": "error" if exception is not None else "info",
+            "operation": "url_parse",
+            "raw_url": logged_url,
+            "host": parsed_url.host if parsed_url is not None else None,
+            "error_type": type(exception).__name__ if exception is not None else None,
+            "error_code": exception_code.value if exception_code is not None else None,
+            "correlation_id": correlation_id,
+        }
         try:
-            event_callback_fn(event)
+            event_callback(event)
         except Exception as e:
             with _audit_callback_lock:
                 _callback_failure_count += 1

@@ -182,6 +182,23 @@ class TestAudit:
         invoke_audit_callback("https://user:secret@example.com", None, None)
         assert "secret" in received[0]
 
+    def test_invoke_audit_callback_without_registered_callbacks_is_noop(self):
+        """invoke_audit_callback() should no-op safely when callbacks are unset."""
+        from src.urlps._audit import (
+            set_audit_callback,
+            set_audit_event_callback,
+            invoke_audit_callback,
+            get_callback_failure_metrics,
+        )
+
+        set_audit_callback(None)
+        set_audit_event_callback(None)
+        invoke_audit_callback("https://user:secret@example.com?token=abc", None, None)
+
+        metrics = get_callback_failure_metrics()
+        assert metrics["failure_count"] == 0
+        assert metrics["last_error"] is None
+
 
 # ---------------------------------------------------------------------------
 # _builder.py gaps
