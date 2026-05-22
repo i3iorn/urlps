@@ -24,7 +24,7 @@ import pstats
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from urlps import parse_url
+from src.urlps import parse_url
 
 OUTPUT_DIR = Path(__file__).parent
 PROF_PATH = OUTPUT_DIR / "profile_results.prof"
