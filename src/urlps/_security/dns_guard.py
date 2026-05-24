@@ -15,6 +15,10 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Callable, Deque, Dict, Iterable, Optional, Tuple
 
+from build.lib.src.urlps._security.ip_utils import (
+    _strip_ipv6_brackets, _check_direct_ip_safe, _check_resolved_ips_safe, _verify_connection_safe
+)
+
 from ..constants import (
     DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS,
     DEFAULT_DNS_LOOKUPS_PER_HOST,
@@ -23,12 +27,7 @@ from ..constants import (
     DEFAULT_DNS_TIME_WINDOW_SECONDS,
 )
 from ..exceptions import ErrorCode, DNSRateLimiterError
-from .ip_utils import (
-    _check_direct_ip_safe,
-    _check_resolved_ips_safe,
-    _strip_ipv6_brackets,
-    _verify_connection_safe,
-)
+
 
 logger = logging.getLogger(__name__)
 
