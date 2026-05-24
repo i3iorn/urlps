@@ -30,7 +30,7 @@ def test_valid_override(monkeypatch):
 def test_non_integer_warns_and_ignores(monkeypatch):
     monkeypatch.setenv('URLPS_MAX_URL_LENGTH', 'not-an-int')
     sys.modules.pop('src.urlps.constants', None)
-    with pytest.warns(UserWarning, match="not an integer"):
+    with pytest.warns(RuntimeWarning, match="must be an integer"):
         const = importlib.import_module('src.urlps.constants')
     assert const.MAX_URL_LENGTH == DEFAULT_MAX_URL_LENGTH
 
@@ -38,7 +38,7 @@ def test_non_integer_warns_and_ignores(monkeypatch):
 def test_non_positive_warns_and_ignores(monkeypatch):
     monkeypatch.setenv('URLPS_MAX_URL_LENGTH', '0')
     sys.modules.pop('src.urlps.constants', None)
-    with pytest.warns(UserWarning, match="must be a positive integer"):
+    with pytest.warns(RuntimeWarning, match="must be a positive integer"):
         const = importlib.import_module('src.urlps.constants')
     assert const.MAX_URL_LENGTH == DEFAULT_MAX_URL_LENGTH
 

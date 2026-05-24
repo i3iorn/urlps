@@ -16,6 +16,8 @@ from __future__ import annotations
 import pytest
 from unittest.mock import patch
 
+from src.urlps.exceptions import SecurityPolicyError
+
 
 # ---------------------------------------------------------------------------
 # __init__.py gaps
@@ -45,7 +47,7 @@ class TestInitBuild:
     def test_build_secure_with_policy(self):
         """build_secure() with a custom policy."""
         from src.urlps import build_secure
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security import SecurityPolicy
         policy = SecurityPolicy.balanced()
         result = build_secure("https", "example.com", path="/v1", policy=policy)
         assert "https://example.com/v1" in result
@@ -87,7 +89,7 @@ class TestInitBuild:
     def test_parse_url_with_policy_instance(self):
         """parse_url() passing a SecurityPolicy instance directly."""
         from src.urlps import parse_url
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security import SecurityPolicy
         policy = SecurityPolicy.balanced()
         url = parse_url("https://example.com/", policy=policy)
         assert url.host == "example.com"
@@ -95,7 +97,7 @@ class TestInitBuild:
     def test_parse_url_unsafe_with_policy(self):
         """parse_url_unsafe() with explicit policy uses resolve_security_policy."""
         from src.urlps import parse_url_unsafe
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security import SecurityPolicy
         policy = SecurityPolicy.internal()
         url = parse_url_unsafe("http://localhost/test", policy=policy)
         assert url.host == "localhost"
@@ -374,33 +376,33 @@ class TestParser:
 class TestSecurityPrivateChecks:
     def test_check_ipv6_private_invalid_address(self):
         """Lines 80-81: ValueError in _check_ipv6_private returns False."""
-        from src.urlps._security import _check_ipv6_private
+        from src.urlps._security.ip_utils import _check_ipv6_private
         result = _check_ipv6_private("[not_a_valid_ipv6]")
         assert result is False
 
     def test_check_ipv6_private_loopback(self):
         """_check_ipv6_private returns True for loopback ::1."""
-        from src.urlps._security import _check_ipv6_private
+        from src.urlps._security.ip_utils import _check_ipv6_private
         result = _check_ipv6_private("[::1]")
         assert result is True
 
     def test_is_octal_hex_ip_private_valid_octal(self):
         """Lines 151-152: try block in _is_octal_hex_ip_private succeeds."""
-        from src.urlps._security import _is_octal_hex_ip_private
+        from src.urlps._security.ip_utils import _is_octal_hex_ip_private
         # 0177 = 127 in octal -> 127.0.0.1 is loopback
         result = _is_octal_hex_ip_private("0177.0.0.1")
         assert result is True
 
     def test_is_octal_hex_ip_private_hex(self):
         """_is_octal_hex_ip_private with hex octet."""
-        from src.urlps._security import _is_octal_hex_ip_private
+        from src.urlps._security.ip_utils import _is_octal_hex_ip_private
         # 0x7f = 127 hex -> 127.0.0.1 is loopback
         result = _is_octal_hex_ip_private("0x7f.0x0.0x0.0x1")
         assert result is True
 
     def test_check_resolved_ips_safe_invalid_ip(self):
         """Lines 169-170: ValueError on invalid sockaddr continues."""
-        from src.urlps._security import _check_resolved_ips_safe
+        from src.urlps._security.ip_utils import _check_resolved_ips_safe
         # Simulate addr_info with an invalid IP string in sockaddr
         addr_info = [(2, 1, 6, "", ("invalid_ip_string", 80))]
         result = _check_resolved_ips_safe(addr_info)
@@ -409,7 +411,7 @@ class TestSecurityPrivateChecks:
 
     def test_verify_connection_safe_empty_addr_info(self):
         """Line 177: _verify_connection_safe with empty list returns True."""
-        from src.urlps._security import _verify_connection_safe
+        from src.urlps._security.ip_utils import _verify_connection_safe
         result = _verify_connection_safe([], 1.0)
         assert result is True
 
@@ -450,40 +452,6 @@ class TestSecurityDNS:
         safe, error = check_dns_rebinding_detailed("93.184.216.34")  # example.com
         assert safe is True
         assert error is None
-
-    def test_dns_rate_limit_blocked(self):
-        """Lines 243-244: rate limit blocks lookup returns DNS_RATE_LIMITED."""
-        from src.urlps._security import check_dns_rebinding_detailed, DNSRateLimiter
-        from src.urlps.exceptions import ErrorCode
-        # Use a limiter with zero capacity to force rate limiting
-        limiter = DNSRateLimiter(max_lookups_per_second=0.0001, max_lookups_per_host=0)
-        with patch("src.urlps._security.get_dns_rate_limiter", return_value=limiter):
-            safe, error = check_dns_rebinding_detailed(
-                "somehost.example.com", enforce_rate_limit=True
-            )
-        assert safe is False
-        assert error == ErrorCode.DNS_RATE_LIMITED
-
-    def test_reset_dns_rate_limiter_when_none(self):
-        """Line 816->exit: reset_dns_rate_limiter does nothing when not initialized."""
-        import src.urlps._security as sec
-        original = sec._dns_rate_limiter
-        try:
-            sec._dns_rate_limiter = None
-            sec.reset_dns_rate_limiter()  # should not raise
-        finally:
-            sec._dns_rate_limiter = original
-
-    def test_reset_dns_rate_limiter_when_set(self):
-        """reset_dns_rate_limiter() resets the global limiter state."""
-        from src.urlps._security import (
-            reset_dns_rate_limiter, get_dns_rate_limiter
-        )
-        limiter = get_dns_rate_limiter()
-        limiter.tokens = 0  # exhaust tokens
-        reset_dns_rate_limiter()
-        limiter_after = get_dns_rate_limiter()
-        assert limiter_after.tokens > 0
 
 
 class TestSecurityMixedScripts:
@@ -830,7 +798,7 @@ class TestSecurityMiscellaneous:
     def test_collect_security_findings_no_scheme(self):
         """Line 1573: URL without :// skips host/path checks."""
         from src.urlps._security import collect_security_findings
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         findings = collect_security_findings("example.com/path", policy=SecurityPolicy.strict())
         # Should not crash and may have findings for double encoding etc
         assert isinstance(findings, list)
@@ -838,7 +806,7 @@ class TestSecurityMiscellaneous:
     def test_collect_security_findings_port_value_error(self):
         """Lines 1599-1600: ValueError on bad port handled gracefully."""
         from src.urlps._security import collect_security_findings
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         policy = SecurityPolicy.strict()
         # A URL with a non-numeric port causes urlsplit to raise ValueError
         # We test that collect_security_findings handles it gracefully
@@ -847,32 +815,6 @@ class TestSecurityMiscellaneous:
             policy=policy,
         )
         assert isinstance(findings, list)
-
-    def test_collect_security_findings_dns_error_finding(self):
-        """Line 1642: DNS failure generates a finding."""
-        from src.urlps._security import (
-            collect_security_findings, DNSRateLimiter,
-        )
-        from src.urlps.security_policy import SecurityPolicy
-        from src.urlps.exceptions import ErrorCode
-
-        # Force DNS rate limit to fail
-        limiter = DNSRateLimiter(max_lookups_per_second=0.0001, max_lookups_per_host=0)
-        policy = SecurityPolicy("test_dns", check_dns=True, enforce_ssrf=False,
-                                enforce_path_traversal=False, enforce_open_redirect=False,
-                                enforce_mixed_scripts=False, enforce_parser_confusion=False,
-                                enforce_double_encoding=False, enforce_query_injection=False,
-                                block_dangerous_ports=False, reject_credentials=False,
-                                require_canonical=False, enforce_dns_rate_limit=True)
-        with patch("src.urlps._security.get_dns_rate_limiter", return_value=limiter):
-            findings = collect_security_findings(
-                "http://notlocalhost.example.com/",
-                policy=policy,
-                check_dns=True,
-            )
-
-        dns_findings = [f for f in findings if "dns" in f.code.lower() or "rate" in f.code.lower()]
-        assert len(dns_findings) > 0
 
     def test_security_get_cache_info(self):
         """Line 1673: get_cache_info returns security function stats."""
@@ -893,7 +835,7 @@ class TestSecurityMiscellaneous:
         """Line 763: DNSRateLimiter.get_stats() returns expected keys."""
         from src.urlps._security import DNSRateLimiter
         limiter = DNSRateLimiter()
-        stats = limiter.get_stats()
+        stats = limiter.stats()
         assert "tokens" in stats
         assert "tracked_hosts" in stats
         assert "total_recent_lookups" in stats
@@ -1025,52 +967,52 @@ class TestExceptions:
 class TestSecurityPolicy:
     def test_resolve_security_policy_with_security_policy_instance(self):
         """Line 77: resolve with SecurityPolicy instance returns it directly."""
-        from src.urlps.security_policy import SecurityPolicy, resolve_security_policy
+        from src.urlps._security.policy import SecurityPolicy, resolve_security_policy
         policy = SecurityPolicy.strict()
         resolved = resolve_security_policy(policy)
         assert resolved is policy
 
     def test_resolve_security_policy_internal(self):
         """Lines 84-87: resolve with 'internal' string."""
-        from src.urlps.security_policy import resolve_security_policy
+        from src.urlps._security.policy import resolve_security_policy
         resolved = resolve_security_policy("internal")
         assert resolved.name == "internal"
         assert resolved.enforce_ssrf is False
 
     def test_resolve_security_policy_none_returns_balanced(self):
         """resolve with None returns balanced policy."""
-        from src.urlps.security_policy import resolve_security_policy
+        from src.urlps._security.policy import resolve_security_policy
         resolved = resolve_security_policy(None)
         assert resolved.name == "balanced"
 
     def test_resolve_security_policy_strict_string(self):
         """resolve with 'strict' string."""
-        from src.urlps.security_policy import resolve_security_policy
+        from src.urlps._security.policy import resolve_security_policy
         resolved = resolve_security_policy("strict")
         assert resolved.name == "strict"
 
     def test_resolve_security_policy_unsupported_raises(self):
         """resolve with invalid string raises ValueError."""
-        from src.urlps.security_policy import resolve_security_policy
-        with pytest.raises(ValueError, match="Unsupported security policy"):
+        from src.urlps._security.policy import resolve_security_policy
+        with pytest.raises(SecurityPolicyError, match="Unsupported security policy"):
             resolve_security_policy("invalid_policy")
 
     def test_resolve_security_policy_returns_resolved_when_no_overrides(self):
         """Line 112: returns resolved without rebuilding when no dns/phishing overrides."""
-        from src.urlps.security_policy import SecurityPolicy, resolve_security_policy
+        from src.urlps._security.policy import SecurityPolicy, resolve_security_policy
         policy = SecurityPolicy.strict()
         resolved = resolve_security_policy(policy, check_dns=None, check_phishing=None)
         assert resolved is policy
 
     def test_resolve_security_policy_with_check_dns_override(self):
         """check_dns override creates new policy with check_dns=True."""
-        from src.urlps.security_policy import resolve_security_policy
+        from src.urlps._security.policy import resolve_security_policy
         resolved = resolve_security_policy("strict", check_dns=True)
         assert resolved.check_dns is True
 
     def test_resolve_security_policy_with_check_phishing_override(self):
         """check_phishing override creates new policy with check_phishing=True."""
-        from src.urlps.security_policy import resolve_security_policy
+        from src.urlps._security.policy import resolve_security_policy
         resolved = resolve_security_policy("balanced", check_phishing=True)
         assert resolved.check_phishing is True
 
@@ -1083,14 +1025,14 @@ class TestURL:
     def test_effective_port_returns_default_for_scheme(self):
         """Line 220: effective_port returns scheme default when no explicit port."""
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
         assert url.effective_port == 443
 
     def test_effective_port_returns_none_without_scheme(self):
         """effective_port returns None when no scheme and no port."""
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         # Relative URL
         url = object.__new__(URL)
         url._scheme = None
@@ -1101,7 +1043,7 @@ class TestURL:
         """Line 230: origin raises InvalidURLError for relative URL (no scheme)."""
         from src.urlps.url import URL
         from src.urlps.exceptions import InvalidURLError
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         # Create URL then strip scheme via copy
         url = URL("https://example.com/path", security_policy=SecurityPolicy.balanced())
         url_no_scheme = url.copy(scheme=None, host=None, port=None)
@@ -1153,7 +1095,7 @@ class TestURL:
     def test_as_string_mask_password_with_colon(self):
         """Line 399: mask_password masks the password part of userinfo."""
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         url = URL(
             "https://admin:secret@example.com/path",
             security_policy=SecurityPolicy.internal(),
@@ -1165,7 +1107,7 @@ class TestURL:
     def test_repr_with_valid_url(self):
         """__repr__ returns URL(...) string for valid URL."""
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
         r = repr(url)
         assert r.startswith("URL(")
@@ -1174,7 +1116,7 @@ class TestURL:
     def test_security_checks_method(self):
         """Line 135: _security_checks() calls validate."""
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
         findings = url._security_checks()
         # Returns None (implicitly), findings stored internally
@@ -1183,7 +1125,7 @@ class TestURL:
     def test_validate_with_explicit_policy(self):
         """Line 347: validate() with an explicit policy parameter."""
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
         findings = url.validate(policy=SecurityPolicy.balanced(), raise_on_error=False)
         assert isinstance(findings, list)
@@ -1191,7 +1133,7 @@ class TestURL:
     def test_with_netloc_applies_default_port(self):
         """Lines 313-316: with_netloc injects default port for known scheme."""
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
         updated = url.with_netloc("other.example.com")
         assert updated.host == "other.example.com"
@@ -1199,7 +1141,7 @@ class TestURL:
     def test_with_netloc_from_https_url(self):
         """with_netloc on https URL applies default port 443 when not specified."""
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         url = URL("https://old.example.com/path", security_policy=SecurityPolicy.balanced())
         new_url = url.with_netloc("new.example.com")
         assert new_url.host == "new.example.com"
@@ -1229,7 +1171,7 @@ class TestURL:
     def test_url_validate_raises_on_ssrf_by_policy(self):
         """Validate raises on SSRF risk with strict policy."""
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         from src.urlps.exceptions import InvalidURLError
         # Build URL that passes initial parse but fails validation
         url = URL(

@@ -3,10 +3,10 @@ import time
 import pytest
 from src.urlps._security import (
     DNSRateLimiter,
-    get_dns_rate_limiter,
-    reset_dns_rate_limiter,
     check_dns_rate_limit,
 )
+from src.urlps._security.dns_guard import DNSRateLimiterConfig, check_dns_rebinding_detailed
+from src.urlps.exceptions import ErrorCode
 
 
 class TestDNSRateLimiterBasics:
@@ -15,21 +15,21 @@ class TestDNSRateLimiterBasics:
     def test_rate_limiter_initialization(self):
         """Rate limiter should initialize with default values."""
         limiter = DNSRateLimiter()
-        assert limiter.max_lookups_per_second == 10.0
-        assert limiter.max_lookups_per_host == 3
-        assert limiter.time_window == 60.0
-        assert limiter.tokens > 0
+        assert limiter.config.max_lookups_per_second == 10.0
+        assert limiter.config.max_lookups_per_host == 3
+        assert limiter.config.time_window_seconds == 60.0
+        assert limiter.stats()["tokens"] > 0
 
     def test_custom_rate_limits(self):
         """Should support custom rate limit values."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=5.0,
             max_lookups_per_host=2,
-            time_window=30.0
-        )
-        assert limiter.max_lookups_per_second == 5.0
-        assert limiter.max_lookups_per_host == 2
-        assert limiter.time_window == 30.0
+            time_window_seconds=30.0
+        ))
+        assert limiter.config.max_lookups_per_second == 5.0
+        assert limiter.config.max_lookups_per_host == 2
+        assert limiter.config.time_window_seconds == 30.0
 
     def test_first_lookup_allowed(self):
         """First lookup should always be allowed."""
@@ -38,7 +38,7 @@ class TestDNSRateLimiterBasics:
 
     def test_multiple_unique_hosts_allowed(self):
         """Multiple unique hosts should be allowed (global rate permitting)."""
-        limiter = DNSRateLimiter(max_lookups_per_second=100.0)
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(max_lookups_per_second=100.0))
         assert limiter.is_allowed("example1.com")
         assert limiter.is_allowed("example2.com")
         assert limiter.is_allowed("example3.com")
@@ -49,10 +49,10 @@ class TestPerHostRateLimit:
 
     def test_same_host_limit(self):
         """Same host should be rate limited after max lookups."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=100.0,  # High global limit
             max_lookups_per_host=3
-        )
+        ))
 
         # First 3 lookups should succeed
         assert limiter.is_allowed("example.com")
@@ -64,10 +64,10 @@ class TestPerHostRateLimit:
 
     def test_different_hosts_independent(self):
         """Different hosts should have independent limits."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=100.0,
             max_lookups_per_host=2
-        )
+        ))
 
         # Host A: 2 lookups
         assert limiter.is_allowed("hostA.com")
@@ -81,11 +81,11 @@ class TestPerHostRateLimit:
 
     def test_time_window_expiry(self):
         """Old lookups should expire after time window."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=100.0,
             max_lookups_per_host=2,
-            time_window=0.1  # 100ms window for testing
-        )
+            time_window_seconds=0.1  # 100ms window for testing
+        ))
 
         # Use up limit
         assert limiter.is_allowed("example.com")
@@ -104,23 +104,23 @@ class TestGlobalRateLimit:
 
     def test_global_rate_limit_tokens(self):
         """Should consume tokens from global bucket."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=5.0,
             max_lookups_per_host=100  # High per-host limit
-        )
+        ))
 
-        initial_tokens = limiter.tokens
+        initial_tokens = limiter.stats()["tokens"]
 
         # Each lookup consumes 1 token
         assert limiter.is_allowed("host1.com")
-        assert limiter.tokens < initial_tokens
+        assert limiter.stats()["tokens"] < initial_tokens
 
     def test_global_rate_limit_exhaustion(self):
         """Should block when global tokens exhausted."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=3.0,
             max_lookups_per_host=100
-        )
+        ))
 
         # Consume all tokens
         assert limiter.is_allowed("host1.com")
@@ -132,20 +132,20 @@ class TestGlobalRateLimit:
 
     def test_token_refill(self):
         """Tokens should refill over time."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=10.0,
             max_lookups_per_host=100
-        )
+        ))
 
         # Consume some tokens
         limiter.is_allowed("host1.com")
         limiter.is_allowed("host2.com")
-        tokens_after = limiter.tokens
+        tokens_after = limiter.stats()["tokens"]
 
         # Wait and check refill
         time.sleep(0.3)  # Should refill ~3 tokens
         limiter._refill_tokens()
-        assert limiter.tokens > tokens_after
+        assert limiter.stats()["tokens"] > tokens_after
 
 
 class TestRateLimiterReset:
@@ -153,7 +153,7 @@ class TestRateLimiterReset:
 
     def test_reset_clears_state(self):
         """Reset should clear all rate limiting state."""
-        limiter = DNSRateLimiter(max_lookups_per_host=2)
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(max_lookups_per_host=2))
 
         # Use up limit
         limiter.is_allowed("example.com")
@@ -168,30 +168,30 @@ class TestRateLimiterReset:
 
     def test_reset_refills_tokens(self):
         """Reset should refill token bucket."""
-        limiter = DNSRateLimiter(max_lookups_per_second=5.0)
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(max_lookups_per_second=5.0))
 
         # Consume tokens
         for _ in range(5):
             limiter.is_allowed(f"host{_}.com")
 
         # Tokens should be low
-        assert limiter.tokens < 1.0
+        assert limiter.stats()["tokens"] < 1.0
 
         # Reset
         limiter.reset()
 
         # Tokens should be refilled
-        assert limiter.tokens == 5.0
+        assert limiter.stats()["tokens"] == 5.0
 
 
 class TestRateLimiterStats:
     """Test rate limiter statistics."""
 
-    def test_get_stats(self):
+    def test_stats(self):
         """Should return current statistics."""
-        limiter = DNSRateLimiter(max_lookups_per_second=10.0)
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(max_lookups_per_second=10.0))
 
-        stats = limiter.get_stats()
+        stats = limiter.stats()
         assert "tokens" in stats
         assert "tracked_hosts" in stats
         assert "total_recent_lookups" in stats
@@ -204,7 +204,7 @@ class TestRateLimiterStats:
         limiter.is_allowed("host2.com")
         limiter.is_allowed("host3.com")
 
-        stats = limiter.get_stats()
+        stats = limiter.stats()
         assert stats["tracked_hosts"] == 3
 
     def test_stats_track_lookups(self):
@@ -215,7 +215,7 @@ class TestRateLimiterStats:
         limiter.is_allowed("host1.com")
         limiter.is_allowed("host2.com")
 
-        stats = limiter.get_stats()
+        stats = limiter.stats()
         assert stats["total_recent_lookups"] == 3
 
 
@@ -224,14 +224,14 @@ class TestCleanupBehavior:
 
     def test_cleanup_removes_old_hosts(self):
         """Cleanup should remove hosts with no recent lookups."""
-        limiter = DNSRateLimiter(
-            time_window=0.1,  # 100ms
-            cleanup_interval=0.05  # 50ms
-        )
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
+            time_window_seconds=0.1,  # 100ms
+            cleanup_interval_seconds=0.05  # 50ms
+        ))
 
         # Add some hosts
         limiter.is_allowed("old-host.com")
-        assert limiter.get_stats()["tracked_hosts"] == 1
+        assert limiter.stats()["tracked_hosts"] == 1
 
         # Wait for entries to expire
         time.sleep(0.15)
@@ -240,63 +240,22 @@ class TestCleanupBehavior:
         limiter.is_allowed("new-host.com")
 
         # Old host should be cleaned up
-        stats = limiter.get_stats()
+        stats = limiter.stats()
         assert stats["tracked_hosts"] == 1  # Only new-host
 
     def test_cleanup_preserves_recent_hosts(self):
         """Cleanup should keep hosts with recent lookups."""
-        limiter = DNSRateLimiter(
-            time_window=10.0,  # Long window
-            cleanup_interval=0.05
-        )
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
+            time_window_seconds=10.0,  # Long window
+            cleanup_interval_seconds=0.05
+        ))
 
         limiter.is_allowed("recent-host.com")
         time.sleep(0.1)  # Trigger cleanup
         limiter.is_allowed("another-host.com")
 
-        stats = limiter.get_stats()
+        stats = limiter.stats()
         assert stats["tracked_hosts"] == 2  # Both kept
-
-
-class TestGlobalRateLimiter:
-    """Test global rate limiter singleton."""
-
-    def test_get_global_limiter(self):
-        """Should get or create global limiter."""
-        limiter = get_dns_rate_limiter()
-        assert isinstance(limiter, DNSRateLimiter)
-
-        # Should return same instance
-        limiter2 = get_dns_rate_limiter()
-        assert limiter is limiter2
-
-    def test_reset_global_limiter(self):
-        """Should reset global limiter state."""
-        limiter = get_dns_rate_limiter()
-
-        # Use up some limit
-        limiter.is_allowed("test.com")
-        limiter.is_allowed("test.com")
-
-        # Reset
-        reset_dns_rate_limiter()
-
-        # Should be cleared
-        assert limiter.is_allowed("test.com")
-
-    def test_check_dns_rate_limit_convenience(self):
-        """Convenience function should use global limiter."""
-        reset_dns_rate_limiter()  # Clean slate
-
-        # Should use global limiter
-        assert check_dns_rate_limit("example.com")
-
-        # Check that it's actually enforcing limits
-        limiter = get_dns_rate_limiter()
-        limiter.max_lookups_per_host = 1  # Set to 1 for testing
-
-        # Second call should fail
-        assert not check_dns_rate_limit("example.com")
 
 
 class TestEdgeCases:
@@ -321,7 +280,7 @@ class TestEdgeCases:
 
     def test_record_lookup_without_check(self):
         """Should be able to record lookups without checking."""
-        limiter = DNSRateLimiter(max_lookups_per_host=2)
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(max_lookups_per_host=2))
 
         # Record lookups (e.g., from cache)
         limiter.record_lookup("cached.com")
@@ -332,10 +291,10 @@ class TestEdgeCases:
 
     def test_very_high_rate_limit(self):
         """Should handle very high rate limits."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=1000.0,
             max_lookups_per_host=100
-        )
+        ))
 
         # Should allow many lookups
         for i in range(50):
@@ -347,10 +306,10 @@ class TestDoSPrevention:
 
     def test_prevents_single_host_flooding(self):
         """Should prevent flooding from single host."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=100.0,
             max_lookups_per_host=3
-        )
+        ))
 
         # Attacker tries to flood with same host
         for _ in range(10):
@@ -362,10 +321,10 @@ class TestDoSPrevention:
 
     def test_prevents_unique_host_flooding(self):
         """Should prevent flooding with unique hosts."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=5.0,
             max_lookups_per_host=100
-        )
+        ))
 
         # Attacker tries to flood with unique hosts
         allowed = 0
@@ -378,10 +337,10 @@ class TestDoSPrevention:
 
     def test_legitimate_usage_pattern(self):
         """Should allow legitimate usage patterns."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=10.0,
             max_lookups_per_host=3
-        )
+        ))
 
         # Legitimate app checking multiple unique URLs
         hosts = [f"site{i}.com" for i in range(8)]
@@ -392,10 +351,10 @@ class TestDoSPrevention:
 
     def test_burst_then_steady_state(self):
         """Should handle burst then steady-state pattern."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=5.0,
             max_lookups_per_host=10
-        )
+        ))
 
         # Burst: use all tokens
         for i in range(5):
@@ -416,10 +375,10 @@ class TestIntegrationScenarios:
 
     def test_web_crawler_scenario(self):
         """Web crawler checking many URLs."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=10.0,
             max_lookups_per_host=5
-        )
+        ))
 
         # Crawler finds many URLs from same domain
         for i in range(10):
@@ -431,10 +390,10 @@ class TestIntegrationScenarios:
 
     def test_api_gateway_scenario(self):
         """API gateway validating webhook URLs."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=20.0,
             max_lookups_per_host=2
-        )
+        ))
 
         # Multiple users registering webhooks
         webhooks = [
@@ -450,10 +409,10 @@ class TestIntegrationScenarios:
 
     def test_email_filter_scenario(self):
         """Email filter checking URLs in messages."""
-        limiter = DNSRateLimiter(
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(
             max_lookups_per_second=15.0,
             max_lookups_per_host=3
-        )
+        ))
 
         # Email with multiple links
         email_links = [
@@ -466,3 +425,76 @@ class TestIntegrationScenarios:
         # Should allow all (under limits)
         for link in email_links:
             assert limiter.is_allowed(link)
+
+
+class DeterministicClock:
+    def __init__(self, start: float = 0.0) -> None:
+        self._current = start
+
+    def now(self) -> float:
+        return self._current
+
+    def advance(self, seconds: float) -> None:
+        self._current += seconds
+
+
+def test_dns_rate_limiter_allows_within_limits() -> None:
+    clock = DeterministicClock()
+    config = DNSRateLimiterConfig(
+        max_lookups_per_second=2.0,
+        max_lookups_per_host=3,
+        time_window_seconds=10.0,
+        cleanup_interval_seconds=5.0,
+    )
+    limiter = DNSRateLimiter(config=config, time_provider=clock.now)
+
+    host = "example.com"
+    assert check_dns_rate_limit(host, limiter) is True
+    assert check_dns_rate_limit(host, limiter) is True
+
+    # No refill yet, should be blocked globally.
+    assert check_dns_rate_limit(host, limiter) is False
+
+    clock.advance(1.0)
+    assert check_dns_rate_limit(host, limiter) is True
+
+
+def test_dns_rate_limiter_per_host_limit() -> None:
+    clock = DeterministicClock()
+    config = DNSRateLimiterConfig(
+        max_lookups_per_second=10.0,
+        max_lookups_per_host=2,
+        time_window_seconds=10.0,
+        cleanup_interval_seconds=5.0,
+    )
+    limiter = DNSRateLimiter(config=config, time_provider=clock.now)
+
+    host = "example.com"
+    assert check_dns_rate_limit(host, limiter) is True
+    assert check_dns_rate_limit(host, limiter) is True
+    assert check_dns_rate_limit(host, limiter) is False
+
+    clock.advance(11.0)
+    assert check_dns_rate_limit(host, limiter) is True
+
+
+def test_dns_rebinding_invalid_host() -> None:
+    config = DNSRateLimiterConfig()
+    limiter = DNSRateLimiter(config=config)
+
+    is_safe, error = check_dns_rebinding_detailed(
+        host="",
+        limiter=limiter,
+    )
+    assert is_safe is False
+    assert error == ErrorCode.DNS_RESOLUTION_FAILED
+
+
+def test_dns_rebinding_requires_limiter_when_enforced() -> None:
+    is_safe, error = check_dns_rebinding_detailed(
+        host="example.com",
+        enforce_rate_limit=True,
+        limiter=None,
+    )
+    assert is_safe is False
+    assert error == ErrorCode.DNS_RATE_LIMITED

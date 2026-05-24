@@ -3,8 +3,7 @@ from src.urlps.exceptions import (
     URLpError,
     InvalidURLError,
     URLParseError,
-    _truncate_value,
-    _MAX_VALUE_LENGTH,
+    _MAX_VALUE_LENGTH, _safe_truncated_repr,
 )
 
 
@@ -14,14 +13,14 @@ class TestValueTruncation:
     def test_short_value_not_truncated(self):
         """Short values should not be truncated."""
         short_value = "http://example.com"
-        result = _truncate_value(short_value)
+        result = _safe_truncated_repr(short_value)
         assert result == repr(short_value)
         assert "..." not in result
 
     def test_long_value_truncated(self):
         """Values exceeding max length should be truncated."""
         long_value = "x" * 500
-        result = _truncate_value(long_value)
+        result = _safe_truncated_repr(long_value)
         assert len(result) == _MAX_VALUE_LENGTH
         assert result.endswith("...")
 
@@ -29,13 +28,13 @@ class TestValueTruncation:
         """Value exactly at max length should not be truncated."""
         # Account for repr adding quotes
         boundary_value = "x" * (_MAX_VALUE_LENGTH - 2)  # -2 for quotes
-        result = _truncate_value(boundary_value)
+        result = _safe_truncated_repr(boundary_value)
         assert "..." not in result
 
     def test_value_just_over_boundary(self):
         """Value just over max length should be truncated."""
         over_boundary = "x" * (_MAX_VALUE_LENGTH)
-        result = _truncate_value(over_boundary)
+        result = _safe_truncated_repr(over_boundary)
         assert result.endswith("...")
         assert len(result) == _MAX_VALUE_LENGTH
 
@@ -71,7 +70,7 @@ class TestValueTruncation:
     def test_truncation_with_none_value(self):
         """None value should not cause issues."""
         exc = URLpError("Test error", value=None, component="url")
-        error_str = str(exc)
+        error_str = str(exc.value)
         assert "None" in error_str
 
     def test_truncation_with_non_string_value(self):

@@ -19,7 +19,7 @@ class TestURLAdditional:
 
     def _make_url(self, url_str: str = "https://example.com/path?k=v"):
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         return URL(url_str, security_policy=SecurityPolicy.balanced())
 
     def test_is_absolute_true(self):
@@ -30,7 +30,7 @@ class TestURLAdditional:
     def test_is_absolute_false_no_host(self):
         """is_absolute returns False when no host (and no scheme)."""
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
         url_bare = url.copy(scheme=None, host=None, port=None)
         assert url_bare.is_absolute is False
@@ -50,7 +50,7 @@ class TestURLAdditional:
     def test_with_userinfo_sets_userinfo(self):
         """with_userinfo() sets the userinfo component."""
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         url = URL("https://example.com/", security_policy=SecurityPolicy.internal())
         new_url = url.with_userinfo("user:pass")
         assert new_url.userinfo == "user:pass"
@@ -58,7 +58,7 @@ class TestURLAdditional:
     def test_with_userinfo_none_clears_userinfo(self):
         """with_userinfo(None) removes userinfo."""
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         url = URL("https://user:pass@example.com/", security_policy=SecurityPolicy.internal())
         new_url = url.with_userinfo(None)
         assert new_url.userinfo is None
@@ -110,7 +110,7 @@ class TestURLAdditional:
     def test_effective_port_falls_back_to_scheme_default(self):
         """effective_port returns scheme default when _port is None."""
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
         # Force explicit port=None via copy
         url_no_port = url.copy(port=None)
@@ -119,7 +119,7 @@ class TestURLAdditional:
     def test_as_string_mask_password_no_colon_in_userinfo(self):
         """as_string with mask_password=True and no ':' in userinfo is unchanged."""
         from src.urlps.url import URL
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         url = URL("https://user@example.com/", security_policy=SecurityPolicy.internal())
         masked = url.as_string(mask_password=True)
         assert "user" in masked
@@ -143,53 +143,16 @@ class TestSecurityAdditional:
         """Line 232->234: explicit timeout uses safe direct-IP check path."""
         from src.urlps._security import check_dns_rebinding_detailed
         from src.urlps.exceptions import ErrorCode
-        safe, error = check_dns_rebinding_detailed("192.168.1.1", timeout=2.0)
+        safe, error = check_dns_rebinding_detailed("192.168.1.1", timeout_seconds=2.0)
         assert safe is False
         assert error == ErrorCode.SSRF_RISK
 
     def test_check_dns_rebinding_safe_with_explicit_timeout(self):
         """Direct safe IP with explicit timeout returns True."""
         from src.urlps._security import check_dns_rebinding_detailed
-        safe, error = check_dns_rebinding_detailed("8.8.8.8", timeout=2.0)
+        safe, error = check_dns_rebinding_detailed("8.8.8.8", timeout_seconds=2.0)
         assert safe is True
         assert error is None
-
-    def test_dns_gaierror_returns_dns_resolution_failed(self):
-        """socket.gaierror captured as DNS_RESOLUTION_FAILED."""
-        from src.urlps._security import check_dns_rebinding_detailed, reset_dns_rate_limiter
-        from src.urlps.exceptions import ErrorCode
-        reset_dns_rate_limiter()
-        with patch("socket.getaddrinfo", side_effect=socket.gaierror("dns failure")):
-            safe, error = check_dns_rebinding_detailed(
-                "nxdomain.invalid", enforce_rate_limit=False, retries=0
-            )
-        assert safe is False
-        assert error == ErrorCode.DNS_RESOLUTION_FAILED
-
-    def test_dns_os_error_returns_dns_connection_failed(self):
-        """OSError captured as DNS_CONNECTION_FAILED."""
-        from src.urlps._security import check_dns_rebinding_detailed, reset_dns_rate_limiter
-        from src.urlps.exceptions import ErrorCode
-        reset_dns_rate_limiter()
-        with patch("socket.getaddrinfo", side_effect=OSError("conn refused")):
-            safe, error = check_dns_rebinding_detailed(
-                "nxdomain.invalid", enforce_rate_limit=False, retries=0
-            )
-        assert safe is False
-        assert error == ErrorCode.DNS_CONNECTION_FAILED
-
-    def test_dns_resolves_to_private_ip(self):
-        """DNS resolver returns private IP → SSRF_RISK."""
-        from src.urlps._security import check_dns_rebinding_detailed, reset_dns_rate_limiter
-        from src.urlps.exceptions import ErrorCode
-        reset_dns_rate_limiter()
-        addr_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("10.0.0.1", 80))]
-        with patch("socket.getaddrinfo", return_value=addr_info):
-            safe, error = check_dns_rebinding_detailed(
-                "evil.internal.example.com", enforce_rate_limit=False, retries=0
-            )
-        assert safe is False
-        assert error == ErrorCode.SSRF_RISK
 
     def test_has_mixed_scripts_value_error_returns_false(self):
         """Lines 417-418: ValueError in unicodedata.name → returns False."""
@@ -201,14 +164,14 @@ class TestSecurityAdditional:
     def test_has_path_traversal_unquote_unicode_error(self):
         """Lines 440-441: UnicodeDecodeError in unquote → returns False."""
         from src.urlps._security import has_path_traversal
-        with patch("src.urlps._security.unquote",
+        with patch("src.urlps._security.url_checks.unquote",
                    side_effect=UnicodeDecodeError("utf-8", b"", 0, 1, "reason")):
             result = has_path_traversal("/normal/path")
         assert result is False
 
     def test_phishing_db_too_large_returns_empty(self):
         """Lines 378-380: oversized phishing DB returns empty set."""
-        from src.urlps._security import _download_phishing_db
+        from src.urlps._security.phishing_db import _download_phishing_db
         big_content = "\n".join(f"host{i}.com" for i in range(5_000_001))
         with patch("urllib.request.urlopen") as mock_open:
             resp = mock_open.return_value.__enter__.return_value
@@ -235,7 +198,7 @@ class TestSecurityAdditional:
         limiter.record_lookup("")
         limiter.record_lookup(None)  # type: ignore
         # No exception expected
-        assert limiter.get_stats()["tracked_hosts"] == 0
+        assert limiter.stats()["tracked_hosts"] == 0
 
     def test_normalize_url_unicode_type_error(self):
         """Lines 1525-1526: TypeError in unicodedata.normalize → returns original."""
@@ -310,7 +273,7 @@ class TestSecurityAdditional:
     def test_collect_security_findings_non_scheme_url(self):
         """Line 1592: URL without :// - only double-encoding check applied."""
         from src.urlps._security import collect_security_findings
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         findings = collect_security_findings("not-a-url", policy=SecurityPolicy.strict())
         assert isinstance(findings, list)
 
@@ -324,7 +287,7 @@ class TestSecurityAdditional:
 
     def test_verify_connection_safe_with_mocked_socket(self):
         """Lines 183-186: _verify_connection_safe with mocked socket."""
-        from src.urlps._security import _verify_connection_safe
+        from src.urlps._security.ip_utils import _verify_connection_safe
         with patch("socket.socket") as mock_socket_cls:
             mock_inst = mock_socket_cls.return_value
             mock_inst.getpeername.return_value = ("93.184.216.34", 80)
@@ -393,7 +356,7 @@ class TestInitAdditional:
     def test_parse_url_unsafe_with_security_policy_object(self):
         """parse_url_unsafe with SecurityPolicy object routes via resolve."""
         from src.urlps import parse_url_unsafe
-        from src.urlps.security_policy import SecurityPolicy
+        from src.urlps._security.policy import SecurityPolicy
         p = SecurityPolicy.internal()
         url = parse_url_unsafe("http://localhost/test", policy=p)
         assert url.host == "localhost"
