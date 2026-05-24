@@ -45,6 +45,17 @@ class DNSRateLimiterConfig:
     time_window_seconds: float = DEFAULT_DNS_TIME_WINDOW_SECONDS
     cleanup_interval_seconds: float = DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS
 
+    def __post_init__(self):
+        if self.max_lookups_per_second <= 0:
+            raise DNSRateLimiterError("max_lookups_per_second must be positive")
+        if self.max_lookups_per_host <= 0:
+            raise DNSRateLimiterError("max_lookups_per_host must be positive")
+        if self.time_window_seconds <= 0:
+            raise DNSRateLimiterError("time_window_seconds must be positive")
+        if self.cleanup_interval_seconds <= 0:
+            raise DNSRateLimiterError("cleanup_interval_seconds must be positive")
+
+
 
 class DNSRateLimiter:
     """Token-bucket DNS rate limiter with per-host tracking.
@@ -61,14 +72,12 @@ class DNSRateLimiter:
         if config is None:
             config = DNSRateLimiterConfig()
 
-        if config.max_lookups_per_second <= 0:
-            raise DNSRateLimiterError("max_lookups_per_second must be positive")
-        if config.max_lookups_per_host <= 0:
-            raise DNSRateLimiterError("max_lookups_per_host must be positive")
-        if config.time_window_seconds <= 0:
-            raise DNSRateLimiterError("time_window_seconds must be positive")
-        if config.cleanup_interval_seconds <= 0:
-            raise DNSRateLimiterError("cleanup_interval_seconds must be positive")
+        if not isinstance(config, DNSRateLimiterConfig):
+            raise DNSRateLimiterError("config must be an instance of DNSRateLimiterConfig")
+        if not callable(time_provider):
+            raise DNSRateLimiterError("time_provider must be callable")
+        if not isinstance(time_provider(), (int, float)):
+            raise DNSRateLimiterError("time_provider must return a numeric timestamp")
 
         self._config = config
         self._time_provider = time_provider
