@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Final, Literal, Optional, Union
 
-from urlps.exceptions import SecurityPolicyError
+from src.urlps.exceptions import SecurityPolicyError
 
 PolicyName = Literal["strict", "balanced", "internal"]
 
@@ -156,6 +156,9 @@ class SecurityPolicy:
             enforce_dns_rate_limit=True,
         )
 
+    def __str__(self):
+        return f"SecurityPolicy(name={self.name!r})"
+
 
 PolicyInput = Union[None, PolicyName, SecurityPolicy]
 
@@ -198,7 +201,7 @@ def _resolve_named_policy(
 
 
 def resolve_security_policy(
-    policy: PolicyInput,
+    policy: Optional[PolicyInput | str],
     *,
     check_dns: Optional[bool] = None,
     check_phishing: Optional[bool] = None,

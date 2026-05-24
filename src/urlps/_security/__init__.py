@@ -11,10 +11,8 @@ from .dns_guard import (
     check_dns_rate_limit,
     check_dns_rebinding,
     check_dns_rebinding_detailed,
-    get_dns_rate_limiter,
-    reset_dns_rate_limiter,
 )
-from .ip_utils import is_malicious_ipv6_zone_id, is_private_ip, is_ssrf_risk
+from .ip_utils import is_malicious_ipv6_zone_id, is_private_ip, is_ssrf_risk, _check_ipv6_private
 from .phishing_db import check_against_phishing_db, get_phishing_db_info, refresh_phishing_db
 from .policy import PolicyInput, SecurityPolicy, resolve_security_policy
 from .url_checks import (
@@ -195,13 +193,11 @@ __all__ = [
     "has_query_injection",
     "has_suspicious_punycode",
     "DNSRateLimiter",
-    "get_dns_rate_limiter",
-    "reset_dns_rate_limiter",
     "check_dns_rate_limit",
     "is_non_canonical_url",
     "get_canonical_url",
     "SecurityPolicy",
     "PolicyInput",
     "SecurityPolicyError",
-    "resolve_security_policy",
+    "resolve_security_policy"
 ]

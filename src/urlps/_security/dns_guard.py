@@ -1,4 +1,10 @@
-"""DNS rebinding checks and DNS lookup rate limiting."""
+"""DNS rebinding protection and DNS lookup rate limiting.
+
+This module provides:
+- A deterministic, testable DNSRateLimiter with no global state.
+- DNS rebinding checks with explicit error codes and strict input validation.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -6,7 +12,8 @@ import secrets
 import socket
 import time
 from collections import defaultdict, deque
-from typing import Deque, Dict, Optional, Tuple, cast
+from dataclasses import dataclass
+from typing import Callable, Deque, Dict, Iterable, Optional, Tuple
 
 from ..constants import (
     DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS,
@@ -15,167 +22,262 @@ from ..constants import (
     DEFAULT_DNS_TIMEOUT,
     DEFAULT_DNS_TIME_WINDOW_SECONDS,
 )
-from ..exceptions import ErrorCode
-from .ip_utils import _check_direct_ip_safe, _check_resolved_ips_safe, _strip_ipv6_brackets, _verify_connection_safe
+from ..exceptions import ErrorCode, DNSRateLimiterError
+from .ip_utils import (
+    _check_direct_ip_safe,
+    _check_resolved_ips_safe,
+    _strip_ipv6_brackets,
+    _verify_connection_safe,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _jitter_seconds(max_jitter_seconds: float) -> float:
-    """Return cryptographically strong jitter in [0, max_jitter_seconds]."""
-    if max_jitter_seconds <= 0:
-        return 0.0
-    scale = 1_000_000
-    return (secrets.randbelow(scale + 1) / scale) * max_jitter_seconds
+TimeProvider = Callable[[], float]
+
+
+@dataclass(frozen=True)
+class DNSRateLimiterConfig:
+    """Configuration for DNSRateLimiter."""
+
+    max_lookups_per_second: float = DEFAULT_DNS_LOOKUPS_PER_SECOND
+    max_lookups_per_host: int = DEFAULT_DNS_LOOKUPS_PER_HOST
+    time_window_seconds: float = DEFAULT_DNS_TIME_WINDOW_SECONDS
+    cleanup_interval_seconds: float = DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS
 
 
 class DNSRateLimiter:
-    """Rate limiter for DNS lookups to prevent DoS attacks."""
+    """Token-bucket DNS rate limiter with per-host tracking.
+
+    The limiter is deterministic, side-effect free outside its own state,
+    and uses an injected time provider for testability.
+    """
 
     def __init__(
         self,
-        max_lookups_per_second: float = DEFAULT_DNS_LOOKUPS_PER_SECOND,
-        max_lookups_per_host: int = DEFAULT_DNS_LOOKUPS_PER_HOST,
-        time_window: float = DEFAULT_DNS_TIME_WINDOW_SECONDS,
-        cleanup_interval: float = DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS,
-    ):
-        self.max_lookups_per_second = max_lookups_per_second
-        self.max_lookups_per_host = max_lookups_per_host
-        self.time_window = time_window
-        self.cleanup_interval = cleanup_interval
+        config: Optional[DNSRateLimiterConfig] = None,
+        time_provider: TimeProvider = time.time,
+    ) -> None:
+        if config is None:
+            config = DNSRateLimiterConfig()
 
-        self.tokens = max_lookups_per_second
-        self.last_update = time.time()
-        self.host_lookups: Dict[str, Deque[float]] = defaultdict(deque)
-        self.last_cleanup = time.time()
+        if config.max_lookups_per_second <= 0:
+            raise DNSRateLimiterError("max_lookups_per_second must be positive")
+        if config.max_lookups_per_host <= 0:
+            raise DNSRateLimiterError("max_lookups_per_host must be positive")
+        if config.time_window_seconds <= 0:
+            raise DNSRateLimiterError("time_window_seconds must be positive")
+        if config.cleanup_interval_seconds <= 0:
+            raise DNSRateLimiterError("cleanup_interval_seconds must be positive")
+
+        self._config = config
+        self._time_provider = time_provider
+
+        now = self._time_provider()
+        self._tokens: float = config.max_lookups_per_second
+        self._last_update_seconds: float = now
+        self._host_lookups: Dict[str, Deque[float]] = defaultdict(deque)
+        self._last_cleanup_seconds: float = now
+
+    @property
+    def config(self) -> DNSRateLimiterConfig:
+        """Return the current configuration."""
+        return self._config
+
+    def _now(self) -> float:
+        return self._time_provider()
 
     def _refill_tokens(self) -> None:
-        now = time.time()
-        elapsed = now - self.last_update
-        self.tokens = min(self.max_lookups_per_second, self.tokens + elapsed * self.max_lookups_per_second)
-        self.last_update = now
+        now = self._now()
+        elapsed_seconds = max(0.0, now - self._last_update_seconds)
+        refill_amount = elapsed_seconds * self._config.max_lookups_per_second
+        self._tokens = min(self._config.max_lookups_per_second, self._tokens + refill_amount)
+        self._last_update_seconds = now
+
+    def _remove_stale_timestamps(self, timestamps: Deque[float], cutoff_seconds: float) -> None:
+        while timestamps and timestamps[0] < cutoff_seconds:
+            timestamps.popleft()
 
     def _cleanup_old_entries(self) -> None:
-        now = time.time()
-        if now - self.last_cleanup < self.cleanup_interval:
+        now = self._now()
+        if now - self._last_cleanup_seconds < self._config.cleanup_interval_seconds:
             return
 
-        cutoff = now - self.time_window
-        hosts_to_remove = []
-        for host, timestamps in self.host_lookups.items():
-            while timestamps and timestamps[0] < cutoff:
-                timestamps.popleft()
+        cutoff_seconds = now - self._config.time_window_seconds
+        hosts_to_remove: list[str] = []
+
+        for host, timestamps in self._host_lookups.items():
+            self._remove_stale_timestamps(timestamps, cutoff_seconds)
             if not timestamps:
                 hosts_to_remove.append(host)
 
         for host in hosts_to_remove:
-            del self.host_lookups[host]
+            del self._host_lookups[host]
 
-        self.last_cleanup = now
+        self._last_cleanup_seconds = now
 
     def is_allowed(self, host: str) -> bool:
-        if not isinstance(host, str) or not host:
-            return False
+        """Return True if a DNS lookup for host is allowed under current limits.
 
-        now = time.time()
+        Invalid host values are treated as disallowed.
+        """
+        if not isinstance(host, str) or not host.strip():
+            logger.warning("dns_rate_limit_invalid_host", extra={"event": "dns_rate_limit_invalid_host"})
+            return False
 
         self._refill_tokens()
-        if self.tokens < 1.0:
+        if self._tokens < 1.0:
+            logger.info(
+                "dns_rate_limit_global_exceeded",
+                extra={"event": "dns_rate_limit_global_exceeded"},
+            )
             return False
 
-        timestamps = self.host_lookups[host]
-        cutoff = now - self.time_window
-        while timestamps and timestamps[0] < cutoff:
-            timestamps.popleft()
+        now = self._now()
+        cutoff_seconds = now - self._config.time_window_seconds
+        timestamps = self._host_lookups[host]
 
-        if len(timestamps) >= self.max_lookups_per_host:
+        self._remove_stale_timestamps(timestamps, cutoff_seconds)
+
+        if len(timestamps) >= self._config.max_lookups_per_host:
+            logger.info(
+                "dns_rate_limit_host_exceeded",
+                extra={"event": "dns_rate_limit_host_exceeded", "host": host},
+            )
             return False
 
-        self.tokens -= 1.0
+        self._tokens -= 1.0
         timestamps.append(now)
         self._cleanup_old_entries()
         return True
 
     def record_lookup(self, host: str) -> None:
-        if not isinstance(host, str) or not host:
+        """Record a DNS lookup for host without enforcing limits."""
+        if not isinstance(host, str) or not host.strip():
+            logger.warning("dns_rate_limit_invalid_host_record", extra={"event": "dns_rate_limit_invalid_host_record"})
             return
 
-        self.host_lookups[host].append(time.time())
+        now = self._now()
+        self._host_lookups[host].append(now)
         self._cleanup_old_entries()
 
     def reset(self) -> None:
-        self.tokens = self.max_lookups_per_second
-        self.last_update = time.time()
-        self.host_lookups.clear()
-        self.last_cleanup = time.time()
+        """Reset limiter state to initial configuration."""
+        now = self._now()
+        self._tokens = self._config.max_lookups_per_second
+        self._last_update_seconds = now
+        self._host_lookups.clear()
+        self._last_cleanup_seconds = now
 
-    def get_stats(self) -> dict:
+    def stats(self) -> Dict[str, float]:
+        """Return current limiter statistics without mutating state."""
         self._refill_tokens()
-        total_lookups = sum(len(timestamps) for timestamps in self.host_lookups.values())
+        total_recent_lookups = sum(len(timestamps) for timestamps in self._host_lookups.values())
         return {
-            "tokens": self.tokens,
-            "tracked_hosts": len(self.host_lookups),
-            "total_recent_lookups": total_lookups,
+            "tokens": float(self._tokens),
+            "tracked_hosts": float(len(self._host_lookups)),
+            "total_recent_lookups": float(total_recent_lookups),
         }
 
 
-_dns_rate_limiter: Optional[DNSRateLimiter] = None
+def _secure_jitter_seconds(max_jitter_seconds: float) -> float:
+    """Return cryptographically strong jitter in [0, max_jitter_seconds]."""
+    if max_jitter_seconds <= 0:
+        return 0.0
+
+    scale = 1_000_000
+    random_int = secrets.randbelow(scale + 1)
+    jitter_fraction = random_int / scale
+    return jitter_fraction * max_jitter_seconds
 
 
-def get_dns_rate_limiter() -> DNSRateLimiter:
-    """Get or create the global DNS rate limiter."""
-    global _dns_rate_limiter
-    if _dns_rate_limiter is None:
-        _dns_rate_limiter = DNSRateLimiter()
-    return cast(DNSRateLimiter, _dns_rate_limiter)
+def _validate_host(host: str) -> Optional[str]:
+    """Return a normalized host or None if invalid."""
+    if not isinstance(host, str):
+        return None
+    stripped = host.strip()
+    if not stripped:
+        return None
+    return _strip_ipv6_brackets(stripped)
 
 
-def reset_dns_rate_limiter() -> None:
-    """Reset the global DNS rate limiter."""
-    global _dns_rate_limiter
-    if _dns_rate_limiter is not None:
-        _dns_rate_limiter.reset()
+def _resolve_addr_info(host: str) -> Iterable[Tuple]:
+    """Resolve host to address info, raising socket.gaierror on failure."""
+    # Port 80 is arbitrary here; we only care about address resolution.
+    return socket.getaddrinfo(host, 80, socket.AF_UNSPEC, socket.SOCK_STREAM)
 
 
-def check_dns_rate_limit(host: str) -> bool:
-    """Check if DNS lookup for this host is allowed under rate limits."""
-    return get_dns_rate_limiter().is_allowed(host)
+def check_dns_rate_limit(host: str, limiter: DNSRateLimiter) -> bool:
+    """Check if DNS lookup for host is allowed under the provided limiter.
+
+    Args:
+        host: Hostname or IP string to check.
+        limiter: DNSRateLimiter instance to enforce limits.
+
+    Returns:
+        True if lookup is allowed, False otherwise.
+    """
+    return limiter.is_allowed(host)
 
 
 def check_dns_rebinding_detailed(
     host: str,
-    timeout: Optional[float] = None,
+    timeout_seconds: Optional[float] = None,
     enforce_rate_limit: bool = True,
     retries: int = 2,
     backoff_base_seconds: float = 0.05,
     backoff_jitter_seconds: float = 0.02,
+    limiter: Optional[DNSRateLimiter] = None,
 ) -> Tuple[bool, Optional[ErrorCode]]:
-    """Check DNS rebinding risk and return deterministic status."""
-    if not isinstance(host, str) or not host:
+    """Check DNS rebinding risk and return deterministic status.
+
+    Args:
+        host: Hostname or IP string to validate.
+        timeout_seconds: Socket timeout in seconds; defaults to DEFAULT_DNS_TIMEOUT.
+        enforce_rate_limit: Whether to enforce DNS rate limiting.
+        retries: Number of retry attempts after the initial attempt.
+        backoff_base_seconds: Base backoff duration for exponential backoff.
+        backoff_jitter_seconds: Maximum jitter added to backoff.
+        limiter: Optional DNSRateLimiter instance. Required if enforce_rate_limit is True.
+
+    Returns:
+        (is_safe, error_code) where error_code is None on success.
+    """
+    normalized_host = _validate_host(host)
+    if normalized_host is None:
         return False, ErrorCode.DNS_RESOLUTION_FAILED
 
-    timeout_seconds = DEFAULT_DNS_TIMEOUT if timeout is None else timeout
-    host = _strip_ipv6_brackets(host)
+    effective_timeout_seconds = DEFAULT_DNS_TIMEOUT if timeout_seconds is None else timeout_seconds
+    if effective_timeout_seconds <= 0:
+        return False, ErrorCode.DNS_CONNECTION_FAILED
 
-    direct_result = _check_direct_ip_safe(host)
+    direct_result = _check_direct_ip_safe(normalized_host)
     if direct_result is not None:
         return direct_result, None if direct_result else ErrorCode.SSRF_RISK
 
     if enforce_rate_limit:
-        limiter = get_dns_rate_limiter()
-        if not limiter.is_allowed(host):
-            logger.warning("dns_check_blocked rate_limit host=%s", host)
+        if limiter is None:
+            logger.error(
+                "dns_rate_limiter_missing",
+                extra={"event": "dns_rate_limiter_missing"},
+            )
+            return False, ErrorCode.DNS_RATE_LIMITED
+        if not limiter.is_allowed(normalized_host):
+            logger.warning(
+                "dns_check_blocked_rate_limit",
+                extra={"event": "dns_check_blocked_rate_limit", "host": normalized_host},
+            )
             return False, ErrorCode.DNS_RATE_LIMITED
 
     last_error: Optional[ErrorCode] = None
     max_attempts = max(1, retries + 1)
 
-    for attempt in range(max_attempts):
+    for attempt_index in range(max_attempts):
         try:
-            addr_info = socket.getaddrinfo(host, 80, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            addr_info = _resolve_addr_info(normalized_host)
             if not _check_resolved_ips_safe(addr_info):
                 return False, ErrorCode.SSRF_RISK
-            if not _verify_connection_safe(addr_info, timeout_seconds):
+            if not _verify_connection_safe(addr_info, effective_timeout_seconds):
                 return False, ErrorCode.DNS_CONNECTION_FAILED
             return True, None
         except socket.gaierror:
@@ -183,29 +285,38 @@ def check_dns_rebinding_detailed(
         except (socket.timeout, OSError):
             last_error = ErrorCode.DNS_CONNECTION_FAILED
 
-        if attempt + 1 < max_attempts:
-            sleep_seconds = (backoff_base_seconds * (2 ** attempt)) + _jitter_seconds(backoff_jitter_seconds)
-            time.sleep(sleep_seconds)
+        is_last_attempt = attempt_index + 1 >= max_attempts
+        if not is_last_attempt:
+            backoff_seconds = (backoff_base_seconds * (2 ** attempt_index)) + _secure_jitter_seconds(
+                backoff_jitter_seconds
+            )
+            if backoff_seconds > 0:
+                time.sleep(backoff_seconds)
 
     return False, last_error or ErrorCode.DNS_RESOLUTION_FAILED
 
 
 def check_dns_rebinding(
     host: str,
-    timeout: Optional[float] = None,
+    timeout_seconds: Optional[float] = None,
     enforce_rate_limit: bool = True,
     retries: int = 2,
     backoff_base_seconds: float = 0.05,
     backoff_jitter_seconds: float = 0.02,
+    limiter: Optional[DNSRateLimiter] = None,
 ) -> bool:
-    """Backward-compatible boolean wrapper around detailed DNS rebinding checks."""
-    safe, _ = check_dns_rebinding_detailed(
-        host,
-        timeout=timeout,
+    """Boolean wrapper around detailed DNS rebinding checks.
+
+    Returns:
+        True if host is considered safe, False otherwise.
+    """
+    is_safe, _ = check_dns_rebinding_detailed(
+        host=host,
+        timeout_seconds=timeout_seconds,
         enforce_rate_limit=enforce_rate_limit,
         retries=retries,
         backoff_base_seconds=backoff_base_seconds,
         backoff_jitter_seconds=backoff_jitter_seconds,
+        limiter=limiter,
     )
-    return safe
-
+    return is_safe

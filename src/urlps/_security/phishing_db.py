@@ -69,7 +69,10 @@ def _download_phishing_db() -> Set[str]:
                 _PHISHING_META["error_count"] = int(_PHISHING_META.get("error_count", 0)) + 1
                 return set()
 
+            print(response.read())
+
             content = response.read().decode("utf-8", errors="ignore")
+            print(content)
 
         hostnames: Set[str] = set()
         for line in content.splitlines():

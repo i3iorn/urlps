@@ -6,7 +6,7 @@ import re
 import unicodedata
 from functools import lru_cache
 from typing import Optional, Set, Tuple
-from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit, urlparse, urlunparse
 
 from .._patterns import PATTERNS
 from ..constants import DANGEROUS_PORTS
@@ -574,7 +574,6 @@ def get_canonical_url(url: str) -> Optional[str]:
 
     try:
         from posixpath import normpath
-        from urllib.parse import quote, unquote, urlparse, urlunparse
 
         parsed = urlparse(url)
         scheme = parsed.scheme.lower() if parsed.scheme else ""

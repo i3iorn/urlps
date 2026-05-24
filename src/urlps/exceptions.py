@@ -100,6 +100,8 @@ class SecurityPolicyError(URLpError):
 class InvalidURLError(URLpError):
     """Raised for invalid URLs or invalid URL components."""
 
+class DNSRateLimiterError(URLpError):
+    """Raised when DNS rate limiting encounters an invalid state or input."""
 
 class URLParseError(InvalidURLError):
     """Raised when parsing a URL fails."""
