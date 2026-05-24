@@ -100,8 +100,8 @@ class SecurityPolicyError(URLpError):
 class InvalidURLError(URLpError):
     """Raised for invalid URLs or invalid URL components."""
 
-class DNSRateLimiterError(URLpError):
-    """Raised when DNS rate limiting encounters an invalid state or input."""
+class PhishingDatabaseError(URLpError):
+    """Raised when phishing database retrieval fails."""
 
 class URLParseError(InvalidURLError):
     """Raised when parsing a URL fails."""
@@ -163,6 +163,9 @@ class MissingPortError(InvalidURLError):
 # DNS‑related Exceptions
 # ---------------------------------------------------------------------------
 
+class DNSRateLimiterError(URLpError):
+    """Raised when DNS rate limiting encounters an invalid state or input."""
+
 class DNSRebindingError(InvalidURLError):
     """Base class for DNS rebinding validation failures."""
 
@@ -201,5 +204,6 @@ __all__ = [
     "DNSRateLimitError",
     "DNSResolutionError",
     "DNSConnectionError",
-    "SecurityPolicyError"
+    "SecurityPolicyError",
+    "PhishingDatabaseError"
 ]

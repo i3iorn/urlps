@@ -1,97 +1,135 @@
-"""Phishing database download and cache helpers."""
 from __future__ import annotations
 
+import logging
 import socket
 import time
-from typing import Any, Dict, Optional, Set
+from dataclasses import dataclass, field
+from typing import Optional, Set
 from urllib import request
 from urllib.error import URLError
 
 from .._patterns import PATTERNS
 from ..constants import DEFAULT_DNS_TIMEOUT, PHISHING_DATABASE_URL
+from ..exceptions import PhishingDatabaseError
 
-PHISHING_SET: Optional[Set[str]] = None
-_PHISHING_META: Dict[str, Any] = {
-    "loaded": False,
-    "size": 0,
-    "last_refresh_epoch": None,
-    "last_error": None,
-    "error_count": 0,
-}
+logger = logging.getLogger(__name__)
 
 
-def check_against_phishing_db(host: str) -> bool:
-    """Check if hostname is in known phishing database."""
-    global PHISHING_SET
+# ---------------------------------------------------------------------------
+# Data Models
+# ---------------------------------------------------------------------------
 
-    if PHISHING_SET is None:
-        PHISHING_SET = _download_phishing_db()
-        current_set = PHISHING_SET if PHISHING_SET is not None else set()
-        _PHISHING_META["loaded"] = True
-        _PHISHING_META["size"] = len(current_set)
-        _PHISHING_META["last_refresh_epoch"] = time.time()
-
-    if not isinstance(host, str):
-        return False
-
-    return host.lower().rstrip(".") in (PHISHING_SET if PHISHING_SET is not None else set())
+@dataclass(frozen=True)
+class PhishingDatabase:
+    """Immutable phishing database container."""
+    hostnames: Set[str] = field(default_factory=set)
+    last_refresh_epoch: Optional[float] = None
+    last_error: Optional[str] = None
+    error_count: int = 0
 
 
-def refresh_phishing_db() -> int:
-    """Refresh the phishing database cache and return host count."""
-    global PHISHING_SET
+# ---------------------------------------------------------------------------
+# Core Manager
+# ---------------------------------------------------------------------------
 
-    PHISHING_SET = _download_phishing_db()
-    current_set = PHISHING_SET if PHISHING_SET is not None else set()
-    _PHISHING_META["loaded"] = True
-    _PHISHING_META["size"] = len(current_set)
-    _PHISHING_META["last_refresh_epoch"] = time.time()
-    return len(current_set)
+class PhishingDatabaseManager:
+    """Manages secure retrieval and caching of phishing hostnames."""
 
+    def __init__(self) -> None:
+        self._db: PhishingDatabase = PhishingDatabase()
 
-def get_phishing_db_info() -> dict:
-    """Get information about the current phishing database cache."""
-    return {
-        "loaded": PHISHING_SET is not None,
-        "size": len(PHISHING_SET) if PHISHING_SET is not None else 0,
-        "last_refresh_epoch": _PHISHING_META.get("last_refresh_epoch"),
-        "last_error": _PHISHING_META.get("last_error"),
-        "error_count": int(_PHISHING_META.get("error_count", 0)),
-    }
+    # ---------------------------- Public API ---------------------------- #
 
+    def check(self, host: str) -> bool:
+        """Return True if host is present in the phishing database."""
+        if not isinstance(host, str):
+            return False
 
-def _download_phishing_db() -> Set[str]:
-    """Download and return a set of known phishing hostnames."""
-    try:
-        with request.urlopen(PHISHING_DATABASE_URL, timeout=DEFAULT_DNS_TIMEOUT) as response:
-            if response.status != 200:
-                _PHISHING_META["last_error"] = f"unexpected_status:{response.status}"
-                _PHISHING_META["error_count"] = int(_PHISHING_META.get("error_count", 0)) + 1
-                return set()
+        normalized = host.lower().rstrip(".")
+        if not normalized:
+            return False
 
-            print(response.read())
+        if not self._db.hostnames:
+            self.refresh()
 
-            content = response.read().decode("utf-8", errors="ignore")
-            print(content)
+        return normalized in self._db.hostnames
 
-        hostnames: Set[str] = set()
+    def refresh(self) -> int:
+        """Refresh the phishing database and return the number of entries."""
+        new_db = self._download()
+        self._db = new_db
+        return len(new_db.hostnames)
+
+    def info(self) -> dict:
+        """Return metadata about the current phishing database."""
+        return {
+            "loaded": bool(self._db.hostnames),
+            "size": len(self._db.hostnames),
+            "last_refresh_epoch": self._db.last_refresh_epoch,
+            "last_error": self._db.last_error,
+            "error_count": self._db.error_count,
+        }
+
+    # ---------------------------- Internal ----------------------------- #
+
+    def _download(self) -> PhishingDatabase:
+        """Download and validate phishing hostnames."""
+        error_count = self._db.error_count
+
+        try:
+            with request.urlopen(
+                PHISHING_DATABASE_URL,
+                timeout=DEFAULT_DNS_TIMEOUT,
+            ) as response:
+
+                if response.status != 200:
+                    return PhishingDatabase(
+                        hostnames=set(),
+                        last_refresh_epoch=time.time(),
+                        last_error=f"unexpected_status:{response.status}",
+                        error_count=error_count + 1,
+                    )
+
+                raw_bytes = response.read()
+                content = raw_bytes.decode("utf-8", errors="ignore")
+
+        except (URLError, socket.timeout, OSError, ValueError) as exc:
+            return PhishingDatabase(
+                hostnames=set(),
+                last_refresh_epoch=time.time(),
+                last_error=f"download_error:{type(exc).__name__}",
+                error_count=error_count + 1,
+            )
+
+        hostnames = self._parse_hostnames(content)
+
+        return PhishingDatabase(
+            hostnames=hostnames,
+            last_refresh_epoch=time.time(),
+            last_error=None,
+            error_count=error_count,
+        )
+
+    @staticmethod
+    def _parse_hostnames(content: str) -> Set[str]:
+        """Parse and validate hostnames from downloaded content."""
+        valid: Set[str] = set()
+
         for line in content.splitlines():
             candidate = line.strip().lower()
-            if not candidate or len(candidate) > 253:
+
+            if not candidate:
                 continue
+
+            if len(candidate) > 253:
+                continue
+
             if not PATTERNS["host"].fullmatch(candidate):
                 continue
-            hostnames.add(candidate)
 
-        if len(hostnames) > 5_000_000:
-            _PHISHING_META["last_error"] = "phishing_db_too_large"
-            _PHISHING_META["error_count"] = int(_PHISHING_META.get("error_count", 0)) + 1
-            return set()
+            valid.add(candidate)
 
-        _PHISHING_META["last_error"] = None
-        return hostnames
-    except (URLError, socket.timeout, OSError, ValueError) as exc:
-        _PHISHING_META["last_error"] = f"download_error:{type(exc).__name__}"
-        _PHISHING_META["error_count"] = int(_PHISHING_META.get("error_count", 0)) + 1
-        return set()
+        if len(valid) > 5_000_000:
+            raise PhishingDatabaseError("phishing_db_too_large")
 
+        return valid
