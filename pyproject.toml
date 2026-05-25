@@ -41,7 +41,7 @@ dev = ["pytest>=7.4", "mypy>=1.19", "bandit>=1.9", "idna>=3.11"]
 Homepage = "https://github.com/micro/urlps"
 Repository = "https://github.com/micro/urlps"
 Documentation = "https://github.com/micro/urlps#readme"
-Changelog = "https://github.com/micro/urlps/blob/main/changelogs/0.5.1.md"
+Changelog = "https://github.com/micro/urlps/blob/main/changelogs/0.6.0.md"
 Issues = "https://github.com/micro/urlps/issues"
 "Bug Tracker" = "https://github.com/micro/urlps/issues"
 

@@ -2,6 +2,14 @@
 
 All notable changes to `urlps` are documented here.
 
+## 0.6.0 - 2026-05-25
+
+- Standardized public imports on `urlps` across docs, tests, and performance tooling.
+- Added configurable DNS connect error behavior via `dns_fail_open_on_connect_error`.
+- Updated policy defaults for DNS connect checks: strict fail-closed, balanced fail-open.
+- Updated `parse_url_unsafe(policy=...)` to honor explicit policy values exactly.
+- Added release notes in `changelogs/0.6.0.md`.
+
 ## 0.5.1 - 2026-06-22
 
 - Added focused coverage suites (`tests/test_coverage_gaps.py`, `tests/test_coverage_gaps2.py`) for parser, security, validation, URL helpers, and facade flows.

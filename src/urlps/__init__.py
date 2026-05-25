@@ -51,7 +51,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
 
 from ._audit import AuditManager, AuditConfig, AuditEventCallback, AuditCallback
 from .exceptions import URLpError, InvalidURLError, URLParseError, URLBuildError
