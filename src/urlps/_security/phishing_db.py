@@ -70,6 +70,16 @@ class PhishingDatabaseManager:
             "error_count": self._db.error_count,
         }
 
+    def clear(self) -> None:
+        """Clear the phishing database."""
+        self._db = PhishingDatabase(
+            hostnames=set(),
+            last_refresh_epoch=None,
+            last_error=None,
+            error_count=0,
+        )
+
+
     # ---------------------------- Internal ----------------------------- #
 
     def _download(self) -> PhishingDatabase:
@@ -152,6 +162,10 @@ def get_phishing_db_info() -> dict:
     """Return phishing database metadata."""
     return _GLOBAL_MANAGER.info()
 
+def clear_phishing_db() -> None:
+    """Clear phishing database."""
+    _GLOBAL_MANAGER.clear()
+
 
 __all__ = [
     "PhishingDatabase",
@@ -159,5 +173,6 @@ __all__ = [
     "check_against_phishing_db",
     "refresh_phishing_db",
     "get_phishing_db_info",
+    "clear_phishing_db"
 ]
 
