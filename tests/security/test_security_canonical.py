@@ -1,6 +1,6 @@
 """Tests for canonical form validation."""
 import pytest
-from src.urlps._security import is_non_canonical_url, get_canonical_url
+from urlps._security import is_non_canonical_url, get_canonical_url
 
 
 class TestCanonicalDetection:

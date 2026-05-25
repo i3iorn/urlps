@@ -1,6 +1,6 @@
 """Tests for query parameter injection detection."""
 import pytest
-from src.urlps._security import has_query_injection
+from urlps._security import has_query_injection
 
 
 class TestXSSDetection:

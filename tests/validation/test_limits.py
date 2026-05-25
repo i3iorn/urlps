@@ -1,10 +1,10 @@
 import pytest
 
-from src.urlps import parse_url, parse_url_unsafe
-from src.urlps.exceptions import InvalidURLError
-from src.urlps import URL
+from urlps import parse_url, parse_url_unsafe
+from urlps.exceptions import InvalidURLError
+from urlps import URL
 
-from src.urlps.constants import (
+from urlps.constants import (
     MAX_URL_LENGTH,
     MAX_SCHEME_LENGTH,
     MAX_HOST_LENGTH,

@@ -1,6 +1,6 @@
 """Tests for credential leakage detection."""
 import pytest
-from src.urlps._security import has_credentials
+from urlps._security import has_credentials
 
 
 class TestCredentialDetection:

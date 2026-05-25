@@ -1,7 +1,7 @@
 """Tests for IPv6 zone identifier validation."""
 import pytest
-from src.urlps import parse_url, InvalidURLError
-from src.urlps._security import is_malicious_ipv6_zone_id
+from urlps import parse_url, InvalidURLError
+from urlps._security import is_malicious_ipv6_zone_id
 
 
 class TestIPv6ZoneIdentifier:
@@ -63,7 +63,7 @@ class TestIPv6ZoneIdentifier:
     def test_valid_zone_ids_pass(self):
         """Valid IPv6 zone identifiers should parse successfully."""
         # Note: These will fail SSRF checks, so use parse_url_unsafe
-        from src.urlps import parse_url_unsafe
+        from urlps import parse_url_unsafe
 
         url = parse_url_unsafe("http://[fe80::1%25eth0]/")
         assert url.host == "[fe80::1%25eth0]"

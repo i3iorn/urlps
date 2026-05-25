@@ -1,12 +1,12 @@
 """Tests for DNS rate limiting."""
 import time
 import pytest
-from src.urlps._security import (
+from urlps._security import (
     DNSRateLimiter,
     check_dns_rate_limit,
 )
-from src.urlps._security.dns_guard import DNSRateLimiterConfig, check_dns_rebinding_detailed
-from src.urlps.exceptions import ErrorCode
+from urlps._security.dns_guard import DNSRateLimiterConfig, check_dns_rebinding_detailed
+from urlps.exceptions import ErrorCode
 
 
 class TestDNSRateLimiterBasics:

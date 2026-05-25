@@ -11,10 +11,10 @@ This test suite focuses on areas not fully covered in test_rfc3986_compliance.py
 - Scheme-specific validation
 """
 import pytest
-from src.urlps import parse_url, parse_url_unsafe, compose_url
-from src.urlps._parser import Parser
-from src.urlps._builder import Builder
-from src.urlps.exceptions import InvalidURLError, URLParseError
+from urlps import parse_url, parse_url_unsafe, compose_url
+from urlps._parser import Parser
+from urlps._builder import Builder
+from urlps.exceptions import InvalidURLError, URLParseError
 
 
 class TestPercentEncodingRFC3986:
