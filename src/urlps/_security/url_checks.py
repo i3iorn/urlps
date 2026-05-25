@@ -283,16 +283,16 @@ def has_credentials(url: str) -> bool:
     """Detect URLs containing credentials (userinfo) in authority."""
     if not isinstance(url, str):
         return False
-    if "://" not in url:
+    if not url:
         return False
 
-    after_scheme = url.split("://", 1)[1]
-    if "/" in after_scheme:
-        authority = after_scheme.split("/", 1)[0]
-    else:
-        authority = after_scheme.split("?", 1)[0].split("#", 1)[0]
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
 
-    return "@" in authority
+    # urlsplit() populates netloc for both absolute and scheme-relative URLs.
+    return "@" in parsed.netloc
 
 
 def extract_host_and_path(url: str) -> Tuple[str, str]:

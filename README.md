@@ -85,6 +85,24 @@ policy = SecurityPolicy.strict(check_dns=True, dns_fail_open_on_connect_error=Tr
 url = parse_url("https://api.example.com", policy=policy)
 ```
 
+Recommended for multi-tenant or concurrent applications: inject a dedicated DNS limiter.
+
+```python
+from urlps import parse_url
+from urlps._security.dns_guard import DNSRateLimiter, DNSRateLimiterConfig
+
+limiter = DNSRateLimiter(
+    DNSRateLimiterConfig(max_lookups_per_second=20, max_lookups_per_host=50)
+)
+
+url = parse_url(
+    "https://api.example.com",
+    policy="strict",
+    check_dns=True,
+    dns_rate_limiter=limiter,
+)
+```
+
 ## Core Features
 
 ### Immutable URL Objects
@@ -200,11 +218,13 @@ Supported variables:
 
 | Function | Description |
 | --- | --- |
-| `parse_url(url, *, allow_custom_scheme=False, check_dns=False, check_phishing=False, policy=None, correlation_id=None)` | Parse URL with policy-aware security checks (recommended) |
-| `parse_url_unsafe(url, *, allow_custom_scheme=False, strict=False, debug=False, check_dns=False, policy=None, correlation_id=None)` | Parse URL for trusted/internal input with optional policy overrides |
+| `parse_url(url, *, allow_custom_scheme=False, check_dns=False, check_phishing=False, dns_rate_limiter=None, policy=None, correlation_id=None)` | Parse URL with policy-aware security checks (recommended) |
+| `parse_url_unsafe(url, *, allow_custom_scheme=False, strict=False, debug=False, check_dns=False, dns_rate_limiter=None, policy=None, correlation_id=None)` | Parse URL for trusted/internal input with optional policy overrides |
 | `build(*scheme_and_host, port=None, path="/", query=None, fragment=None, userinfo=None)` | Build URL string from components |
-| `build_secure(*scheme_and_host, policy=None, check_dns=False, check_phishing=False, correlation_id=None, ...)` | Build and then validate a URL under a selected security policy |
+| `build_secure(*scheme_and_host, policy=None, check_dns=False, check_phishing=False, dns_rate_limiter=None, correlation_id=None, ...)` | Build and then validate a URL under a selected security policy |
 | `compose_url(components)` | Build URL from components dict |
+
+Note: `get_dns_rate_limiter()` and `reset_dns_rate_limiter()` remain available for compatibility, but explicit `dns_rate_limiter=` injection is preferred.
 
 ### URL Methods
 

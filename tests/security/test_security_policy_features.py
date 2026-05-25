@@ -8,7 +8,7 @@ from urlps import (
     parse_url,
     parse_url_unsafe
 )
-from urlps._security.dns_guard import check_dns_rebinding_detailed
+from urlps._security.dns_guard import check_dns_rebinding_detailed, DNSRateLimiter
 from urlps.exceptions import ErrorCode
 
 
@@ -34,6 +34,10 @@ class TestSecurityPolicy:
         with pytest.raises(InvalidURLError):
             u.with_host("127.0.0.1")
 
+    def test_strict_policy_blocks_scheme_relative_credentials(self) -> None:
+        with pytest.raises(InvalidURLError):
+            parse_url("//user:pass@example.com/path", policy="strict")
+
 
 class TestSecurityAPIs:
     def test_validate_returns_findings(self) -> None:
@@ -48,6 +52,39 @@ class TestSecurityAPIs:
         assert "pass" not in redacted
         assert "abc" not in redacted
         assert "token=%2A%2A%2A" in redacted
+
+    def test_validate_honors_explicit_policy_dns_setting(self) -> None:
+        u = parse_url_unsafe("http://example.com/")
+
+        with patch(
+            "urlps._security.check_dns_rebinding_detailed",
+            return_value=(False, ErrorCode.DNS_RESOLUTION_FAILED),
+        ):
+            findings = u.validate(policy=SecurityPolicy.strict(check_dns=True), raise_on_error=False)
+
+        assert any(f.code == ErrorCode.DNS_RESOLUTION_FAILED.value for f in findings)
+
+    def test_parse_url_passes_injected_dns_limiter(self) -> None:
+        limiter = DNSRateLimiter()
+        with patch(
+            "urlps._security.check_dns_rebinding_detailed",
+            return_value=(True, None),
+        ) as dns_mock:
+            parse_url("http://example.com/", policy="strict", check_dns=True, dns_rate_limiter=limiter)
+
+        assert dns_mock.call_count == 1
+        assert dns_mock.call_args.kwargs["limiter"] is limiter
+
+    def test_parse_url_unsafe_passes_injected_dns_limiter(self) -> None:
+        limiter = DNSRateLimiter()
+        with patch(
+            "urlps._security.check_dns_rebinding_detailed",
+            return_value=(True, None),
+        ) as dns_mock:
+            parse_url_unsafe("http://example.com/", check_dns=True, dns_rate_limiter=limiter)
+
+        assert dns_mock.call_count == 1
+        assert dns_mock.call_args.kwargs["limiter"] is limiter
 
 
 class TestSecureBuilder:

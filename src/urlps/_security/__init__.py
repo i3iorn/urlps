@@ -118,6 +118,7 @@ def collect_security_findings(
             backoff_base_seconds=effective_policy.dns_backoff_base_seconds,
             backoff_jitter_seconds=effective_policy.dns_backoff_jitter_seconds,
             fail_open_on_connect_error=effective_policy.dns_fail_open_on_connect_error,
+            limiter=effective_policy.dns_rate_limiter,
         )
         if not safe and dns_error is not None:
             findings.append(_finding("critical", dns_error, "DNS rebinding validation failed.", "host"))
