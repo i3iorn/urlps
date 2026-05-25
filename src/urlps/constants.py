@@ -147,6 +147,7 @@ DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS: Final[float] = 300.0  # Cleanup old tracki
 
 # Phishing Database Configuration
 PHISHING_DATABASE_URL: Final[str] = "https://phish.co.za/latest/ALL-phishing-domains.lst"
+DEFAULT_PHISHING_DATABASE_MAX_BYTES: Final[int] = 25 * 1024 * 1024
 
 PASSWORD_MASK: Final[str] = "***"
 
@@ -174,5 +175,6 @@ __all__ = [
     "DEFAULT_DNS_TIME_WINDOW_SECONDS",
     "DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS",
     "PHISHING_DATABASE_URL",
+    "DEFAULT_PHISHING_DATABASE_MAX_BYTES",
     "PASSWORD_MASK",
 ]

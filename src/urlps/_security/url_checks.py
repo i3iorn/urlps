@@ -297,10 +297,13 @@ def has_credentials(url: str) -> bool:
 
 def extract_host_and_path(url: str) -> Tuple[str, str]:
     """Extract host and path portions from URL for security checks."""
-    if "://" not in url:
+    if "://" in url:
+        after_scheme = url.split("://", 1)[1]
+    elif url.startswith("//"):
+        after_scheme = url[2:]
+    else:
         return "", ""
 
-    after_scheme = url.split("://", 1)[1]
     if "/" in after_scheme:
         host_portion = after_scheme.split("/", 1)[0]
         path_portion = after_scheme[after_scheme.find("/"):]

@@ -9,7 +9,11 @@ from urllib import request
 from urllib.error import URLError
 
 from .._patterns import PATTERNS
-from ..constants import DEFAULT_DNS_TIMEOUT, PHISHING_DATABASE_URL
+from ..constants import (
+    DEFAULT_DNS_TIMEOUT,
+    PHISHING_DATABASE_URL,
+    DEFAULT_PHISHING_DATABASE_MAX_BYTES,
+)
 from ..exceptions import PhishingDatabaseError
 
 logger = logging.getLogger(__name__)
@@ -100,7 +104,14 @@ class PhishingDatabaseManager:
                         error_count=error_count + 1,
                     )
 
-                raw_bytes = response.read()
+                raw_bytes = response.read(DEFAULT_PHISHING_DATABASE_MAX_BYTES + 1)
+                if len(raw_bytes) > DEFAULT_PHISHING_DATABASE_MAX_BYTES:
+                    return PhishingDatabase(
+                        hostnames=set(),
+                        last_refresh_epoch=time.time(),
+                        last_error="download_too_large",
+                        error_count=error_count + 1,
+                    )
                 content = raw_bytes.decode("utf-8", errors="ignore")
 
         except (URLError, socket.timeout, OSError, ValueError) as exc:

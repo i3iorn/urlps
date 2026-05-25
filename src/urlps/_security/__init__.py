@@ -60,14 +60,15 @@ def collect_security_findings(
     except (UnicodeEncodeError, UnicodeDecodeError):
         is_ascii = False
 
-    split_for_double = urlsplit(normalized_url) if "://" in normalized_url else None
+    has_authority_syntax = "://" in normalized_url or normalized_url.startswith("//")
+    split_for_double = urlsplit(normalized_url) if has_authority_syntax else None
     double_encoding_target = (
         f"{split_for_double.path}?{split_for_double.query}" if split_for_double is not None else normalized_url
     )
     if effective_policy.enforce_double_encoding and has_double_encoding(double_encoding_target):
         findings.append(_finding("critical", ErrorCode.DOUBLE_ENCODING, "URL contains double-encoded characters.", "url"))
 
-    if "://" not in normalized_url:
+    if not has_authority_syntax:
         return findings
 
     host, path = extract_host_and_path(normalized_url)
