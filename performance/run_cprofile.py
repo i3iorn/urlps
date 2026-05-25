@@ -20,11 +20,11 @@ import time
 import cProfile
 import pstats
 
-# Ensure project root is importable
+# Ensure src-layout package is importable for local runs
 ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
-from src.urlps import parse_url
+from urlps import parse_url
 
 OUTPUT_DIR = Path(__file__).parent
 PROF_PATH = OUTPUT_DIR / "profile_results.prof"
