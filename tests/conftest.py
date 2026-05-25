@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def _ensure_src_on_path() -> None:
-    """Add repository paths so `urlps` and legacy `src.urlps` imports both resolve."""
+    """Add repository paths so `urlps` and legacy `urlps` imports both resolve."""
     repo_root = Path(__file__).resolve().parents[1]
     src_dir = repo_root / "src"
     repo_root_str = str(repo_root)
