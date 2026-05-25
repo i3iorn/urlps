@@ -9,6 +9,8 @@ import unicodedata
 import pytest
 from unittest.mock import patch
 
+from src.urlps.exceptions import PhishingDatabaseError
+
 
 # ---------------------------------------------------------------------------
 # url.py additional gaps
@@ -171,14 +173,14 @@ class TestSecurityAdditional:
 
     def test_phishing_db_too_large_returns_empty(self):
         """Lines 378-380: oversized phishing DB returns empty set."""
-        from src.urlps._security.phishing_db import _download_phishing_db
+        from src.urlps._security.phishing_db import refresh_phishing_db
         big_content = "\n".join(f"host{i}.com" for i in range(5_000_001))
         with patch("urllib.request.urlopen") as mock_open:
             resp = mock_open.return_value.__enter__.return_value
             resp.status = 200
             resp.read.return_value = big_content.encode("utf-8")
-            result = _download_phishing_db()
-        assert result == set()
+            with pytest.raises(PhishingDatabaseError, match="too_large"):
+                result = refresh_phishing_db()
 
     def test_parser_confusion_backslash_only_in_authority(self):
         """Lines 604-605: backslash in authority with no path returns True."""

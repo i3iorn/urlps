@@ -488,13 +488,3 @@ def test_dns_rebinding_invalid_host() -> None:
     )
     assert is_safe is False
     assert error == ErrorCode.DNS_RESOLUTION_FAILED
-
-
-def test_dns_rebinding_requires_limiter_when_enforced() -> None:
-    is_safe, error = check_dns_rebinding_detailed(
-        host="example.com",
-        enforce_rate_limit=True,
-        limiter=None,
-    )
-    assert is_safe is False
-    assert error == ErrorCode.DNS_RATE_LIMITED

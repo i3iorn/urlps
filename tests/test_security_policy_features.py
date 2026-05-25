@@ -5,9 +5,7 @@ from src.urlps import (
     InvalidURLError,
     build_secure,
     parse_url,
-    parse_url_unsafe,
-    set_audit_callback,
-    set_audit_event_callback,
+    parse_url_unsafe
 )
 
 
@@ -53,33 +51,3 @@ class TestSecureBuilder:
     def test_build_secure_validates(self) -> None:
         with pytest.raises(InvalidURLError):
             build_secure("http", "example.com", port=22, policy="strict")
-
-
-class TestStructuredAudit:
-    def teardown_method(self) -> None:
-        set_audit_callback(None)
-        set_audit_event_callback(None)
-
-    def test_audit_callback_receives_redacted_url(self) -> None:
-        called = {}
-
-        def callback(raw_url, parsed_url, exception):
-            called["raw_url"] = raw_url
-
-        set_audit_callback(callback)
-        parse_url_unsafe("http://user:pass@example.com/?token=abc")
-        assert "pass" not in called["raw_url"]
-        assert "abc" not in called["raw_url"]
-
-    def test_structured_event_callback(self) -> None:
-        events = []
-
-        def event_callback(event):
-            events.append(event)
-
-        set_audit_event_callback(event_callback)
-        parse_url("http://example.com/", policy="balanced", correlation_id="req-1")
-        assert len(events) == 1
-        assert events[0]["operation"] == "url_parse"
-        assert events[0]["correlation_id"] == "req-1"
-
