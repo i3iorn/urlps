@@ -53,12 +53,7 @@ from typing import Any, Mapping, Optional
 
 __version__ = "0.5.1"
 
-from ._audit import (
-    set_audit_callback,
-    get_audit_callback,
-    set_audit_event_callback,
-    get_audit_event_callback,
-)
+from ._audit import AuditManager, AuditConfig, AuditEventCallback, AuditCallback
 from .exceptions import URLpError, InvalidURLError, URLParseError, URLBuildError
 from ._security.policy import SecurityPolicy, PolicyInput, resolve_security_policy
 from .url import URL
@@ -413,12 +408,12 @@ __all__ = [
     "InvalidURLError",
     "URLParseError",
     "URLBuildError",
-    "set_audit_callback",
-    "get_audit_callback",
-    "set_audit_event_callback",
-    "get_audit_event_callback",
     "SecurityPolicy",
     "build_secure",
     "get_cache_info",
     "clear_all_caches",
+    "AuditManager",
+    "AuditCallback",
+    "AuditConfig",
+    "AuditEventCallback"
 ]
