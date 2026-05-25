@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import lru_cache
-from typing import Final, Literal, Optional, Union
+from typing import Literal, Optional, Union, cast
 
-from src.urlps.exceptions import SecurityPolicyError
+from ..exceptions import SecurityPolicyError
 
 PolicyName = Literal["strict", "balanced", "internal"]
 PolicyInput = Union[None, PolicyName, "SecurityPolicy"]
@@ -102,9 +102,7 @@ def _apply_overrides(
 ) -> SecurityPolicy:
     """Return a new policy if overrides differ; otherwise return base."""
     effective_dns = base.check_dns if check_dns is None else bool(check_dns)
-    effective_phishing = (
-        base.check_phishing if check_phishing is None else bool(check_phishing)
-    )
+    effective_phishing = base.check_phishing if check_phishing is None else bool(check_phishing)
 
     if (
         effective_dns == base.check_dns
@@ -112,10 +110,26 @@ def _apply_overrides(
     ):
         return base
 
-    return replace(
-        base,
+    concrete_base = cast(SecurityPolicy, base)
+
+    return SecurityPolicy(
+        name=concrete_base.name,
+        enforce_ssrf=concrete_base.enforce_ssrf,
+        enforce_path_traversal=concrete_base.enforce_path_traversal,
+        enforce_open_redirect=concrete_base.enforce_open_redirect,
+        enforce_mixed_scripts=concrete_base.enforce_mixed_scripts,
+        enforce_parser_confusion=concrete_base.enforce_parser_confusion,
+        enforce_double_encoding=concrete_base.enforce_double_encoding,
+        enforce_query_injection=concrete_base.enforce_query_injection,
+        block_dangerous_ports=concrete_base.block_dangerous_ports,
+        reject_credentials=concrete_base.reject_credentials,
+        require_canonical=concrete_base.require_canonical,
         check_dns=effective_dns,
         check_phishing=effective_phishing,
+        enforce_dns_rate_limit=concrete_base.enforce_dns_rate_limit,
+        dns_retries=concrete_base.dns_retries,
+        dns_backoff_base_seconds=concrete_base.dns_backoff_base_seconds,
+        dns_backoff_jitter_seconds=concrete_base.dns_backoff_jitter_seconds,
     )
 
 

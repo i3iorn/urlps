@@ -13,9 +13,10 @@ import socket
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import Callable, Deque, Dict, Iterable, Optional, Tuple
+from typing import Callable, Deque, Dict, Optional, Tuple
 
-from build.lib.src.urlps._security.ip_utils import (
+from .ip_utils import (
+    AddrInfo,
     _strip_ipv6_brackets, _check_direct_ip_safe, _check_resolved_ips_safe, _verify_connection_safe
 )
 
@@ -30,6 +31,7 @@ from ..exceptions import ErrorCode, DNSRateLimiterError
 
 
 logger = logging.getLogger(__name__)
+_GLOBAL_RATE_LIMITER: Optional["DNSRateLimiter"] = None
 
 
 TimeProvider = Callable[[], float]
@@ -209,13 +211,13 @@ def _validate_host(host: str) -> Optional[str]:
     return _strip_ipv6_brackets(stripped)
 
 
-def _resolve_addr_info(host: str) -> Iterable[Tuple]:
+def _resolve_addr_info(host: str) -> list[Tuple[int, int, int, str, tuple]]:
     """Resolve host to address info, raising socket.gaierror on failure."""
     # Port 80 is arbitrary here; we only care about address resolution.
-    return socket.getaddrinfo(host, 80, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    return list(socket.getaddrinfo(host, 80, socket.AF_UNSPEC, socket.SOCK_STREAM))
 
 
-def check_dns_rate_limit(host: str, limiter: DNSRateLimiter) -> bool:
+def check_dns_rate_limit(host: str, limiter: Optional[DNSRateLimiter] = None) -> bool:
     """Check if DNS lookup for host is allowed under the provided limiter.
 
     Args:
@@ -225,12 +227,29 @@ def check_dns_rate_limit(host: str, limiter: DNSRateLimiter) -> bool:
     Returns:
         True if lookup is allowed, False otherwise.
     """
-    return limiter.is_allowed(host)
+    effective_limiter = get_dns_rate_limiter() if limiter is None else limiter
+    return effective_limiter.is_allowed(host)
+
+
+def get_dns_rate_limiter() -> DNSRateLimiter:
+    """Get or create the process-global DNS rate limiter."""
+    global _GLOBAL_RATE_LIMITER
+    if _GLOBAL_RATE_LIMITER is None:
+        _GLOBAL_RATE_LIMITER = DNSRateLimiter()
+    assert _GLOBAL_RATE_LIMITER is not None
+    return _GLOBAL_RATE_LIMITER
+
+
+def reset_dns_rate_limiter() -> None:
+    """Reset the process-global DNS rate limiter state."""
+    limiter = get_dns_rate_limiter()
+    limiter.reset()
 
 
 def check_dns_rebinding_detailed(
     host: str,
     timeout_seconds: Optional[float] = None,
+    timeout: Optional[float] = None,
     enforce_rate_limit: bool = True,
     retries: int = 2,
     backoff_base_seconds: float = 0.05,
@@ -255,7 +274,8 @@ def check_dns_rebinding_detailed(
     if normalized_host is None:
         return False, ErrorCode.DNS_RESOLUTION_FAILED
 
-    effective_timeout_seconds = DEFAULT_DNS_TIMEOUT if timeout_seconds is None else timeout_seconds
+    effective_timeout_value = timeout_seconds if timeout_seconds is not None else timeout
+    effective_timeout_seconds = DEFAULT_DNS_TIMEOUT if effective_timeout_value is None else effective_timeout_value
     if effective_timeout_seconds <= 0:
         return False, ErrorCode.DNS_CONNECTION_FAILED
 
@@ -264,13 +284,8 @@ def check_dns_rebinding_detailed(
         return direct_result, None if direct_result else ErrorCode.SSRF_RISK
 
     if enforce_rate_limit:
-        if limiter is None:
-            logger.error(
-                "dns_rate_limiter_missing",
-                extra={"event": "dns_rate_limiter_missing"},
-            )
-            return False, ErrorCode.DNS_RATE_LIMITED
-        if not limiter.is_allowed(normalized_host):
+        effective_limiter = get_dns_rate_limiter() if limiter is None else limiter
+        if not effective_limiter.is_allowed(normalized_host):
             logger.warning(
                 "dns_check_blocked_rate_limit",
                 extra={"event": "dns_check_blocked_rate_limit", "host": normalized_host},
@@ -282,7 +297,7 @@ def check_dns_rebinding_detailed(
 
     for attempt_index in range(max_attempts):
         try:
-            addr_info = _resolve_addr_info(normalized_host)
+            addr_info: AddrInfo = _resolve_addr_info(normalized_host)
             if not _check_resolved_ips_safe(addr_info):
                 return False, ErrorCode.SSRF_RISK
             if not _verify_connection_safe(addr_info, effective_timeout_seconds):
@@ -307,6 +322,7 @@ def check_dns_rebinding_detailed(
 def check_dns_rebinding(
     host: str,
     timeout_seconds: Optional[float] = None,
+    timeout: Optional[float] = None,
     enforce_rate_limit: bool = True,
     retries: int = 2,
     backoff_base_seconds: float = 0.05,
@@ -321,6 +337,7 @@ def check_dns_rebinding(
     is_safe, _ = check_dns_rebinding_detailed(
         host=host,
         timeout_seconds=timeout_seconds,
+        timeout=timeout,
         enforce_rate_limit=enforce_rate_limit,
         retries=retries,
         backoff_base_seconds=backoff_base_seconds,
@@ -328,3 +345,16 @@ def check_dns_rebinding(
         limiter=limiter,
     )
     return is_safe
+
+
+__all__ = [
+    "DNSRateLimiterConfig",
+    "DNSRateLimiter",
+    "check_dns_rate_limit",
+    "get_dns_rate_limiter",
+    "reset_dns_rate_limiter",
+    "check_dns_rebinding_detailed",
+    "check_dns_rebinding",
+]
+
+

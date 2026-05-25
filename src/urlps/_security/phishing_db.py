@@ -133,3 +133,31 @@ class PhishingDatabaseManager:
             raise PhishingDatabaseError("phishing_db_too_large")
 
         return valid
+
+
+_GLOBAL_MANAGER = PhishingDatabaseManager()
+
+
+def check_against_phishing_db(host: str) -> bool:
+    """Check if host exists in the phishing database."""
+    return _GLOBAL_MANAGER.check(host)
+
+
+def refresh_phishing_db() -> int:
+    """Refresh phishing database and return item count."""
+    return _GLOBAL_MANAGER.refresh()
+
+
+def get_phishing_db_info() -> dict:
+    """Return phishing database metadata."""
+    return _GLOBAL_MANAGER.info()
+
+
+__all__ = [
+    "PhishingDatabase",
+    "PhishingDatabaseManager",
+    "check_against_phishing_db",
+    "refresh_phishing_db",
+    "get_phishing_db_info",
+]
+

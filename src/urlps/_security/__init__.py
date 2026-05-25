@@ -7,12 +7,15 @@ from urllib.parse import urlsplit
 from .._components import SecurityFinding
 from ..exceptions import ErrorCode, InvalidURLError, SecurityPolicyError
 from .dns_guard import (
+    DNSRateLimiterConfig,
     DNSRateLimiter,
     check_dns_rate_limit,
     check_dns_rebinding,
     check_dns_rebinding_detailed,
+    get_dns_rate_limiter,
+    reset_dns_rate_limiter,
 )
-from .ip_utils import is_malicious_ipv6_zone_id, is_private_ip, is_ssrf_risk, _check_ipv6_private
+from .ip_utils import is_malicious_ipv6_zone_id, is_private_ip, is_ssrf_risk
 from .phishing_db import check_against_phishing_db, get_phishing_db_info, refresh_phishing_db
 from .policy import PolicyInput, SecurityPolicy, resolve_security_policy
 from .url_checks import (
@@ -41,12 +44,12 @@ def _finding(severity: str, code: ErrorCode, message: str, component: Optional[s
 def collect_security_findings(
     url: str,
     *,
-    policy: Optional[SecurityPolicy] = None,
+    policy: PolicyInput = None,
     check_dns: Optional[bool] = None,
     check_phishing: Optional[bool] = None,
 ) -> list[SecurityFinding]:
     """Collect policy-aware security findings without raising exceptions."""
-    effective_policy = SecurityPolicy.strict() if policy is None else policy
+    effective_policy = resolve_security_policy(policy, check_dns=check_dns, check_phishing=check_phishing)
     findings: list[SecurityFinding] = []
 
     normalized_url = normalize_url_unicode(url)
@@ -105,7 +108,7 @@ def collect_security_findings(
     if effective_policy.require_canonical and is_non_canonical_url(normalized_url):
         findings.append(_finding("major", ErrorCode.NON_CANONICAL_URL, "URL is not in canonical form.", "url"))
 
-    effective_check_dns = effective_policy.check_dns if check_dns is None else check_dns
+    effective_check_dns = effective_policy.check_dns
     if effective_check_dns and host:
         safe, dns_error = check_dns_rebinding_detailed(
             host,
@@ -117,7 +120,7 @@ def collect_security_findings(
         if not safe and dns_error is not None:
             findings.append(_finding("critical", dns_error, "DNS rebinding validation failed.", "host"))
 
-    effective_check_phishing = effective_policy.check_phishing if check_phishing is None else check_phishing
+    effective_check_phishing = effective_policy.check_phishing
     if effective_check_phishing and host and check_against_phishing_db(host):
         findings.append(_finding("critical", ErrorCode.PHISHING_DOMAIN, "Host is identified as a phishing domain.", "host"))
 
@@ -127,7 +130,7 @@ def collect_security_findings(
 def validate_url_security(
     url: str,
     *,
-    policy: Optional[SecurityPolicy] = None,
+    policy: PolicyInput = None,
     check_dns: Optional[bool] = None,
     check_phishing: Optional[bool] = None,
     raise_on_error: bool = True,
@@ -193,7 +196,10 @@ __all__ = [
     "has_query_injection",
     "has_suspicious_punycode",
     "DNSRateLimiter",
+    "DNSRateLimiterConfig",
     "check_dns_rate_limit",
+    "get_dns_rate_limiter",
+    "reset_dns_rate_limiter",
     "is_non_canonical_url",
     "get_canonical_url",
     "SecurityPolicy",

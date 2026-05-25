@@ -1,423 +1,200 @@
+"""IP and host safety helpers for security checks."""
 from __future__ import annotations
 
 import ipaddress
-import logging
+import socket
 from functools import lru_cache
-from typing import Iterable, List, Optional, Union
+from typing import Iterable, Optional, Sequence, Tuple, Union
 
 from ..constants import BLOCKED_HOSTNAMES
 
-logger = logging.getLogger(__name__)
 
 IpAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
+AddrInfo = Sequence[Tuple[int, int, int, str, tuple]]
 
 
-def _is_public_ip(ip: IpAddress) -> bool:
-    """Return True if the IP address is considered public/safe.
-
-    Args:
-        ip: Parsed IPv4 or IPv6 address.
-
-    Returns:
-        True if the IP is not private, loopback, multicast, reserved, or link-local.
-    """
-    return not (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_link_local
-    )
+def _is_ip_safe(ip: IpAddress) -> bool:
+    """Check if IP is safe (not private/reserved)."""
+    return not (ip.is_private or ip.is_loopback or ip.is_multicast or ip.is_reserved or ip.is_link_local)
 
 
-def _normalize_host(host: str) -> str:
-    """Normalize host for comparison and blocklist checks.
-
-    - Strips trailing dot.
-    - Lowercases.
-    - Leaves IP literals unchanged.
-    - Does not perform DNS resolution.
-
-    Args:
-        host: Raw host string.
-
-    Returns:
-        Normalized host string.
-    """
-    normalized = host.strip()
-    if not normalized:
-        return normalized
-
-    normalized = normalized.rstrip(".")
-    return normalized.lower()
-
-
-def _is_canonical_ipv4(host: str) -> bool:
-    """Check if host is a canonical dotted-decimal IPv4 address.
-
-    Args:
-        host: Host string.
-
-    Returns:
-        True if host is canonical IPv4 (no leading zeros, no hex/octal).
-    """
+def _check_ipv4_private(host: str) -> bool:
+    """Check if IPv4 address is private/reserved."""
     try:
-        addr = ipaddress.IPv4Address(host)
-    except ipaddress.AddressValueError:
+        return not _is_ip_safe(ipaddress.IPv4Address(host))
+    except (ValueError, ipaddress.AddressValueError):
         return False
 
-    return host == str(addr)
 
-
-def _parse_ipv6_literal(host: str) -> Optional[ipaddress.IPv6Address]:
-    """Parse a canonical IPv6 literal, optionally bracketed, without zone ID.
-
-    Args:
-        host: Host string, possibly in [addr] form.
-
-    Returns:
-        Parsed IPv6Address or None if not a canonical literal.
-    """
-    candidate = host
+def _strip_ipv6_brackets(host: str) -> str:
+    """Strip brackets and encoded zone ID from IPv6 address."""
     if host.startswith("[") and host.endswith("]"):
-        candidate = host[1:-1]
+        inner = host[1:-1]
+        if "%25" in inner:
+            inner, _, _ = inner.partition("%25")
+        return inner
+    return host
 
-    # Strip zone ID if present; zone ID is validated separately.
-    if "%" in candidate:
-        candidate = candidate.split("%", 1)[0]
 
+def _check_ipv6_private(host: str) -> bool:
+    """Check if IPv6 address (bracketed) is private/reserved."""
+    if not host.startswith("[") or not host.endswith("]"):
+        return False
     try:
-        addr = ipaddress.IPv6Address(candidate)
-    except ipaddress.AddressValueError:
-        return None
-
-    # Require canonical compressed form when bracketed or bare.
-    if host.startswith("[") and host.endswith("]"):
-        expected = f"[{addr.compressed}]"
-        if "%" in host:
-            # Zone ID is handled elsewhere; only compare address part.
-            address_part = host[1 : host.index("]")]
-            address_only = address_part.split("%", 1)[0]
-            if address_only.lower() != addr.compressed.lower():
-                return None
-        else:
-            if host.lower() != expected.lower():
-                return None
-    else:
-        if host.lower() != addr.compressed.lower():
-            return None
-
-    return addr
-
-
-def _looks_like_ambiguous_ip_representation(host: str) -> bool:
-    """Detect decimal, octal, hex, or mixed IP representations.
-
-    Any such representation is treated as unsafe to avoid ambiguity.
-
-    Args:
-        host: Host string.
-
-    Returns:
-        True if host looks like a non-canonical IP representation.
-    """
-    if not host:
+        inner = _strip_ipv6_brackets(host)
+        return not _is_ip_safe(ipaddress.IPv6Address(inner))
+    except (ValueError, ipaddress.AddressValueError):
         return False
 
-    # Pure decimal integer (e.g., 2130706433 for 127.0.0.1).
-    if host.isdigit():
+
+def _is_blocked_hostname(host_lower: str) -> bool:
+    """Check if hostname is in blocklist or blocked suffixes."""
+    if host_lower in BLOCKED_HOSTNAMES:
         return True
+    return host_lower.endswith(".local") or host_lower.endswith(".localhost") or host_lower.endswith(".internal")
 
+
+def _is_ipv4_mapped_ipv6(host_lower: str) -> bool:
+    """Check for IPv4-mapped IPv6 addresses."""
+    return host_lower.startswith("[::ffff:")
+
+
+def _parse_ip_octet(part: str) -> Optional[int]:
+    """Parse IP octet in decimal, octal, or hex format."""
+    lower_part = part.lower()
+    try:
+        if lower_part.startswith("0x"):
+            return int(lower_part, 16)
+        if part.startswith("0") and len(part) > 1 and part.isdigit():
+            return int(part, 8)
+        if part.isdigit():
+            return int(part)
+    except ValueError:
+        return None
+    return None
+
+
+def _is_decimal_ip_private(host: str) -> bool:
+    """Check decimal IPv4 format (e.g., 2130706433 for 127.0.0.1)."""
+    if not host.isdigit():
+        return False
+    try:
+        decimal_ip = int(host)
+        if 0 <= decimal_ip <= 0xFFFFFFFF:
+            ip_str = ".".join(str(octet) for octet in decimal_ip.to_bytes(4, "big"))
+            return not _is_ip_safe(ipaddress.IPv4Address(ip_str))
+    except (ValueError, OverflowError, ipaddress.AddressValueError):
+        return False
+    return False
+
+
+def _is_octal_hex_ip_private(host: str) -> bool:
+    """Check octal/hex IPv4 representations (e.g., 0177.0.0.1)."""
     if "." not in host:
         return False
-
     parts = host.split(".")
-    if not 2 <= len(parts) <= 4:
+    if len(parts) != 4:
         return False
 
+    octets = []
     for part in parts:
-        if not part:
-            return True
-        # Hex (0x7f)
-        if part.lower().startswith("0x"):
-            return True
-        # Leading zero decimal (0177) or octal-like.
-        if len(part) > 1 and part[0] == "0" and part.isdigit():
-            return True
-        # Non-digit characters (other than allowed in canonical IPv4).
-        if not part.isdigit():
-            return True
+        octet = _parse_ip_octet(part)
+        if octet is None:
+            return False
+        octets.append(octet)
 
-    # If we reach here, it is dotted-decimal but may have leading zeros.
-    # Canonical check will handle exact match; anything else is ambiguous.
-    if not _is_canonical_ipv4(host):
-        return True
+    if not all(0 <= octet <= 255 for octet in octets):
+        return False
 
-    return False
+    try:
+        dotted = ".".join(str(octet) for octet in octets)
+        return not _is_ip_safe(ipaddress.IPv4Address(dotted))
+    except (ValueError, ipaddress.AddressValueError):
+        return False
 
 
-def _is_blocked_hostname(host: str) -> bool:
-    """Check if hostname is in the blocklist or uses blocked suffixes.
-
-    Args:
-        host: Normalized host (lowercased, no trailing dot).
-
-    Returns:
-        True if host is blocked.
-    """
-    if not host:
-        return True
-
-    if host in BLOCKED_HOSTNAMES:
-        return True
-
-    blocked_suffixes = (
-        ".local",
-        ".localhost",
-        ".internal",
-        ".home.arpa",
-        ".lan",
-        ".corp",
-        ".domain",
-    )
-
-    if host == "localhost":
-        return True
-
-    return any(host.endswith(suffix) for suffix in blocked_suffixes)
+def _check_direct_ip_safe(host: str) -> Optional[bool]:
+    """Check if host is a direct IP and if it is safe; None if not an IP."""
+    try:
+        return _is_ip_safe(ipaddress.ip_address(host))
+    except ValueError:
+        return None
 
 
-def _iter_ips_from_literal(host: str) -> List[IpAddress]:
-    """Parse IP literals (IPv4 or IPv6) into a list of addresses.
-
-    Args:
-        host: Host string.
-
-    Returns:
-        List of parsed IP addresses. Empty if not a literal or invalid.
-    """
-    if _looks_like_ambiguous_ip_representation(host):
-        # Ambiguous representations are treated as unsafe elsewhere.
-        return []
-
-    if _is_canonical_ipv4(host):
+def _check_resolved_ips_safe(addr_info: Iterable[Tuple[int, int, int, str, tuple]]) -> bool:
+    """Check that all resolved IPs in addr_info are safe."""
+    for _family, _socktype, _proto, _canonname, sockaddr in addr_info:
         try:
-            return [ipaddress.IPv4Address(host)]
-        except ipaddress.AddressValueError:
-            return []
-
-    ipv6 = _parse_ipv6_literal(host)
-    if ipv6 is not None:
-        return [ipv6]
-
-    return []
-
-
-def _all_ips_public(ips: Iterable[IpAddress]) -> bool:
-    """Check that all IPs in the iterable are public.
-
-    Args:
-        ips: Iterable of IP addresses.
-
-    Returns:
-        True if all IPs are public.
-    """
-    for ip in ips:
-        if not _is_public_ip(ip):
-            return False
+            if not _is_ip_safe(ipaddress.ip_address(sockaddr[0])):
+                return False
+        except ValueError:
+            continue
     return True
 
 
-def _has_ipv4_mapped_ipv6(ip: IpAddress) -> bool:
-    """Check if IPv6 address is an IPv4-mapped IPv6 address.
-
-    Args:
-        ip: Parsed IP address.
-
-    Returns:
-        True if IPv6 address is IPv4-mapped.
-    """
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+def _verify_connection_safe(addr_info: Iterable[Tuple[int, int, int, str, tuple]], timeout: float) -> bool:
+    """Verify connection peer IP safety to mitigate DNS rebinding."""
+    addresses = list(addr_info)
+    if not addresses:
         return True
-    return False
 
-
-def _is_safe_literal_ip(host: str) -> bool:
-    """Check if a literal IP host is public and not IPv4-mapped IPv6.
-
-    Args:
-        host: Host string.
-
-    Returns:
-        True if host is a literal IP and considered safe.
-    """
-    ips = _iter_ips_from_literal(host)
-    if not ips:
-        return False
-
-    for ip in ips:
-        if _has_ipv4_mapped_ipv6(ip):
-            return False
-        if not _is_public_ip(ip):
-            return False
-
-    return True
-
-
-def _is_safe_zone_id(zone_id: str) -> bool:
-    """Validate IPv6 zone identifier.
-
-    Only allows a strict subset of characters to avoid injection.
-
-    Args:
-        zone_id: Zone identifier string.
-
-    Returns:
-        True if zone ID is considered safe.
-    """
-    if not zone_id:
-        return False
-
-    if len(zone_id) > 64:
-        return False
-
-    for char in zone_id:
-        if not (char.isalnum() or char in "-_.~"):
-            return False
-
-    return True
+    family, socktype, proto, _canonname, sockaddr = addresses[0]
+    test_socket = socket.socket(family, socktype, proto)
+    try:
+        test_socket.settimeout(timeout)
+        test_socket.connect(sockaddr)
+        try:
+            return _is_ip_safe(ipaddress.ip_address(test_socket.getpeername()[0]))
+        except ValueError:
+            return True
+    except (socket.timeout, OSError):
+        return True
+    finally:
+        test_socket.close()
 
 
 @lru_cache(maxsize=512)
 def is_private_ip(host: str) -> bool:
-    """Check if host is a private/reserved IP address.
-
-    Security-maximalist behavior:
-    - Non-string or empty input is treated as private/unsafe (returns True).
-    - Ambiguous IP representations are treated as private/unsafe (returns True).
-    - Only canonical IP literals are parsed; everything else is considered non-public.
-
-    Args:
-        host: Host string.
-
-    Returns:
-        True if host is considered private/reserved/unsafe as an IP literal.
-    """
+    """Check if host is a private/reserved IP address."""
     if not isinstance(host, str):
-        logger.warning("Non-string host passed to is_private_ip; treating as private.")
-        return True
-
-    normalized = host.strip()
-    if not normalized:
-        logger.warning("Empty host passed to is_private_ip; treating as private.")
-        return True
-
-    if _looks_like_ambiguous_ip_representation(normalized):
-        logger.warning("Ambiguous IP representation detected; treating as private.")
-        return True
-
-    ips = _iter_ips_from_literal(normalized)
-    if not ips:
-        # Not a literal IP; this function only evaluates literals.
         return False
-
-    return not _all_ips_public(ips)
+    return _check_ipv4_private(host) or _check_ipv6_private(host)
 
 
 @lru_cache(maxsize=512)
 def is_ssrf_risk(host: str) -> bool:
-    """Check if host poses SSRF risk.
-
-    Security-maximalist behavior:
-    - Non-string or empty input is treated as SSRF risk.
-    - Ambiguous IP representations are treated as SSRF risk.
-    - Blocked hostnames and suffixes are treated as SSRF risk.
-    - Private/reserved IP literals are treated as SSRF risk.
-    - IPv4-mapped IPv6 literals are treated as SSRF risk.
-    - Malicious or invalid IPv6 zone IDs are treated as SSRF risk.
-
-    Args:
-        host: Host string.
-
-    Returns:
-        True if host is considered an SSRF risk.
-    """
-    if not isinstance(host, str):
-        logger.warning("Non-string host passed to is_ssrf_risk; treating as SSRF risk.")
-        return True
-
-    raw = host.strip()
-    if not raw:
-        logger.warning("Empty host passed to is_ssrf_risk; treating as SSRF risk.")
-        return True
-
-    normalized = _normalize_host(raw)
-
-    if _is_blocked_hostname(normalized):
-        return True
-
-    if _looks_like_ambiguous_ip_representation(raw):
-        return True
-
-    if is_malicious_ipv6_zone_id(raw):
-        return True
-
-    if is_private_ip(raw):
-        return True
-
-    # Literal IP that is public and not mapped IPv6 is allowed.
-    if _is_safe_literal_ip(raw):
+    """Check if host poses SSRF risk (blocked hostnames, private IPs, and ambiguous IPs)."""
+    if not isinstance(host, str) or not host:
         return False
-
-    # Non-literal hostnames that are not blocklisted are allowed here.
-    return False
+    host_lower = host.lower().rstrip(".")
+    return (
+        _is_blocked_hostname(host_lower)
+        or _is_ipv4_mapped_ipv6(host_lower)
+        or _is_decimal_ip_private(host)
+        or _is_octal_hex_ip_private(host)
+        or is_private_ip(host)
+    )
 
 
 def is_malicious_ipv6_zone_id(host: str) -> bool:
-    """Check if IPv6 zone identifier contains malicious or unsafe content.
-
-    Security-maximalist behavior:
-    - Non-string input is treated as malicious.
-    - Missing zone ID when '%' is present is treated as malicious.
-    - Zone IDs with characters outside [A-Za-z0-9-_.~] are treated as malicious.
-    - Overly long zone IDs are treated as malicious.
-
-    Args:
-        host: Host string, possibly containing an IPv6 literal with zone ID.
-
-    Returns:
-        True if zone ID is considered malicious or unsafe.
-    """
+    """Check if IPv6 zone identifier contains malicious content."""
     if not isinstance(host, str):
-        logger.warning("Non-string host passed to is_malicious_ipv6_zone_id; treating as malicious.")
-        return True
-
-    if "%" not in host and "%25" not in host:
+        return False
+    if "%25" not in host and "%" not in host:
+        return False
+    if not (host.startswith("[") and "]" in host):
         return False
 
-    if not (host.startswith("[") and "]" in host):
-        return True
-
     try:
-        inner = host[1 : host.index("]")]
-    except ValueError:
-        logger.warning("Malformed IPv6 literal in is_malicious_ipv6_zone_id; treating as malicious.")
-        return True
-
-    # Prefer encoded %25 if present; otherwise raw '%'.
-    if "%25" in inner:
-        parts = inner.split("%25", 1)
-    elif "%" in inner:
-        parts = inner.split("%", 1)
-    else:
-        # '%' outside brackets; treat as malicious.
-        return True
-
-    if len(parts) != 2:
-        return True
-
-    zone_id = parts[1]
-    if not _is_safe_zone_id(zone_id):
+        inner = host[1:host.index("]")]
+        if "%25" in inner or "%" in inner:
+            zone_id = inner.split("%25" if "%25" in inner else "%", 1)[1]
+            if not zone_id:
+                return True
+            for char in zone_id:
+                if not (char.isalnum() or char in "-_.~"):
+                    return True
+    except (ValueError, IndexError):
         return True
 
     return False
