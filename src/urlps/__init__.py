@@ -163,6 +163,7 @@ def parse_url_unsafe(
         debug: If True, include raw input in error traces for debugging (default: False)
         check_dns: If True, verify hostname resolution and block private/reserved targets.
             Useful for DNS rebinding protection in internal environments (default: False)
+            Ignored when an explicit policy is provided.
 
     Returns:
         URL: Immutable URL object with all parsed components
@@ -186,7 +187,7 @@ def parse_url_unsafe(
     from . import url as _url
 
     resolved_policy = (
-        resolve_security_policy(policy, check_dns=check_dns, check_phishing=False)
+        resolve_security_policy(policy)
         if policy is not None
         else SecurityPolicy.internal(check_dns=check_dns, enforce_ssrf=strict)
     )

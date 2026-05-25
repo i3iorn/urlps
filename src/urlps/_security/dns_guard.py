@@ -254,6 +254,7 @@ def check_dns_rebinding_detailed(
     retries: int = 2,
     backoff_base_seconds: float = 0.05,
     backoff_jitter_seconds: float = 0.02,
+    fail_open_on_connect_error: bool = True,
     limiter: Optional[DNSRateLimiter] = None,
 ) -> Tuple[bool, Optional[ErrorCode]]:
     """Check DNS rebinding risk and return deterministic status.
@@ -265,6 +266,8 @@ def check_dns_rebinding_detailed(
         retries: Number of retry attempts after the initial attempt.
         backoff_base_seconds: Base backoff duration for exponential backoff.
         backoff_jitter_seconds: Maximum jitter added to backoff.
+        fail_open_on_connect_error: If True, treat transport/connect verification
+            errors as safe (availability-first). If False, fail closed.
         limiter: Optional DNSRateLimiter instance. Required if enforce_rate_limit is True.
 
     Returns:
@@ -300,7 +303,11 @@ def check_dns_rebinding_detailed(
             addr_info: AddrInfo = _resolve_addr_info(normalized_host)
             if not _check_resolved_ips_safe(addr_info):
                 return False, ErrorCode.SSRF_RISK
-            if not _verify_connection_safe(addr_info, effective_timeout_seconds):
+            if not _verify_connection_safe(
+                addr_info,
+                effective_timeout_seconds,
+                fail_open_on_error=fail_open_on_connect_error,
+            ):
                 return False, ErrorCode.DNS_CONNECTION_FAILED
             return True, None
         except socket.gaierror:
@@ -327,6 +334,7 @@ def check_dns_rebinding(
     retries: int = 2,
     backoff_base_seconds: float = 0.05,
     backoff_jitter_seconds: float = 0.02,
+    fail_open_on_connect_error: bool = True,
     limiter: Optional[DNSRateLimiter] = None,
 ) -> bool:
     """Boolean wrapper around detailed DNS rebinding checks.
@@ -342,6 +350,7 @@ def check_dns_rebinding(
         retries=retries,
         backoff_base_seconds=backoff_base_seconds,
         backoff_jitter_seconds=backoff_jitter_seconds,
+        fail_open_on_connect_error=fail_open_on_connect_error,
         limiter=limiter,
     )
     return is_safe

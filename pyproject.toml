@@ -46,11 +46,12 @@ Issues = "https://github.com/micro/urlps/issues"
 "Bug Tracker" = "https://github.com/micro/urlps/issues"
 
 [tool.setuptools.packages.find]
-include = ["src.urlps*"]
+where = ["src"]
+include = ["urlps*"]
 exclude = ["tests*"]
 
 [tool.setuptools.dynamic]
-version = {attr = "src.urlps.__version__"}
+version = {attr = "urlps.__version__"}
 
 [tool.black]
 line-length = 120
@@ -105,7 +106,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["src.urlps"]
+source = ["urlps"]
 branch = true
 
 [tool.coverage.report]

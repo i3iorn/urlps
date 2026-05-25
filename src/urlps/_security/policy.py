@@ -28,6 +28,7 @@ class SecurityPolicy:
     check_dns: bool = False
     check_phishing: bool = False
     enforce_dns_rate_limit: bool = True
+    dns_fail_open_on_connect_error: bool = True
     dns_retries: int = 2
     dns_backoff_base_seconds: float = 0.05
     dns_backoff_jitter_seconds: float = 0.02
@@ -38,11 +39,13 @@ class SecurityPolicy:
         *,
         check_dns: bool = False,
         check_phishing: bool = False,
+        dns_fail_open_on_connect_error: bool = False,
     ) -> "SecurityPolicy":
         return cls(
             name="strict",
             check_dns=check_dns,
             check_phishing=check_phishing,
+            dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
         )
 
     @classmethod
@@ -51,11 +54,13 @@ class SecurityPolicy:
         *,
         check_dns: bool = False,
         check_phishing: bool = False,
+        dns_fail_open_on_connect_error: bool = True,
     ) -> "SecurityPolicy":
         return cls(
             name="balanced",
             check_dns=check_dns,
             check_phishing=check_phishing,
+            dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
             enforce_query_injection=False,
             block_dangerous_ports=False,
             reject_credentials=False,
@@ -68,6 +73,7 @@ class SecurityPolicy:
         *,
         check_dns: bool = False,
         enforce_ssrf: bool = False,
+        dns_fail_open_on_connect_error: bool = True,
     ) -> "SecurityPolicy":
         return cls(
             name="internal",
@@ -84,6 +90,7 @@ class SecurityPolicy:
             check_dns=check_dns,
             check_phishing=False,
             enforce_dns_rate_limit=True,
+            dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
         )
 
     def __str__(self) -> str:
@@ -127,6 +134,7 @@ def _apply_overrides(
         check_dns=effective_dns,
         check_phishing=effective_phishing,
         enforce_dns_rate_limit=concrete_base.enforce_dns_rate_limit,
+        dns_fail_open_on_connect_error=concrete_base.dns_fail_open_on_connect_error,
         dns_retries=concrete_base.dns_retries,
         dns_backoff_base_seconds=concrete_base.dns_backoff_base_seconds,
         dns_backoff_jitter_seconds=concrete_base.dns_backoff_jitter_seconds,

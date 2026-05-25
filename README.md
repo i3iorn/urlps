@@ -18,7 +18,7 @@ pip install -e ".[dev]"
 ## Quick Start
 
 ```python
-from src.urlps import parse_url, build
+from urlps import parse_url, build
 
 # Secure by default - blocks SSRF, private IPs, localhost
 url = parse_url("https://api.example.com/data?token=abc#section")
@@ -59,7 +59,7 @@ balanced_url = parse_url("HTTP://EXAMPLE.com", policy="balanced")
 
 Use `parse_url_unsafe()` for internal/development URLs:
 ```python
-from src.urlps import parse_url_unsafe
+from urlps import parse_url_unsafe
 
 dev_url = parse_url_unsafe("http://localhost:3000/api")
 internal = parse_url_unsafe("http://192.168.1.100/metrics")
@@ -75,7 +75,7 @@ Need selective hardening? Use policy presets:
 ### Immutable URL Objects
 
 ```python
-from src.urlps import parse_url
+from urlps import parse_url
 
 url = parse_url("https://user:pass@example.com:8080/path?token=abc")
 print(url.netloc)         # user:pass@example.com:8080
@@ -91,7 +91,7 @@ url5 = url.without_query_param("token")
 ### Security Checks
 
 ```python
-from src.urlps import parse_url, InvalidURLError
+from urlps import parse_url, InvalidURLError
 
 # SSRF protection (enabled by default)
 try:
@@ -118,7 +118,7 @@ print(url.as_string(mask_password=True))  # https://admin:***@api.example.com/
 ### Audit Logging
 
 ```python
-from src.urlps import set_audit_callback
+from urlps import set_audit_callback
 import logging
 
 def audit_url_parsing(raw_url, parsed_url, exception):
@@ -132,7 +132,7 @@ set_audit_callback(audit_url_parsing)
 
 Structured event callback:
 ```python
-from src.urlps import set_audit_event_callback
+from urlps import set_audit_event_callback
 
 def on_event(event):
     # event includes: timestamp, level, operation, host, error_code, correlation_id
@@ -162,11 +162,11 @@ Override length limits via environment variables:
 ```bash
 # PowerShell
 $env:URLPS_MAX_URL_LENGTH = "65536"
-python -c "import src.urlps.constants as c; print(c.MAX_URL_LENGTH)"
+python -c "import urlps.constants as c; print(c.MAX_URL_LENGTH)"
 
 # Bash
 export URLPS_MAX_URL_LENGTH=65536
-python -c 'import src.urlps.constants as c; print(c.MAX_URL_LENGTH)'
+python -c 'import urlps.constants as c; print(c.MAX_URL_LENGTH)'
 ```
 
 Supported variables:
@@ -206,7 +206,7 @@ Supported variables:
 ### Cache Management
 
 ```python
-from src.urlps import get_cache_info, clear_all_caches
+from urlps import get_cache_info, clear_all_caches
 
 # Get cache statistics
 stats = get_cache_info()
@@ -218,7 +218,7 @@ previous = clear_all_caches()
 
 ## Comparison with urllib.parse
 
-| Feature | urllib.parse | src.urlps |
+| Feature | urllib.parse | urlps |
 | --- | --- | --- |
 | Basic URL parsing | ✓ | ✓ |
 | RFC 3986 strict compliance | Partial | ✓ |
@@ -238,12 +238,12 @@ previous = clear_all_caches()
 
 **Use urllib.parse when:** You need zero dependencies and basic parsing is sufficient.
 
-**Use src.urlps when:** Security matters, you need RFC 3986 strict compliance, or you want immutable URL objects with ergonomic manipulation methods.
+**Use urlps when:** Security matters, you need RFC 3986 strict compliance, or you want immutable URL objects with ergonomic manipulation methods.
 
 ## Exceptions
 
 ```python
-from src.urlps import InvalidURLError, URLParseError, parse_url
+from urlps import InvalidURLError, URLParseError, parse_url
 
 user_input = "https://example.com"
 

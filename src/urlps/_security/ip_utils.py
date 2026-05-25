@@ -132,8 +132,17 @@ def _check_resolved_ips_safe(addr_info: Iterable[Tuple[int, int, int, str, tuple
     return True
 
 
-def _verify_connection_safe(addr_info: Iterable[Tuple[int, int, int, str, tuple]], timeout: float) -> bool:
-    """Verify connection peer IP safety to mitigate DNS rebinding."""
+def _verify_connection_safe(
+    addr_info: Iterable[Tuple[int, int, int, str, tuple]],
+    timeout: float,
+    *,
+    fail_open_on_error: bool = True,
+) -> bool:
+    """Verify connection peer IP safety to mitigate DNS rebinding.
+
+    If socket connection/timeout errors occur, behavior is controlled by
+    fail_open_on_error to support policy-driven availability vs security tradeoffs.
+    """
     addresses = list(addr_info)
     if not addresses:
         return True
@@ -148,7 +157,7 @@ def _verify_connection_safe(addr_info: Iterable[Tuple[int, int, int, str, tuple]
         except ValueError:
             return True
     except (socket.timeout, OSError):
-        return True
+        return bool(fail_open_on_error)
     finally:
         test_socket.close()
 
