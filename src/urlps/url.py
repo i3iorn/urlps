@@ -16,13 +16,7 @@ from typing import Any, Dict, List, Mapping, Optional, Type, cast
 from ._security import SecurityPolicy, has_parser_confusion, extract_host_and_path, is_open_redirect_risk, \
     has_path_traversal, redact_url_for_logs, validate_url_security
 from ._builder import Builder, QueryPairs
-from ._audit import (
-    set_audit_callback,
-    get_audit_callback,
-    invoke_audit_callback,
-    get_callback_failure_metrics,
-    reset_callback_failure_metrics,
-)
+from ._audit import AuditConfig, AuditEventCallback, AuditCallback, AuditManager
 from ._relative import parse_relative_reference, build_relative_reference, round_trip_relative
 from .constants import DEFAULT_PORTS, MAX_URL_LENGTH, PASSWORD_MASK
 from .exceptions import InvalidURLError, URLParseError
@@ -59,7 +53,7 @@ class URL:
         'recognized_scheme', '_parser', '_builder', '_strict', '_debug',
         '_check_dns', '_scheme', '_userinfo', '_host', '_port', '_path',
         '_query', '_fragment', '_query_pairs', '_check_phishing',
-        '_security_policy', '_security_findings', '_correlation_id'
+        '_security_policy', '_security_findings', '_correlation_id', '_audit_manager'
     )
 
     def __init__(
@@ -81,6 +75,7 @@ class URL:
 
         self._parser = parser if parser is not None else Parser()
         self._builder = builder if builder is not None else Builder()
+        self._audit_manager = AuditManager()
         self._strict = strict
         self._debug = debug
         self._check_dns = check_dns
@@ -122,12 +117,19 @@ class URL:
             self.recognized_scheme = self._parser.recognized_scheme
             self._apply_parsed(parsed)
             self.validate(raise_on_error=True, raw_url=url)
-            invoke_audit_callback(url, self, None, correlation_id=self._correlation_id)
-        except InvalidURLError as exc:
-            invoke_audit_callback(url, None, exc, correlation_id=self._correlation_id)
-            raise
+            self._audit_manager.invoke(
+                raw_url=url,
+                parsed_url=self,
+                exception=None,
+                correlation_id=self._correlation_id,
+            )
         except Exception as exc:
-            invoke_audit_callback(url, None, exc, correlation_id=self._correlation_id)
+            self._audit_manager.invoke(
+                raw_url=url,
+                parsed_url=None,
+                exception=exc,
+                correlation_id=self._correlation_id
+            )
             raise
 
     def _security_checks(self) -> None:
@@ -478,7 +480,5 @@ def _validate_copy_overrides(overrides: Dict[str, Any]) -> None:
 
 
 __all__ = [
-    "URL", "set_audit_callback", "get_audit_callback",
-    "get_callback_failure_metrics", "reset_callback_failure_metrics",
-    "parse_relative_reference", "build_relative_reference", "round_trip_relative",
+    "URL", "parse_relative_reference", "build_relative_reference", "round_trip_relative",
 ]
