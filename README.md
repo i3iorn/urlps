@@ -15,6 +15,8 @@ python -m venv .venv
 pip install -e ".[dev]"
 ```
 
+Search cleanup: repository searches can use `.rgignore` to skip local/IDE/build artifacts.
+
 ## Quick Start
 
 ```python
@@ -59,16 +61,29 @@ balanced_url = parse_url("HTTP://EXAMPLE.com", policy="balanced")
 
 Use `parse_url_unsafe()` for internal/development URLs:
 ```python
-from urlps import parse_url_unsafe
+from urlps import SecurityPolicy, parse_url_unsafe
 
 dev_url = parse_url_unsafe("http://localhost:3000/api")
 internal = parse_url_unsafe("http://192.168.1.100/metrics")
+
+# If policy is passed, parse_url_unsafe uses it exactly.
+trusted_policy = SecurityPolicy.internal(check_dns=True)
+internal_checked = parse_url_unsafe("http://intranet.local/service", policy=trusted_policy)
 ```
 
 Need selective hardening? Use policy presets:
-- `policy="strict"`: maximum protections
-- `policy="balanced"` (default): fewer false positives
+- `policy="strict"`: maximum protections, DNS connect checks fail-closed by default
+- `policy="balanced"` (default): fewer false positives, DNS connect checks fail-open by default
 - `policy="internal"`: trusted/internal traffic
+
+DNS connect behavior can be customized per policy:
+
+```python
+from urlps import SecurityPolicy, parse_url
+
+policy = SecurityPolicy.strict(check_dns=True, dns_fail_open_on_connect_error=True)
+url = parse_url("https://api.example.com", policy=policy)
+```
 
 ## Core Features
 
