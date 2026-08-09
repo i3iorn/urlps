@@ -68,7 +68,7 @@ class TestCredentialEdgeCases:
         """URLs without scheme should return False."""
         assert not has_credentials("example.com")
         assert not has_credentials("user:pass@example.com")  # No scheme
-        assert not has_credentials("//user:pass@example.com")  # Scheme-relative
+        assert has_credentials("//user:pass@example.com")  # Scheme-relative with authority
 
     def test_special_characters_in_credentials(self):
         """Special characters in credentials should be detected."""

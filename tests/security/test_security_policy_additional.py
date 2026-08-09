@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from urlps._security.dns_guard import DNSRateLimiter
 from urlps.exceptions import SecurityPolicyError
 
 class TestSecurityPolicy:
@@ -56,3 +57,21 @@ class TestSecurityPolicy:
         from urlps._security.policy import resolve_security_policy
         resolved = resolve_security_policy("balanced", check_phishing=True)
         assert resolved.check_phishing is True
+
+    def test_resolve_security_policy_with_dns_rate_limiter_override(self):
+        """dns_rate_limiter override creates a policy bound to the provided limiter."""
+        from urlps._security.policy import resolve_security_policy
+
+        limiter = DNSRateLimiter()
+        resolved = resolve_security_policy("strict", dns_rate_limiter=limiter)
+        assert resolved.dns_rate_limiter is limiter
+
+    def test_resolve_security_policy_reuses_instance_without_overrides(self):
+        """Existing policy instance is returned as-is when no overrides are requested."""
+        from urlps._security.policy import SecurityPolicy, resolve_security_policy
+
+        limiter = DNSRateLimiter()
+        policy = SecurityPolicy.strict(dns_rate_limiter=limiter)
+        resolved = resolve_security_policy(policy)
+        assert resolved is policy
+

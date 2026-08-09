@@ -188,3 +188,41 @@ def test_parse_path_with_only_dots() -> None:
     parser = Parser()
     parsed = parser.parse("http://example.com/././.")
     assert parsed["path"] == "/"
+
+
+def test_parse_relative_url_with_scheme_separator_in_query() -> None:
+    """A relative reference must not be mistaken for absolute just because
+    '://' appears later, e.g. in a redirect-target query value."""
+    parser = Parser()
+    parsed = parser.parse("/redirect?url=http://evil.com")
+    assert parsed["scheme"] is None
+    assert parsed["host"] is None
+    assert parsed["path"] == "/redirect"
+    assert parsed["query"] == "url=http://evil.com"
+
+
+def test_parse_relative_url_with_scheme_separator_in_query_no_leading_slash() -> None:
+    parser = Parser()
+    parsed = parser.parse("relative/path?x=ftp://y")
+    assert parsed["scheme"] is None
+    assert parsed["host"] is None
+    assert parsed["path"] == "relative/path"
+    assert parsed["query"] == "x=ftp://y"
+
+
+def test_parse_still_detects_real_scheme_before_embedded_separator() -> None:
+    """The first '://' is the real separator even when a second one appears
+    later in the query string."""
+    parser = Parser()
+    parsed = parser.parse("http://example.com/a?b=ftp://c")
+    assert parsed["scheme"] == "http"
+    assert parsed["host"] == "example.com"
+    assert parsed["query"] == "b=ftp://c"
+
+
+def test_parse_still_rejects_genuinely_invalid_absolute_scheme() -> None:
+    """Scheme validation must still be strict when '://' is the real,
+    leading separator (nothing precedes it)."""
+    parser = Parser()
+    with pytest.raises(InvalidURLError):
+        parser.parse("1http://example.com")

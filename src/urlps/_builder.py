@@ -305,15 +305,14 @@ class Builder:
         if not params:
             return ""
         encoded: List[str] = []
-        # Use module-level LRU cache to reduce repeated encoding work across calls
-        def encode(val: str) -> str:
-            return _encode_for_query(val, query_safe)
+        # _encode_for_query is a module-level LRU cache; called directly (no
+        # per-call closure) to reduce repeated encoding work across calls.
         for key, value in params:
-            encoded_key = encode(key)
+            encoded_key = _encode_for_query(key, query_safe)
             if value is None:
                 encoded.append(encoded_key)
             else:
-                encoded_value = encode(str(value))
+                encoded_value = _encode_for_query(str(value), query_safe)
                 encoded.append(f"{encoded_key}={encoded_value}")
         return "&".join(encoded)
 

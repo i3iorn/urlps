@@ -60,6 +60,34 @@ class TestSecurityExtractHostPath:
         assert host == ""
         assert path == ""
 
+    def test_extract_host_and_path_ignores_embedded_scheme_in_query(self):
+        """A relative URL with '://' embedded in its query (e.g. a redirect
+        target) must not have that query content mistaken for the host."""
+        from urlps._security import extract_host_and_path
+        host, path = extract_host_and_path("/redirect?url=http://evil.com")
+        assert host == ""
+        assert path == ""
+
+    def test_extract_host_and_path_still_finds_real_leading_scheme(self):
+        from urlps._security import extract_host_and_path
+        host, path = extract_host_and_path("http://example.com/a?b=ftp://c")
+        assert host == "example.com"
+        assert path == "/a"
+
+
+class TestSecurityHasSchemeAuthority:
+    def test_true_for_absolute_url(self):
+        from urlps._security import has_scheme_authority
+        assert has_scheme_authority("https://example.com/path") is True
+
+    def test_true_for_protocol_relative_url(self):
+        from urlps._security import has_scheme_authority
+        assert has_scheme_authority("//example.com/path") is True
+
+    def test_false_for_relative_url_with_embedded_scheme_separator(self):
+        from urlps._security import has_scheme_authority
+        assert has_scheme_authority("/redirect?url=http://evil.com") is False
+
 class TestSecurityMiscellaneous:
     def test_normalize_url_unicode_non_string(self):
         """Lines 1525-1526: non-string input returned unchanged."""

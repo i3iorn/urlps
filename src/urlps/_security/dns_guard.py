@@ -220,6 +220,9 @@ def _resolve_addr_info(host: str) -> list[Tuple[int, int, int, str, tuple]]:
 def check_dns_rate_limit(host: str, limiter: Optional[DNSRateLimiter] = None) -> bool:
     """Check if DNS lookup for host is allowed under the provided limiter.
 
+    Preferred usage: pass an explicit limiter instance. The process-global
+    fallback exists for backward compatibility.
+
     Args:
         host: Hostname or IP string to check.
         limiter: DNSRateLimiter instance to enforce limits.
@@ -232,7 +235,11 @@ def check_dns_rate_limit(host: str, limiter: Optional[DNSRateLimiter] = None) ->
 
 
 def get_dns_rate_limiter() -> DNSRateLimiter:
-    """Get or create the process-global DNS rate limiter."""
+    """Get or create the process-global DNS rate limiter.
+
+    Compatibility API. Prefer dependency-injected limiter instances via
+    parse_url(..., dns_rate_limiter=...) or SecurityPolicy(..., dns_rate_limiter=...).
+    """
     global _GLOBAL_RATE_LIMITER
     if _GLOBAL_RATE_LIMITER is None:
         _GLOBAL_RATE_LIMITER = DNSRateLimiter()
@@ -241,7 +248,10 @@ def get_dns_rate_limiter() -> DNSRateLimiter:
 
 
 def reset_dns_rate_limiter() -> None:
-    """Reset the process-global DNS rate limiter state."""
+    """Reset the process-global DNS rate limiter state.
+
+    Compatibility API for integrations still using the process-global limiter.
+    """
     limiter = get_dns_rate_limiter()
     limiter.reset()
 
@@ -255,7 +265,7 @@ def check_dns_rebinding_detailed(
     backoff_base_seconds: float = 0.05,
     backoff_jitter_seconds: float = 0.02,
     fail_open_on_connect_error: bool = True,
-    limiter: Optional[DNSRateLimiter] = None,
+        limiter: Optional[DNSRateLimiter] = None,
 ) -> Tuple[bool, Optional[ErrorCode]]:
     """Check DNS rebinding risk and return deterministic status.
 
@@ -268,7 +278,9 @@ def check_dns_rebinding_detailed(
         backoff_jitter_seconds: Maximum jitter added to backoff.
         fail_open_on_connect_error: If True, treat transport/connect verification
             errors as safe (availability-first). If False, fail closed.
-        limiter: Optional DNSRateLimiter instance. Required if enforce_rate_limit is True.
+        limiter: Optional DNSRateLimiter instance. Prefer passing an explicit
+            limiter for request/application isolation. If omitted and rate
+            limiting is enabled, a process-global compatibility limiter is used.
 
     Returns:
         (is_safe, error_code) where error_code is None on success.

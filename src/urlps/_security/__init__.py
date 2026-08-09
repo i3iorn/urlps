@@ -1,7 +1,7 @@
 """Unified security checks for URL validation (SSRF, parser confusion, and URL hardening)."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, List, Optional
 from urllib.parse import urlsplit
 
 from .._components import SecurityFinding
@@ -20,6 +20,7 @@ from .phishing_db import check_against_phishing_db, get_phishing_db_info, refres
 from .policy import PolicyInput, SecurityPolicy, resolve_security_policy
 from .url_checks import (
     extract_host_and_path,
+    find_authority_marker,
     get_canonical_url,
     has_credentials,
     has_double_encoding,
@@ -27,6 +28,7 @@ from .url_checks import (
     has_parser_confusion,
     has_path_traversal,
     has_query_injection,
+    has_scheme_authority,
     has_suspicious_punycode,
     is_dangerous_port,
     is_non_canonical_url,
@@ -60,7 +62,7 @@ def collect_security_findings(
     except (UnicodeEncodeError, UnicodeDecodeError):
         is_ascii = False
 
-    has_authority_syntax = "://" in normalized_url or normalized_url.startswith("//")
+    has_authority_syntax = has_scheme_authority(normalized_url)
     split_for_double = urlsplit(normalized_url) if has_authority_syntax else None
     double_encoding_target = (
         f"{split_for_double.path}?{split_for_double.query}" if split_for_double is not None else normalized_url
@@ -118,6 +120,7 @@ def collect_security_findings(
             backoff_base_seconds=effective_policy.dns_backoff_base_seconds,
             backoff_jitter_seconds=effective_policy.dns_backoff_jitter_seconds,
             fail_open_on_connect_error=effective_policy.dns_fail_open_on_connect_error,
+            limiter=effective_policy.dns_rate_limiter,
         )
         if not safe and dns_error is not None:
             findings.append(_finding("critical", dns_error, "DNS rebinding validation failed.", "host"))
@@ -146,7 +149,10 @@ def validate_url_security(
     return findings
 
 
-_CACHED_FUNCTIONS = [is_private_ip, is_ssrf_risk, has_mixed_scripts]
+_CACHED_FUNCTIONS: List[Any] = [
+    is_private_ip, is_ssrf_risk, has_mixed_scripts,
+    has_parser_confusion, find_authority_marker,
+]
 
 
 def get_cache_info() -> dict:
@@ -197,6 +203,7 @@ __all__ = [
     "has_credentials",
     "has_query_injection",
     "has_suspicious_punycode",
+    "has_scheme_authority",
     "DNSRateLimiter",
     "DNSRateLimiterConfig",
     "check_dns_rate_limit",

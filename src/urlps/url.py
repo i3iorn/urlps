@@ -374,11 +374,13 @@ class URL:
         """Validate this URL against a security policy and return findings."""
         effective_policy = policy if policy is not None else self._security_policy
         candidate_url = raw_url if raw_url is not None else self.as_string()
+        check_dns = None if policy is not None else self._check_dns
+        check_phishing = None if policy is not None else self._check_phishing
         findings = validate_url_security(
             candidate_url,
             policy=effective_policy,
-            check_dns=self._check_dns,
-            check_phishing=self._check_phishing,
+            check_dns=check_dns,
+            check_phishing=check_phishing,
             raise_on_error=raise_on_error,
         )
         self._security_findings = list(findings)

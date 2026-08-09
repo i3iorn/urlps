@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Literal, Optional, Union, cast
+from typing import Any, Literal, Optional, Union, cast
 
 from ..exceptions import SecurityPolicyError
 
 PolicyName = Literal["strict", "balanced", "internal"]
 PolicyInput = Union[None, PolicyName, "SecurityPolicy"]
+_UNSET = object()
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,7 @@ class SecurityPolicy:
     dns_retries: int = 2
     dns_backoff_base_seconds: float = 0.05
     dns_backoff_jitter_seconds: float = 0.02
+    dns_rate_limiter: Optional[Any] = None
 
     @classmethod
     def strict(
@@ -40,12 +42,14 @@ class SecurityPolicy:
         check_dns: bool = False,
         check_phishing: bool = False,
         dns_fail_open_on_connect_error: bool = False,
+        dns_rate_limiter: Optional[Any] = None,
     ) -> "SecurityPolicy":
         return cls(
             name="strict",
             check_dns=check_dns,
             check_phishing=check_phishing,
             dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
+            dns_rate_limiter=dns_rate_limiter,
         )
 
     @classmethod
@@ -55,12 +59,14 @@ class SecurityPolicy:
         check_dns: bool = False,
         check_phishing: bool = False,
         dns_fail_open_on_connect_error: bool = True,
+        dns_rate_limiter: Optional[Any] = None,
     ) -> "SecurityPolicy":
         return cls(
             name="balanced",
             check_dns=check_dns,
             check_phishing=check_phishing,
             dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
+            dns_rate_limiter=dns_rate_limiter,
             enforce_query_injection=False,
             block_dangerous_ports=False,
             reject_credentials=False,
@@ -74,6 +80,7 @@ class SecurityPolicy:
         check_dns: bool = False,
         enforce_ssrf: bool = False,
         dns_fail_open_on_connect_error: bool = True,
+        dns_rate_limiter: Optional[Any] = None,
     ) -> "SecurityPolicy":
         return cls(
             name="internal",
@@ -91,6 +98,7 @@ class SecurityPolicy:
             check_phishing=False,
             enforce_dns_rate_limit=True,
             dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
+            dns_rate_limiter=dns_rate_limiter,
         )
 
     def __str__(self) -> str:
@@ -106,14 +114,17 @@ def _apply_overrides(
     *,
     check_dns: Optional[bool],
     check_phishing: Optional[bool],
+    dns_rate_limiter: Any = _UNSET,
 ) -> SecurityPolicy:
     """Return a new policy if overrides differ; otherwise return base."""
     effective_dns = base.check_dns if check_dns is None else bool(check_dns)
     effective_phishing = base.check_phishing if check_phishing is None else bool(check_phishing)
+    effective_dns_rate_limiter = base.dns_rate_limiter if dns_rate_limiter is _UNSET else dns_rate_limiter
 
     if (
         effective_dns == base.check_dns
         and effective_phishing == base.check_phishing
+        and effective_dns_rate_limiter is base.dns_rate_limiter
     ):
         return base
 
@@ -138,6 +149,7 @@ def _apply_overrides(
         dns_retries=concrete_base.dns_retries,
         dns_backoff_base_seconds=concrete_base.dns_backoff_base_seconds,
         dns_backoff_jitter_seconds=concrete_base.dns_backoff_jitter_seconds,
+        dns_rate_limiter=effective_dns_rate_limiter,
     )
 
 
@@ -173,6 +185,7 @@ def resolve_security_policy(
     *,
     check_dns: Optional[bool] = None,
     check_phishing: Optional[bool] = None,
+    dns_rate_limiter: Any = _UNSET,
 ) -> SecurityPolicy:
     """Resolve a policy input into a concrete SecurityPolicy instance."""
     if isinstance(policy, SecurityPolicy):
@@ -180,13 +193,26 @@ def resolve_security_policy(
             policy,
             check_dns=check_dns,
             check_phishing=check_phishing,
+            dns_rate_limiter=dns_rate_limiter,
         )
 
     if policy is None:
-        return _resolve_named_policy("balanced", check_dns, check_phishing)
+        base = _resolve_named_policy("balanced", None, None)
+        return _apply_overrides(
+            base,
+            check_dns=check_dns,
+            check_phishing=check_phishing,
+            dns_rate_limiter=dns_rate_limiter,
+        )
 
     if policy in ("strict", "balanced", "internal"):
-        return _resolve_named_policy(policy, check_dns, check_phishing)  # type: ignore[arg-type]
+        base = _resolve_named_policy(policy, None, None)  # type: ignore[arg-type]
+        return _apply_overrides(
+            base,
+            check_dns=check_dns,
+            check_phishing=check_phishing,
+            dns_rate_limiter=dns_rate_limiter,
+        )
 
     raise SecurityPolicyError(f"Unsupported security policy: {policy!r}")
 

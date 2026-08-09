@@ -65,6 +65,7 @@ def parse_url(
     allow_custom_scheme: bool = False,
     check_dns: bool = False,
     check_phishing: bool = False,
+    dns_rate_limiter: Any = None,
     policy: PolicyInput = None,
     correlation_id: Optional[str] = None,
 ) -> "URL":
@@ -97,6 +98,9 @@ def parse_url(
         check_phishing: If True, check hostname against known phishing database.
             Downloads database on first use (~10MB). Best for user-facing applications
             where phishing is a concern (default: False)
+        dns_rate_limiter: Optional DNSRateLimiter instance to enforce DNS lookup
+            rate limits with dependency injection (recommended for isolation).
+            If omitted, DNS checks use the process-global compatibility limiter.
 
     Returns:
         URL: Immutable URL object with all parsed components
@@ -118,7 +122,12 @@ def parse_url(
     from . import _parser as _parser
     from . import url as _url
 
-    resolved_policy = resolve_security_policy(policy, check_dns=check_dns, check_phishing=check_phishing)
+    resolved_policy = resolve_security_policy(
+        policy,
+        check_dns=check_dns,
+        check_phishing=check_phishing,
+        dns_rate_limiter=dns_rate_limiter,
+    )
     parser = _parser.Parser()
     parser.custom_scheme = allow_custom_scheme
     return _url.URL(
@@ -138,6 +147,7 @@ def parse_url_unsafe(
     strict: bool = False,
     debug: bool = False,
     check_dns: bool = False,
+    dns_rate_limiter: Any = None,
     policy: PolicyInput = None,
     correlation_id: Optional[str] = None,
 ) -> "URL":
@@ -164,6 +174,8 @@ def parse_url_unsafe(
         check_dns: If True, verify hostname resolution and block private/reserved targets.
             Useful for DNS rebinding protection in internal environments (default: False)
             Ignored when an explicit policy is provided.
+        dns_rate_limiter: Optional DNSRateLimiter instance to use when DNS checks
+            are enabled. Prefer explicit injection for deterministic behavior.
 
     Returns:
         URL: Immutable URL object with all parsed components
@@ -187,9 +199,13 @@ def parse_url_unsafe(
     from . import url as _url
 
     resolved_policy = (
-        resolve_security_policy(policy)
+        resolve_security_policy(policy, dns_rate_limiter=dns_rate_limiter)
         if policy is not None
-        else SecurityPolicy.internal(check_dns=check_dns, enforce_ssrf=strict)
+        else SecurityPolicy.internal(
+            check_dns=check_dns,
+            enforce_ssrf=strict,
+            dns_rate_limiter=dns_rate_limiter,
+        )
     )
 
     parser = _parser.Parser()
@@ -303,6 +319,7 @@ def build_secure(
     policy: PolicyInput = None,
     check_dns: bool = False,
     check_phishing: bool = False,
+    dns_rate_limiter: Any = None,
     correlation_id: Optional[str] = None,
     port: Optional[int] = None,
     path: str = "/",
@@ -310,7 +327,12 @@ def build_secure(
     fragment: Optional[str] = None,
     userinfo: Optional[str] = None,
 ) -> str:
-    """Build then validate a URL under a security policy, raising on policy violations."""
+    """Build then validate a URL under a security policy, raising on policy violations.
+
+    Args:
+        dns_rate_limiter: Optional DNSRateLimiter instance used when DNS checks
+            are enabled by flags or policy.
+    """
     composed = build(
         *scheme_and_host,
         port=port,
@@ -323,6 +345,7 @@ def build_secure(
         composed,
         check_dns=check_dns,
         check_phishing=check_phishing,
+        dns_rate_limiter=dns_rate_limiter,
         policy=policy,
         correlation_id=correlation_id,
     )
