@@ -44,6 +44,37 @@ _TRACKED_UNICODE_SCRIPTS = frozenset(
 
 
 @lru_cache(maxsize=512)
+def find_authority_marker(url: str) -> int:
+    """Return the index of a genuine scheme '://' authority marker, or -1.
+
+    A '://' only counts as a real scheme separator when nothing before it
+    contains a '/', '?', or '#'. Otherwise it is embedded content (e.g. a
+    redirect target in a query value like '?next=http://host') on what is
+    actually a scheme-less, relative reference -- not a real authority.
+
+    Performance: cached since callers (has_parser_confusion,
+    extract_host_and_path, has_scheme_authority) are all invoked on the same
+    URL string within a single parse/validate cycle.
+    """
+    if not isinstance(url, str):
+        return -1
+    idx = url.find("://")
+    if idx == -1:
+        return -1
+    prefix = url[:idx]
+    if "/" in prefix or "?" in prefix or "#" in prefix:
+        return -1
+    return idx
+
+
+def has_scheme_authority(url: str) -> bool:
+    """Return True if url has a genuine scheme authority ('scheme://...') or is protocol-relative ('//...')."""
+    if not isinstance(url, str):
+        return False
+    return find_authority_marker(url) != -1 or url.startswith("//")
+
+
+@lru_cache(maxsize=512)
 def has_mixed_scripts(host: str) -> bool:
     """Detect potential homograph attacks using mixed Unicode scripts."""
     if not isinstance(host, str):
@@ -145,12 +176,19 @@ def _has_confusing_userinfo_markers(authority: str) -> bool:
     return any(terminator in before_last_at for terminator in ("/", "?", "#"))
 
 
+@lru_cache(maxsize=512)
 def has_parser_confusion(url: str) -> bool:
-    """Detect ambiguous URLs that could be parsed differently by different parsers."""
-    if not isinstance(url, str) or "://" not in url:
+    """Detect ambiguous URLs that could be parsed differently by different parsers.
+
+    Performance: cached because URL.__init__ calls this once as a pre-check
+    and once again as part of full security-finding collection for the same
+    string.
+    """
+    marker = find_authority_marker(url)
+    if marker == -1:
         return False
 
-    after_scheme = url.split("://", 1)[1]
+    after_scheme = url[marker + 3:]
 
     if _has_mixed_path_separators(after_scheme):
         return True
@@ -297,8 +335,9 @@ def has_credentials(url: str) -> bool:
 
 def extract_host_and_path(url: str) -> Tuple[str, str]:
     """Extract host and path portions from URL for security checks."""
-    if "://" in url:
-        after_scheme = url.split("://", 1)[1]
+    marker = find_authority_marker(url)
+    if marker != -1:
+        after_scheme = url[marker + 3:]
     elif url.startswith("//"):
         after_scheme = url[2:]
     else:
@@ -475,22 +514,23 @@ def has_suspicious_punycode(host: str) -> bool:
 
 def is_non_canonical_url(url: str) -> bool:
     """Detect URLs that are not in canonical form."""
-    if not isinstance(url, str) or not url or "://" not in url:
+    if not isinstance(url, str) or not url:
+        return False
+    marker = find_authority_marker(url)
+    if marker == -1:
         return False
 
     raw_host = ""
     try:
         from urllib.parse import urlparse
 
-        scheme_end = url.find("://")
-        if scheme_end > 0:
-            raw_scheme = url[:scheme_end]
-            if raw_scheme != raw_scheme.lower():
-                return True
+        raw_scheme = url[:marker]
+        if raw_scheme != raw_scheme.lower():
+            return True
 
         parsed = urlparse(url)
 
-        after_scheme = url.split("://", 1)[1]
+        after_scheme = url[marker + 3:]
         netloc_end = len(after_scheme)
         for char in ["/", "?", "#"]:
             pos = after_scheme.find(char)
@@ -572,7 +612,7 @@ def is_non_canonical_url(url: str) -> bool:
 
 def get_canonical_url(url: str) -> Optional[str]:
     """Convert URL to canonical form."""
-    if not isinstance(url, str) or not url or "://" not in url:
+    if not isinstance(url, str) or not url or find_authority_marker(url) == -1:
         return None
 
     try:

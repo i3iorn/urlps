@@ -148,6 +148,10 @@ DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS: Final[float] = 300.0  # Cleanup old tracki
 # Phishing Database Configuration
 PHISHING_DATABASE_URL: Final[str] = "https://phish.co.za/latest/ALL-phishing-domains.lst"
 DEFAULT_PHISHING_DATABASE_MAX_BYTES: Final[int] = 25 * 1024 * 1024
+# Minimum time between download retries after a failed refresh, so a check_phishing=True
+# caller doesn't pay a synchronous network round trip on every single parse_url() call
+# while the phishing feed is unreachable.
+DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS: Final[float] = 300.0
 
 PASSWORD_MASK: Final[str] = "***"
 
@@ -176,5 +180,6 @@ __all__ = [
     "DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS",
     "PHISHING_DATABASE_URL",
     "DEFAULT_PHISHING_DATABASE_MAX_BYTES",
+    "DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS",
     "PASSWORD_MASK",
 ]

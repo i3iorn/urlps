@@ -22,17 +22,33 @@ from ._validation import Validator, is_valid_userinfo
 _builder_singleton = Builder()
 
 
-def parse_scheme(url: str, allow_custom: bool = False) -> Tuple[Optional[str], str, Optional[bool]]:
-    """Parse scheme from URL. Returns (scheme, remainder, recognized_scheme)."""
-    if "://" in url:
-        scheme_candidate, _, remainder = url.partition("://")
-    elif ":" in url:
-        scheme_candidate, _, remainder = url.partition(":")
+def parse_scheme(url: str, allow_custom: bool = False) -> Tuple[Optional[str], str, Optional[bool], bool]:
+    """Parse scheme from URL.
+
+    Returns (scheme, remainder, recognized_scheme, has_authority). The colon
+    is only treated as a scheme separator when nothing before it contains a
+    '/', '?', or '#' -- otherwise it belongs to a path/query/fragment of an
+    otherwise scheme-less (relative) reference and must not be mistaken for
+    one just because '://' happens to appear later in the string (e.g. in a
+    query value like '?next=http://host').
+    """
+    colon_index = url.find(":")
+    if colon_index <= 0:
+        return None, url, None, False
+
+    scheme_candidate = url[:colon_index]
+    if "/" in scheme_candidate or "?" in scheme_candidate or "#" in scheme_candidate:
+        return None, url, None, False
+
+    rest = url[colon_index + 1:]
+    has_authority = rest.startswith("//")
+    if has_authority:
+        remainder = rest[2:]
+    else:
+        remainder = rest
         if remainder and not remainder.startswith("/") and not remainder.startswith("?") and not remainder.startswith("#"):
             if not Validator.is_valid_scheme(scheme_candidate.lower()):
-                return None, url, None
-    else:
-        return None, url, None
+                return None, url, None, False
 
     if len(scheme_candidate) > MAX_SCHEME_LENGTH:
         raise URLParseError(f"Scheme exceeds maximum length of {MAX_SCHEME_LENGTH}.", value=scheme_candidate, component="scheme")
@@ -41,9 +57,9 @@ def parse_scheme(url: str, allow_custom: bool = False) -> Tuple[Optional[str], s
     if scheme_lower in UNSAFE_SCHEMES and not allow_custom:
         raise URLParseError(f"Scheme '{scheme_candidate}' requires custom_scheme=True", value=scheme_candidate, component="scheme")
     if scheme_lower in OFFICIAL_SCHEMES:
-        return scheme_lower, remainder, True
+        return scheme_lower, remainder, True, has_authority
     if Validator.is_valid_scheme(scheme_lower) or allow_custom:
-        return scheme_lower, remainder, False
+        return scheme_lower, remainder, False, has_authority
     raise URLParseError(f"Invalid URL scheme: {scheme_candidate}", value=scheme_candidate, component="scheme")
 
 
@@ -138,7 +154,7 @@ def parse_regular_host(host_candidate: str) -> Tuple[str, Optional[int]]:
         return host_part, parse_port(port_part) if sep else None
     if not Validator.is_valid_host(host_part):
         raise HostValidationError("Host contains invalid characters.", value=host_part, component="host")
-    if any(ord(c) > 127 for c in host_part):
+    if not host_part.isascii():
         try:
             ascii_host = host_part.encode("idna").decode("ascii")
         except UnicodeError as exc:
@@ -279,21 +295,21 @@ def parse_url(url: str, allow_custom_scheme: bool = False) -> ParseResult:
             component="url"
         )
     working = url.strip()
-    scheme, remainder, recognized = parse_scheme(working, allow_custom_scheme)
-    
+    scheme, remainder, recognized, has_authority = parse_scheme(working, allow_custom_scheme)
+
     if not scheme and remainder.startswith("//"):
         remainder = remainder[2:]
 
     remainder, fragment_str = split_fragment(remainder)
     remainder, query_str = split_query(remainder)
 
-    if (scheme and "://" in working) or (not scheme and url.startswith("//")):
+    if (scheme and has_authority) or (not scheme and url.startswith("//")):
         authority, path_candidate = split_authority(remainder)
     else:
         authority, path_candidate = "", remainder
 
     userinfo, host_candidate = parse_userinfo(authority)
-    require_host = bool(scheme) and scheme is not None and scheme.lower() != "file" and "://" in working if scheme else False
+    require_host = scheme is not None and scheme.lower() != "file" and has_authority
     host, port = parse_host(host_candidate, require_host=require_host)
     port = apply_port_defaults(scheme, port, host)
     path = normalize_path(path_candidate)

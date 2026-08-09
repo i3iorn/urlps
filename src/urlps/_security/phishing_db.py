@@ -13,6 +13,7 @@ from ..constants import (
     DEFAULT_DNS_TIMEOUT,
     PHISHING_DATABASE_URL,
     DEFAULT_PHISHING_DATABASE_MAX_BYTES,
+    DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS,
 )
 from ..exceptions import PhishingDatabaseError
 
@@ -53,10 +54,25 @@ class PhishingDatabaseManager:
         if not normalized:
             return False
 
-        if not self._db.hostnames:
+        if not self._db.hostnames and self._should_attempt_refresh():
             self.refresh()
 
         return normalized in self._db.hostnames
+
+    def _should_attempt_refresh(self) -> bool:
+        """Return True if enough time has passed to retry a lazy refresh.
+
+        last_refresh_epoch is stamped on failed attempts too, so without this
+        cooldown a lazy check() would re-download on every single call while
+        the phishing feed stays unreachable (network outage, egress block,
+        etc.), turning a hostname-set lookup into a blocking network call on
+        every parse_url(..., check_phishing=True). Explicit refresh() calls
+        (refresh_phishing_db()) are unaffected -- they always attempt.
+        """
+        last_attempt = self._db.last_refresh_epoch
+        if last_attempt is None:
+            return True
+        return (time.time() - last_attempt) >= DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS
 
     def refresh(self) -> int:
         """Refresh the phishing database and return the number of entries."""
