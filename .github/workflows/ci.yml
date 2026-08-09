@@ -2,10 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch: {}
 
 jobs:
@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.11, 3.12]
+        python-version: [3.10, 3.11, 3.12]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,22 +36,23 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install --upgrade build twine
-          # test / dev tools
-          pip install pytest pytest-cov bandit pip-audit mypy
-          # install package (will install runtime dependencies declared in pyproject.toml)
-          pip install .
+          # CI-only tooling not part of the package's own dev extras
+          pip install pytest-cov pip-audit
+          # install package with dev extras (pytest, mypy, bandit, idna) from
+          # pyproject.toml so CI tooling can't drift out of sync with it
+          pip install ".[dev]"
 
       - name: Run tests
         run: pytest -q
 
       - name: Run mypy
-        run: mypy urlps --ignore-missing-imports || true
+        run: mypy src/urlps --ignore-missing-imports || true
 
       - name: Run Bandit security scan
-        run: bandit -r urlps -lll || true
+        run: bandit -r src/urlps -lll || true
 
       - name: Dependency audit (pip-audit)
-        run: pip-audit --progress spinner || true
+        run: pip-audit --progress-spinner off || true
 
       - name: Build sdist and wheel
         run: python -m build

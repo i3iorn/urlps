@@ -243,7 +243,7 @@ def get_dns_rate_limiter() -> DNSRateLimiter:
     global _GLOBAL_RATE_LIMITER
     if _GLOBAL_RATE_LIMITER is None:
         _GLOBAL_RATE_LIMITER = DNSRateLimiter()
-    assert _GLOBAL_RATE_LIMITER is not None
+    assert _GLOBAL_RATE_LIMITER is not None  # nosec B101 -- type-narrowing only, not a security control
     return _GLOBAL_RATE_LIMITER
 
 
