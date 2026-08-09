@@ -2,6 +2,16 @@
 
 All notable changes to `urlps` are documented here.
 
+## 0.6.1 - 2026-08-09
+
+- Fixed a scheme-parsing bug where relative URLs containing `://` later in the string (e.g. `?redirect=http://host`, a very common query-parameter shape) were incorrectly rejected as invalid absolute URLs instead of being parsed as relative references.
+- Fixed the same substring-matching flaw in the security scanner (`extract_host_and_path`, `has_parser_confusion`, `is_non_canonical_url`, `get_canonical_url`) so a query value can no longer be mistaken for the URL's actual host.
+- Fixed the phishing-domain database retrying a network download on every single `check_phishing=True` call whenever the previous refresh had failed; added a 5-minute cooldown so an unreachable feed no longer adds blocking network latency to every parse.
+- Added `dns_rate_limiter` dependency-injection support to `parse_url()`, `parse_url_unsafe()`, and `build_secure()` for isolating DNS lookup rate limits per application/tenant.
+- Improved parsing performance by roughly 20% through caching of repeated security checks and micro-optimizations on hot paths, with no change in behavior.
+- Fixed the CI pipeline, which had drifted out of sync with the src-layout migration and a repository rename: it was not running on pull requests or the default branch, and its `mypy`/`bandit`/`pip-audit` steps were silently scanning nothing.
+- Corrected stale packaging metadata (`project.urls` pointed at the wrong GitHub owner and a nonexistent branch).
+
 ## 0.6.0 - 2026-05-25
 
 - Standardized public imports on `urlps` across docs, tests, performance tooling, and package metadata.
