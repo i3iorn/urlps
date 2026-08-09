@@ -306,6 +306,10 @@ pytest -m ipv6                # Run IPv6 tests
 pytest -m idna                # Run IDNA tests
 ```
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a summary of every release, and [changelogs/](changelogs/) for detailed per-release notes.
+
 ## License
 
 MIT
