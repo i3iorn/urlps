@@ -107,7 +107,7 @@ class PhishingDatabaseManager:
         error_count = self._db.error_count
 
         try:
-            with request.urlopen(
+            with request.urlopen(  # nosec B310 -- PHISHING_DATABASE_URL is a fixed https:// constant, not user input
                 PHISHING_DATABASE_URL,
                 timeout=DEFAULT_DNS_TIMEOUT,
             ) as response:

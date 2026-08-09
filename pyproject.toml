@@ -38,12 +38,12 @@ idna = ["idna>=3.11"]
 dev = ["pytest>=7.4", "mypy>=1.19", "bandit>=1.9", "idna>=3.11"]
 
 [project.urls]
-Homepage = "https://github.com/micro/urlps"
-Repository = "https://github.com/micro/urlps"
-Documentation = "https://github.com/micro/urlps#readme"
-Changelog = "https://github.com/micro/urlps/blob/main/changelogs/0.6.0.md"
-Issues = "https://github.com/micro/urlps/issues"
-"Bug Tracker" = "https://github.com/micro/urlps/issues"
+Homepage = "https://github.com/i3iorn/urlps"
+Repository = "https://github.com/i3iorn/urlps"
+Documentation = "https://github.com/i3iorn/urlps#readme"
+Changelog = "https://github.com/i3iorn/urlps/blob/master/changelogs/0.6.0.md"
+Issues = "https://github.com/i3iorn/urlps/issues"
+"Bug Tracker" = "https://github.com/i3iorn/urlps/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -109,7 +109,7 @@ MAX_FRAGMENT_LENGTH: Final[int] = _get_positive_int_from_env("URLPS_MAX_FRAGMENT
 MAX_USERINFO_LENGTH: Final[int] = _get_positive_int_from_env("URLPS_MAX_USERINFO_LENGTH", 128)
 MAX_IPV6_STRING_LENGTH: Final[int] = _get_positive_int_from_env("URLPS_MAX_IPV6_STRING_LENGTH", 128)
 
-BLOCKED_HOSTNAMES: Final[FrozenSet[str]] = frozenset(  # nosec B104
+BLOCKED_HOSTNAMES: Final[FrozenSet[str]] = frozenset(
     {
         # Localhost variations
         "localhost",
@@ -117,7 +117,7 @@ BLOCKED_HOSTNAMES: Final[FrozenSet[str]] = frozenset(  # nosec B104
         "localhost.",
         # IPv4 loopback and special addresses
         "127.0.0.1",
-        "0.0.0.0",
+        "0.0.0.0",  # nosec B104 -- SSRF blocklist entry, not a bind address
         # IPv6 loopback
         "::1",
         "[::1]",
