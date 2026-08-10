@@ -326,10 +326,21 @@ class TestEdgeCases:
         with pytest.raises(TypeError, match="must be str"):
             parse_url_unsafe(12345)  # type: ignore
 
-    def test_type_validation_strict_not_bool(self):
-        """Ensure TypeError is raised for non-bool strict in parse_url_unsafe."""
+    def test_removed_strict_parameter_is_rejected(self):
+        """`strict` was removed in 0.7.0; `policy=` is the single control."""
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            parse_url_unsafe("http://example.com", strict=True)  # type: ignore[call-arg]
+
+    def test_type_validation_debug_not_bool(self):
+        """Ensure TypeError is raised for a non-bool debug flag."""
         with pytest.raises(TypeError, match="must be bool"):
-            parse_url_unsafe("http://example.com", strict="yes")  # type: ignore
+            parse_url_unsafe("http://example.com", debug="yes")  # type: ignore[arg-type]
+
+    def test_invalid_policy_name_is_rejected(self):
+        from urlps.exceptions import SecurityPolicyError
+
+        with pytest.raises(SecurityPolicyError):
+            parse_url_unsafe("http://example.com", policy="bogus")  # type: ignore[arg-type]
 
 
 class TestHomographDetection:

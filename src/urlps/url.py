@@ -4,8 +4,10 @@ This module provides the main URL class and helpers for parsing, building, and m
 
 Public API:
     - URL: Immutable URL object with rich methods for access and modification.
-    - set_audit_callback, get_audit_callback: Audit hooks for URL parsing events.
     - parse_relative_reference, build_relative_reference, round_trip_relative: Relative URL helpers.
+
+Audit hooks are supplied per call via the ``audit=AuditConfig(...)`` parameter
+rather than by module-level setters.
 
 All public methods and properties are documented below.
 """
@@ -13,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Optional, Type
 
-from ._audit import AuditManager
+from ._audit import AuditConfig, AuditManager
 from ._builder import Builder, QueryPairs
 from ._components import SecurityFinding
 from ._parser import Parser
@@ -47,10 +49,13 @@ class URL:
         url: The URL string to parse.
         parser: Optional custom parser instance.
         builder: Optional custom builder instance.
-        strict: If True, enable SSRF and security checks.
         debug: If True, include raw input in exception traces.
         check_dns: If True, perform DNS resolution checks.
         check_phishing: If True, check for known phishing domains.
+        security_policy: Policy governing which checks are enforced. This is
+            the single control for security behaviour.
+        correlation_id: Optional identifier propagated to audit events.
+        audit: Optional AuditConfig supplying audit callbacks.
 
     Raises:
         URLParseError: If the URL is invalid or fails security checks.
@@ -73,7 +78,6 @@ class URL:
         '_scheme',
         '_security_findings',
         '_security_policy',
-        '_strict',
         '_userinfo',
         'recognized_scheme'
     )
@@ -82,30 +86,32 @@ class URL:
         self, url: str, *,
         parser: Optional[Parser] = None,
         builder: Optional[Builder] = None,
-        strict: bool = False,
         debug: bool = False,
         check_dns: bool = False,
         check_phishing: bool = False,
         security_policy: Optional[SecurityPolicy] = None,
         correlation_id: Optional[str] = None,
+        audit: Optional[AuditConfig] = None,
     ) -> None:
         _check_type(url, str, "url")
-        _check_type(strict, bool, "strict")
         _check_type(debug, bool, "debug")
         _check_type(check_dns, bool, "check_dns")
         _check_type(check_phishing, bool, "check_phishing")
+        if audit is not None and not isinstance(audit, AuditConfig):
+            raise TypeError(
+                f"audit must be AuditConfig, got {type(audit).__name__}"
+            )
 
         self._parser = parser if parser is not None else Parser()
         self._builder = builder if builder is not None else Builder()
-        self._audit_manager = AuditManager()
-        self._strict = strict
+        self._audit_manager = AuditManager(audit)
         self._debug = debug
         self._check_dns = check_dns
         self._check_phishing = check_phishing
         self._security_policy = (
             security_policy
             if security_policy is not None
-            else SecurityPolicy.internal(check_dns=check_dns, enforce_ssrf=strict)
+            else SecurityPolicy.internal(check_dns=check_dns)
         )
         self._security_findings: List[SecurityFinding] = []
         self._correlation_id = correlation_id
@@ -280,7 +286,6 @@ class URL:
         new_url._parser = self._parser
         new_url._builder = self._builder
         new_url._audit_manager = self._audit_manager
-        new_url._strict = self._strict
         new_url._debug = self._debug
         new_url._check_dns = self._check_dns
         new_url._check_phishing = self._check_phishing
@@ -513,21 +518,62 @@ def _normalize_port(value: Optional[Any]) -> Optional[int]:
 
 
 def _validate_copy_overrides(overrides: Dict[str, Any]) -> None:
-    """Validate copy() override arguments."""
+    """Validate copy() override arguments.
+
+    Overrides are checked against the same component validators the parser
+    uses. Previously this only verified that values were strings, so
+    ``with_host("not a valid host!")`` succeeded and produced a URL object
+    that ``parse_url`` would have rejected -- component validation on the
+    mutation path was strictly weaker than on the parse path.
+    """
     valid_keys = {'scheme', 'host', 'port', 'path', 'query', 'fragment',
                   'userinfo', 'query_pairs'}
     invalid_keys = set(overrides.keys()) - valid_keys
     if invalid_keys:
         raise InvalidURLError(f"Invalid override(s): {', '.join(sorted(invalid_keys))}")
+
     for key in ('scheme', 'host', 'path', 'query', 'fragment'):
         if key in overrides and overrides[key] is not None:
             if not isinstance(overrides[key], str):
                 raise InvalidURLError(f"{key} must be a string")
+
     if 'userinfo' in overrides and overrides['userinfo'] is not None:
         if not isinstance(overrides['userinfo'], str):
             raise InvalidURLError("userinfo must be a string")
         if not is_valid_userinfo(overrides['userinfo']):
             raise InvalidURLError("Invalid userinfo format.")
+
+    scheme = overrides.get('scheme')
+    if scheme is not None and not Validator.is_valid_scheme(scheme.lower()):
+        raise InvalidURLError(f"Invalid scheme: {scheme!r}", value=scheme, component="scheme")
+
+    host = overrides.get('host')
+    if host is not None and not _is_valid_host_override(host):
+        raise InvalidURLError(f"Invalid host: {host!r}", value=host, component="host")
+
+    fragment = overrides.get('fragment')
+    if fragment is not None and not Validator.is_valid_fragment(fragment):
+        raise InvalidURLError(
+            f"Invalid fragment: {fragment!r}", value=fragment, component="fragment"
+        )
+
+    for key in ('path', 'query'):
+        value = overrides.get(key)
+        if value is not None and not Validator.is_url_safe_string(value):
+            raise InvalidURLError(
+                f"{key} contains invalid control characters.", value=value, component=key
+            )
+
+
+def _is_valid_host_override(host: str) -> bool:
+    """Return True if host is a valid hostname, IPv4 literal, or IPv6 literal."""
+    if host == "":
+        return True  # Clearing the host is allowed; compose() enforces the rest.
+    if host.startswith("["):
+        return Validator.is_valid_ipv6(host)
+    if Validator.is_valid_ipv4(host):
+        return True
+    return Validator.is_valid_host(host)
 
 
 __all__ = [

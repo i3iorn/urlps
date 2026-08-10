@@ -10,14 +10,23 @@ Quick Start:
 
 Main Entry Points:
     parse_url(url, **options) -> URL
-        Secure-by-default parsing with comprehensive security checks:
+        Parsing with security checks, governed by a policy (default:
+        "balanced"). Enabled under every built-in policy:
         - SSRF protection (blocks private IPs, localhost, metadata endpoints)
         - Path traversal detection (.., null bytes, encoded variants)
         - Homograph attack detection (mixed Unicode scripts)
         - Parser confusion detection (ambiguous URL structures)
         - Double-encoding detection
 
+        Query-injection heuristics, dangerous-port blocking, credential
+        rejection and canonical-form enforcement require policy="strict".
+
         Use this for parsing URLs from untrusted sources (user input, external APIs).
+
+    join(base, reference, **options) -> URL
+        RFC 3986 Section 5 reference resolution. The security-preserving
+        equivalent of urllib.parse.urljoin -- the resolved target is
+        validated, so resolution cannot bypass the checks above.
 
     parse_url_unsafe(url, **options) -> URL
         Parsing WITHOUT security validations. Use ONLY for:
@@ -54,8 +63,20 @@ from typing import Any, Mapping, Optional
 __version__ = "0.6.1"
 
 from ._audit import AuditCallback, AuditConfig, AuditEventCallback, AuditManager
+from ._components import SecurityFinding
+from ._security.dns_guard import DNSRateLimiter, DNSRateLimiterConfig
 from ._security.policy import PolicyInput, SecurityPolicy, resolve_security_policy
-from .exceptions import InvalidURLError, URLBuildError, URLParseError, URLpError
+from .exceptions import (
+    ErrorCode,
+    HostValidationError,
+    InvalidURLError,
+    PortValidationError,
+    QueryParsingError,
+    UnsupportedSchemeError,
+    URLBuildError,
+    URLParseError,
+    URLpError,
+)
 from .url import URL
 
 
@@ -64,28 +85,37 @@ def parse_url(
     allow_custom_scheme: bool = False,
     check_dns: bool = False,
     check_phishing: bool = False,
-    dns_rate_limiter: Any = None,
+    dns_rate_limiter: Optional["DNSRateLimiter"] = None,
     policy: PolicyInput = None,
     correlation_id: Optional[str] = None,
+    audit: Optional[AuditConfig] = None,
 ) -> "URL":
-    """Parse URL with comprehensive security checks enabled (SECURE BY DEFAULT).
+    """Parse a URL with security checks applied (recommended entry point).
 
-    This is the recommended function for parsing URLs from untrusted sources.
-    It provides defense-in-depth against common URL-based attacks.
+    Use this for URLs from untrusted sources. Which checks run is determined
+    entirely by the security policy; the default is ``balanced``.
 
-    Security Features (Always Enabled):
-        - SSRF protection: Blocks private IPs (10.x, 192.168.x, 172.16-31.x)
-        - Localhost blocking: Rejects localhost, 127.0.0.1, ::1, *.local domains
-        - Cloud metadata blocking: Prevents access to 169.254.169.254, metadata.google.internal
-        - Path traversal detection: Identifies ../, null bytes, encoded variants
-        - Double-encoding detection: Catches %25 patterns used to bypass filters
-        - Open redirect detection: Blocks URLs with backslashes, leading //
-        - Homograph attacks: Detects mixed Unicode scripts (e.g., Cyrillic 'а' vs Latin 'a')
-        - Parser confusion: Identifies ambiguous URLs parsed differently across parsers
+    Enabled under every built-in policy:
+        - SSRF protection: blocks private IPs (10.x, 192.168.x, 172.16-31.x)
+        - Localhost blocking: rejects localhost, 127.0.0.1, ::1, *.local domains
+        - Cloud metadata blocking: 169.254.169.254, metadata.google.internal
+        - Path traversal detection: ``../``, null bytes, encoded variants
+        - Double-encoding detection: ``%25`` patterns used to bypass filters
+        - Open redirect detection: backslashes, leading ``//``
+        - Homograph detection: mixed Unicode scripts (Cyrillic 'а' vs Latin 'a')
+        - Parser confusion: ambiguous URLs parsed differently across parsers
 
-    Optional Security Checks:
-        - DNS rebinding (check_dns=True): Verifies hostname resolves to safe IPs
-        - Phishing domains (check_phishing=True): Checks against known phishing database
+    NOT enabled by default -- these require ``policy="strict"``:
+        - Query injection heuristics
+        - Dangerous port blocking
+        - Rejection of credentials in userinfo
+        - Canonical form enforcement
+
+    Optional, off by default under every policy:
+        - DNS rebinding (``check_dns=True``): verifies the host resolves to a
+          safe IP. Performs blocking network I/O; see the README.
+        - Phishing domains (``check_phishing=True``): checks a downloaded
+          database. Performs blocking network I/O on first use.
 
     Args:
         url: The URL string to parse
@@ -95,11 +125,16 @@ def parse_url(
             WARNING: Has performance impact and is rate-limited to prevent DoS.
             Use only when DNS rebinding is a concern (default: False)
         check_phishing: If True, check hostname against known phishing database.
-            Downloads database on first use (~10MB). Best for user-facing applications
+            Downloads database on first use. Best for user-facing applications
             where phishing is a concern (default: False)
         dns_rate_limiter: Optional DNSRateLimiter instance to enforce DNS lookup
             rate limits with dependency injection (recommended for isolation).
             If omitted, DNS checks use the process-global compatibility limiter.
+        policy: Security policy -- "strict", "balanced", "internal", or a
+            SecurityPolicy instance. This is the single control for which
+            checks are enforced.
+        correlation_id: Optional identifier propagated to audit events.
+        audit: Optional AuditConfig supplying audit callbacks for this parse.
 
     Returns:
         URL: Immutable URL object with all parsed components
@@ -132,23 +167,23 @@ def parse_url(
     return _url.URL(
         url,
         parser=parser,
-        strict=resolved_policy.enforce_ssrf,
         check_dns=resolved_policy.check_dns,
         check_phishing=resolved_policy.check_phishing,
         security_policy=resolved_policy,
         correlation_id=correlation_id,
+        audit=audit,
     )
 
 
 def parse_url_unsafe(
     url: str, *,
     allow_custom_scheme: bool = False,
-    strict: bool = False,
     debug: bool = False,
     check_dns: bool = False,
-    dns_rate_limiter: Any = None,
+    dns_rate_limiter: Optional["DNSRateLimiter"] = None,
     policy: PolicyInput = None,
     correlation_id: Optional[str] = None,
+    audit: Optional[AuditConfig] = None,
 ) -> "URL":
     """Parse a URL string WITHOUT security checks (for trusted sources only).
 
@@ -167,14 +202,17 @@ def parse_url_unsafe(
     Args:
         url: The URL string to parse
         allow_custom_scheme: If True, allow non-standard URL schemes (default: False)
-        strict: If True, enable SSRF checks (negates "unsafe" mode). Rarely needed.
-            Use parse_url() instead if you need security (default: False)
         debug: If True, include raw input in error traces for debugging (default: False)
         check_dns: If True, verify hostname resolution and block private/reserved targets.
             Useful for DNS rebinding protection in internal environments (default: False)
             Ignored when an explicit policy is provided.
         dns_rate_limiter: Optional DNSRateLimiter instance to use when DNS checks
             are enabled. Prefer explicit injection for deterministic behavior.
+        policy: Optional policy to apply instead of the default ``internal``
+            preset. To re-enable protections, pass ``policy="strict"`` or use
+            ``parse_url()`` rather than reaching for a separate flag.
+        correlation_id: Optional identifier propagated to audit events.
+        audit: Optional AuditConfig supplying audit callbacks for this parse.
 
     Returns:
         URL: Immutable URL object with all parsed components
@@ -202,7 +240,6 @@ def parse_url_unsafe(
         if policy is not None
         else SecurityPolicy.internal(
             check_dns=check_dns,
-            enforce_ssrf=strict,
             dns_rate_limiter=dns_rate_limiter,
         )
     )
@@ -212,12 +249,12 @@ def parse_url_unsafe(
     return _url.URL(
         url,
         parser=parser,
-        strict=resolved_policy.enforce_ssrf,
         debug=debug,
         check_dns=resolved_policy.check_dns,
         check_phishing=resolved_policy.check_phishing,
         security_policy=resolved_policy,
         correlation_id=correlation_id,
+        audit=audit,
     )
 
 
@@ -307,9 +344,10 @@ def join(
     allow_custom_scheme: bool = False,
     check_dns: bool = False,
     check_phishing: bool = False,
-    dns_rate_limiter: Any = None,
+    dns_rate_limiter: Optional["DNSRateLimiter"] = None,
     policy: PolicyInput = None,
     correlation_id: Optional[str] = None,
+    audit: Optional[AuditConfig] = None,
     strict_resolution: bool = True,
 ) -> "URL":
     """Resolve a URI reference against a base URI (RFC 3986 Section 5).
@@ -343,6 +381,7 @@ def join(
         dns_rate_limiter: Optional DNSRateLimiter for DNS check isolation.
         policy: Security policy applied to the resolved target.
         correlation_id: Optional identifier propagated to audit events.
+        audit: Optional AuditConfig supplying audit callbacks.
         strict_resolution: When False, apply the RFC 3986 Section 5.2.2
             backwards-compatibility rule that treats a reference whose scheme
             matches the base scheme as scheme-less. Defaults to True.
@@ -375,6 +414,7 @@ def join(
         dns_rate_limiter=dns_rate_limiter,
         policy=policy,
         correlation_id=correlation_id,
+        audit=audit,
     )
 
 
@@ -396,8 +436,9 @@ def build_secure(
     policy: PolicyInput = None,
     check_dns: bool = False,
     check_phishing: bool = False,
-    dns_rate_limiter: Any = None,
+    dns_rate_limiter: Optional["DNSRateLimiter"] = None,
     correlation_id: Optional[str] = None,
+    audit: Optional[AuditConfig] = None,
     port: Optional[int] = None,
     path: str = "/",
     query: Optional[str] = None,
@@ -409,6 +450,8 @@ def build_secure(
     Args:
         dns_rate_limiter: Optional DNSRateLimiter instance used when DNS checks
             are enabled by flags or policy.
+        audit: Optional AuditConfig supplying audit callbacks for the
+            validation parse.
     """
     composed = build(
         *scheme_and_host,
@@ -425,6 +468,7 @@ def build_secure(
         dns_rate_limiter=dns_rate_limiter,
         policy=policy,
         correlation_id=correlation_id,
+        audit=audit,
     )
     return parsed.as_string()
 
@@ -504,11 +548,25 @@ __all__ = [
     "AuditConfig",
     "AuditEventCallback",
     "AuditManager",
+    # Injectable DNS rate limiting. The README used to tell users to import
+    # these from urlps._security.dns_guard -- a private module.
+    "DNSRateLimiter",
+    "DNSRateLimiterConfig",
+    # Typed error codes and the finding type returned by URL.security_findings
+    # and URL.validate(); both were previously only reachable privately.
+    "ErrorCode",
+    # Exception hierarchy.
+    "HostValidationError",
     "InvalidURLError",
+    "PolicyInput",
+    "PortValidationError",
+    "QueryParsingError",
+    "SecurityFinding",
     "SecurityPolicy",
     "URLBuildError",
     "URLParseError",
     "URLpError",
+    "UnsupportedSchemeError",
     "__version__",
     "build",
     "build_secure",
