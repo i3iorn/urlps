@@ -35,6 +35,7 @@ class ErrorCode(Enum):
     DNS_RESOLUTION_FAILED = "dns_resolution_failed"
     DNS_CONNECTION_FAILED = "dns_connection_failed"
     PHISHING_DOMAIN = "phishing_domain"
+    PHISHING_DB_UNAVAILABLE = "phishing_db_unavailable"
     DOUBLE_ENCODING = "double_encoding"
     PATH_TRAVERSAL = "path_traversal"
     OPEN_REDIRECT = "open_redirect"

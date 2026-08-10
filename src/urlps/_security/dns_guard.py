@@ -10,8 +10,11 @@ from __future__ import annotations
 import logging
 import secrets
 import socket
+import threading
 import time
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from typing import Callable, Deque, Dict, Optional, Tuple
 
@@ -33,6 +36,7 @@ from .ip_utils import (
 
 logger = logging.getLogger(__name__)
 _GLOBAL_RATE_LIMITER: Optional["DNSRateLimiter"] = None
+_GLOBAL_RATE_LIMITER_LOCK = threading.Lock()
 
 
 TimeProvider = Callable[[], float]
@@ -89,6 +93,13 @@ class DNSRateLimiter:
         self._last_update_seconds: float = now
         self._host_lookups: Dict[str, Deque[float]] = defaultdict(deque)
         self._last_cleanup_seconds: float = now
+        # A rate limit is a security control, so its read-modify-write cycles
+        # must be atomic. The GIL happens to mask most interleavings today, but
+        # it is not a synchronisation primitive and does not exist at all on
+        # free-threaded builds (PEP 703). This also prevents a concurrent
+        # record_lookup() from mutating _host_lookups while _cleanup_old_entries
+        # iterates it, which would raise RuntimeError.
+        self._lock = threading.Lock()
 
     @property
     def config(self) -> DNSRateLimiterConfig:
@@ -136,31 +147,35 @@ class DNSRateLimiter:
             logger.warning("dns_rate_limit_invalid_host", extra={"event": "dns_rate_limit_invalid_host"})
             return False
 
-        self._refill_tokens()
-        if self._tokens < 1.0:
-            logger.info(
-                "dns_rate_limit_global_exceeded",
-                extra={"event": "dns_rate_limit_global_exceeded"},
-            )
-            return False
+        # The whole check-and-consume must be atomic: testing the budget and
+        # then decrementing it in separate steps lets concurrent callers each
+        # pass the check and overspend it.
+        with self._lock:
+            self._refill_tokens()
+            if self._tokens < 1.0:
+                logger.info(
+                    "dns_rate_limit_global_exceeded",
+                    extra={"event": "dns_rate_limit_global_exceeded"},
+                )
+                return False
 
-        now = self._now()
-        cutoff_seconds = now - self._config.time_window_seconds
-        timestamps = self._host_lookups[host]
+            now = self._now()
+            cutoff_seconds = now - self._config.time_window_seconds
+            timestamps = self._host_lookups[host]
 
-        self._remove_stale_timestamps(timestamps, cutoff_seconds)
+            self._remove_stale_timestamps(timestamps, cutoff_seconds)
 
-        if len(timestamps) >= self._config.max_lookups_per_host:
-            logger.info(
-                "dns_rate_limit_host_exceeded",
-                extra={"event": "dns_rate_limit_host_exceeded", "host": host},
-            )
-            return False
+            if len(timestamps) >= self._config.max_lookups_per_host:
+                logger.info(
+                    "dns_rate_limit_host_exceeded",
+                    extra={"event": "dns_rate_limit_host_exceeded", "host": host},
+                )
+                return False
 
-        self._tokens -= 1.0
-        timestamps.append(now)
-        self._cleanup_old_entries()
-        return True
+            self._tokens -= 1.0
+            timestamps.append(now)
+            self._cleanup_old_entries()
+            return True
 
     def record_lookup(self, host: str) -> None:
         """Record a DNS lookup for host without enforcing limits."""
@@ -168,27 +183,36 @@ class DNSRateLimiter:
             logger.warning("dns_rate_limit_invalid_host_record", extra={"event": "dns_rate_limit_invalid_host_record"})
             return
 
-        now = self._now()
-        self._host_lookups[host].append(now)
-        self._cleanup_old_entries()
+        with self._lock:
+            now = self._now()
+            self._host_lookups[host].append(now)
+            self._cleanup_old_entries()
 
     def reset(self) -> None:
         """Reset limiter state to initial configuration."""
-        now = self._now()
-        self._tokens = self._config.max_lookups_per_second
-        self._last_update_seconds = now
-        self._host_lookups.clear()
-        self._last_cleanup_seconds = now
+        with self._lock:
+            now = self._now()
+            self._tokens = self._config.max_lookups_per_second
+            self._last_update_seconds = now
+            self._host_lookups.clear()
+            self._last_cleanup_seconds = now
 
     def stats(self) -> Dict[str, float]:
-        """Return current limiter statistics without mutating state."""
-        self._refill_tokens()
-        total_recent_lookups = sum(len(timestamps) for timestamps in self._host_lookups.values())
-        return {
-            "tokens": float(self._tokens),
-            "tracked_hosts": float(len(self._host_lookups)),
-            "total_recent_lookups": float(total_recent_lookups),
-        }
+        """Return current limiter statistics.
+
+        Takes the lock so the snapshot is internally consistent rather than
+        read while another thread is mid-update.
+        """
+        with self._lock:
+            self._refill_tokens()
+            total_recent_lookups = sum(
+                len(timestamps) for timestamps in self._host_lookups.values()
+            )
+            return {
+                "tokens": float(self._tokens),
+                "tracked_hosts": float(len(self._host_lookups)),
+                "total_recent_lookups": float(total_recent_lookups),
+            }
 
 
 def _secure_jitter_seconds(max_jitter_seconds: float) -> float:
@@ -212,10 +236,40 @@ def _validate_host(host: str) -> Optional[str]:
     return _strip_ipv6_brackets(stripped)
 
 
-def _resolve_addr_info(host: str) -> list[Tuple[int, int, int, str, tuple]]:
-    """Resolve host to address info, raising socket.gaierror on failure."""
+def _resolve_addr_info(
+    host: str, timeout_seconds: Optional[float] = None
+) -> list[Tuple[int, int, int, str, tuple]]:
+    """Resolve host to address info, raising socket.gaierror on failure.
+
+    ``socket.getaddrinfo`` takes no timeout argument and is bounded only by the
+    OS resolver, which under packet loss can block for 5-30 seconds. The
+    documented ``timeout_seconds`` previously applied only to the subsequent
+    socket connect, so a caller asking for a 2s budget could still block far
+    longer. ``socket.setdefaulttimeout`` does not affect getaddrinfo either,
+    so the lookup is run in a worker thread and abandoned on timeout.
+
+    The abandoned thread is a daemon and will finish on its own; we simply
+    stop waiting for it.
+    """
     # Port 80 is arbitrary here; we only care about address resolution.
-    return list(socket.getaddrinfo(host, 80, socket.AF_UNSPEC, socket.SOCK_STREAM))
+    def _lookup() -> list[Tuple[int, int, int, str, tuple]]:
+        return list(socket.getaddrinfo(host, 80, socket.AF_UNSPEC, socket.SOCK_STREAM))
+
+    if timeout_seconds is None or timeout_seconds <= 0:
+        return _lookup()
+
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="urlps-dns")
+    try:
+        future = executor.submit(_lookup)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except FuturesTimeoutError as exc:
+            raise socket.timeout(
+                f"DNS resolution for {host!r} exceeded {timeout_seconds}s"
+            ) from exc
+    finally:
+        # Do not block on an in-flight lookup we have already given up on.
+        executor.shutdown(wait=False)
 
 
 def check_dns_rate_limit(host: str, limiter: Optional[DNSRateLimiter] = None) -> bool:
@@ -242,9 +296,13 @@ def get_dns_rate_limiter() -> DNSRateLimiter:
     parse_url(..., dns_rate_limiter=...) or SecurityPolicy(..., dns_rate_limiter=...).
     """
     global _GLOBAL_RATE_LIMITER
+    # Double-checked locking: without the lock, two threads racing the first
+    # call each build a limiter and one is discarded along with any lookups
+    # already recorded against it, silently loosening the limit.
     if _GLOBAL_RATE_LIMITER is None:
-        _GLOBAL_RATE_LIMITER = DNSRateLimiter()
-    assert _GLOBAL_RATE_LIMITER is not None  # nosec B101 -- type-narrowing only, not a security control
+        with _GLOBAL_RATE_LIMITER_LOCK:
+            if _GLOBAL_RATE_LIMITER is None:
+                _GLOBAL_RATE_LIMITER = DNSRateLimiter()
     return _GLOBAL_RATE_LIMITER
 
 
@@ -313,7 +371,9 @@ def check_dns_rebinding_detailed(
 
     for attempt_index in range(max_attempts):
         try:
-            addr_info: AddrInfo = _resolve_addr_info(normalized_host)
+            addr_info: AddrInfo = _resolve_addr_info(
+                normalized_host, effective_timeout_seconds
+            )
             if not _check_resolved_ips_safe(addr_info):
                 return False, ErrorCode.SSRF_RISK
             if not _verify_connection_safe(

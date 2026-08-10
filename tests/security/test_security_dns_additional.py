@@ -23,6 +23,8 @@ class TestSecurityDNS:
     def test_check_dns_rebinding_detailed_safe_direct_ip(self):
         """Lines 232->234 branch: safe IP detected directly returns True."""
         from urlps._security import check_dns_rebinding_detailed
-        safe, error = check_dns_rebinding_detailed("93.184.216.34")  # example.com
+        # An IP literal short-circuits via the direct-IP check, so no DNS
+        # resolution happens and this stays deterministic offline.
+        safe, error = check_dns_rebinding_detailed("93.184.216.34")
         assert safe is True
         assert error is None

@@ -112,6 +112,66 @@ def _is_octal_hex_ip_private(host: str) -> bool:
         return False
 
 
+def _parse_inet_aton_ipv4(host: str) -> Optional[ipaddress.IPv4Address]:
+    """Parse a host using the classic inet_aton(3) grammar, or return None.
+
+    This is deliberately broader than ``ipaddress.IPv4Address``, because it is
+    what C resolvers, libcurl, and most HTTP clients actually accept:
+
+        a          -- a single 32-bit value          (0x7f000001 -> 127.0.0.1)
+        a.b        -- b is 24 bits                   (127.1      -> 127.0.0.1)
+        a.b.c      -- c is 16 bits                   (127.0.1    -> 127.0.0.1)
+        a.b.c.d    -- each 8 bits                    (127.0.0.1)
+
+    Each part may be decimal, octal (leading ``0``), or hex (``0x`` prefix).
+
+    Without this, obfuscated single-value forms bypassed SSRF checks entirely:
+    ``http://0x7f000001/`` and ``http://017700000001/`` both address 127.0.0.1
+    but were accepted, because the decimal check required an all-digit string
+    within 32 bits (so it never tried octal) and the octal/hex check required
+    exactly four dot-separated parts.
+    """
+    if not host or not isinstance(host, str):
+        return None
+
+    parts = host.split(".")
+    if len(parts) > 4:
+        return None
+
+    values: list[int] = []
+    for part in parts:
+        value = _parse_ip_octet(part)
+        if value is None or value < 0:
+            return None
+        values.append(value)
+
+    # The final part absorbs all remaining bytes; the leading parts are octets.
+    leading, last = values[:-1], values[-1]
+    if any(octet > 0xFF for octet in leading):
+        return None
+
+    remaining_bits = 8 * (4 - len(leading))
+    if last >= (1 << remaining_bits):
+        return None
+
+    packed = last
+    for index, octet in enumerate(reversed(leading)):
+        packed |= octet << (remaining_bits + 8 * index)
+
+    try:
+        return ipaddress.IPv4Address(packed)
+    except (ValueError, ipaddress.AddressValueError):
+        return None
+
+
+def _is_obfuscated_ip_private(host: str) -> bool:
+    """Check whether host addresses a private/reserved IP in any inet_aton form."""
+    address = _parse_inet_aton_ipv4(host)
+    if address is None:
+        return False
+    return not _is_ip_safe(address)
+
+
 def _check_direct_ip_safe(host: str) -> Optional[bool]:
     """Check if host is a direct IP and if it is safe; None if not an IP."""
     try:
@@ -121,14 +181,23 @@ def _check_direct_ip_safe(host: str) -> Optional[bool]:
 
 
 def _check_resolved_ips_safe(addr_info: Iterable[Tuple[int, int, int, str, tuple]]) -> bool:
-    """Check that all resolved IPs in addr_info are safe."""
+    """Check that all resolved IPs in addr_info are safe.
+
+    Fails closed: an address we cannot parse is treated as unsafe rather than
+    skipped, and an empty result is unsafe too. Previously an unparseable
+    address hit ``continue``, so a resolution yielding only unparseable
+    addresses returned "safe" without a single address having been checked.
+    """
+    checked_any = False
     for _family, _socktype, _proto, _canonname, sockaddr in addr_info:
         try:
-            if not _is_ip_safe(ipaddress.ip_address(sockaddr[0])):
-                return False
-        except ValueError:
-            continue
-    return True
+            address = ipaddress.ip_address(sockaddr[0])
+        except (ValueError, IndexError, TypeError):
+            return False
+        if not _is_ip_safe(address):
+            return False
+        checked_any = True
+    return checked_any
 
 
 def _verify_connection_safe(
@@ -139,12 +208,15 @@ def _verify_connection_safe(
 ) -> bool:
     """Verify connection peer IP safety to mitigate DNS rebinding.
 
-    If socket connection/timeout errors occur, behavior is controlled by
-    fail_open_on_error to support policy-driven availability vs security tradeoffs.
+    Only transport failures honour ``fail_open_on_error`` -- that is a
+    deliberate, policy-driven availability tradeoff. Being unable to
+    *determine* the peer is not a transport failure and always fails closed:
+    an empty address list or an unparseable peer address means the check did
+    not run, which is not the same as the check passing.
     """
     addresses = list(addr_info)
     if not addresses:
-        return True
+        return False
 
     family, socktype, proto, _canonname, sockaddr = addresses[0]
     test_socket = socket.socket(family, socktype, proto)
@@ -153,8 +225,8 @@ def _verify_connection_safe(
         test_socket.connect(sockaddr)
         try:
             return _is_ip_safe(ipaddress.ip_address(test_socket.getpeername()[0]))
-        except ValueError:
-            return True
+        except (ValueError, IndexError, TypeError):
+            return False
     except (socket.timeout, OSError):
         return bool(fail_open_on_error)
     finally:
@@ -171,7 +243,12 @@ def is_private_ip(host: str) -> bool:
 
 @lru_cache(maxsize=512)
 def is_ssrf_risk(host: str) -> bool:
-    """Check if host poses SSRF risk (blocked hostnames, private IPs, and ambiguous IPs)."""
+    """Check if host poses SSRF risk (blocked hostnames, private IPs, and ambiguous IPs).
+
+    ``_is_obfuscated_ip_private`` subsumes the two narrower checks above it;
+    they are retained because overlapping checks in a security OR-chain are
+    defensive, not harmful.
+    """
     if not isinstance(host, str) or not host:
         return False
     host_lower = host.lower().rstrip(".")
@@ -180,6 +257,7 @@ def is_ssrf_risk(host: str) -> bool:
         or _is_ipv4_mapped_ipv6(host_lower)
         or _is_decimal_ip_private(host)
         or _is_octal_hex_ip_private(host)
+        or _is_obfuscated_ip_private(host)
         or is_private_ip(host)
     )
 

@@ -16,7 +16,12 @@ from .dns_guard import (
     reset_dns_rate_limiter,
 )
 from .ip_utils import is_malicious_ipv6_zone_id, is_private_ip, is_ssrf_risk
-from .phishing_db import check_against_phishing_db, get_phishing_db_info, refresh_phishing_db
+from .phishing_db import (
+    check_against_phishing_db,
+    check_against_phishing_db_detailed,
+    get_phishing_db_info,
+    refresh_phishing_db,
+)
 from .policy import PolicyInput, SecurityPolicy, resolve_security_policy
 from .url_checks import (
     extract_host_and_path,
@@ -126,10 +131,39 @@ def collect_security_findings(
             findings.append(_finding("critical", dns_error, "DNS rebinding validation failed.", "host"))
 
     effective_check_phishing = effective_policy.check_phishing
-    if effective_check_phishing and host and check_against_phishing_db(host):
-        findings.append(_finding("critical", ErrorCode.PHISHING_DOMAIN, "Host is identified as a phishing domain.", "host"))
+    if effective_check_phishing and host:
+        is_phishing, db_available = check_against_phishing_db_detailed(host)
+        if is_phishing:
+            findings.append(
+                _finding(
+                    "critical",
+                    ErrorCode.PHISHING_DOMAIN,
+                    "Host is identified as a phishing domain.",
+                    "host",
+                )
+            )
+        elif not db_available:
+            # The caller opted into phishing checking and received none.
+            # Reporting a clean result here would be a lie, so surface it as a
+            # warning finding rather than failing silently. It is not
+            # "critical" because it is a degraded check, not a detected threat;
+            # callers that require the check can treat it as fatal.
+            findings.append(
+                _finding(
+                    "warning",
+                    ErrorCode.PHISHING_DB_UNAVAILABLE,
+                    "Phishing database unavailable; host was not checked.",
+                    "host",
+                )
+            )
 
     return findings
+
+
+# Severities that represent a detected problem with the URL itself. Anything
+# below this is advisory -- it is reported in findings but does not reject the
+# URL, because a degraded check is not the same as a failed one.
+BLOCKING_SEVERITIES = frozenset({"critical", "major"})
 
 
 def validate_url_security(
@@ -140,12 +174,21 @@ def validate_url_security(
     check_phishing: Optional[bool] = None,
     raise_on_error: bool = True,
 ) -> list[SecurityFinding]:
-    """Run policy-based security validation and optionally raise on first finding."""
+    """Run policy-based security validation, raising on the first blocking finding.
+
+    All findings are returned regardless; only blocking severities raise. This
+    lets an advisory finding (for example, "the phishing database could not be
+    downloaded, so the host was not checked") reach the caller without turning
+    a degraded optional check into a hard parse failure.
+    """
     findings = collect_security_findings(url, policy=policy, check_dns=check_dns, check_phishing=check_phishing)
-    if findings and raise_on_error:
-        first = findings[0]
-        code = ErrorCode(first.code)
-        raise InvalidURLError(first.message, component=first.component, value=url, code=code)
+    if raise_on_error:
+        for finding in findings:
+            if finding.severity in BLOCKING_SEVERITIES:
+                code = ErrorCode(finding.code)
+                raise InvalidURLError(
+                    finding.message, component=finding.component, value=url, code=code
+                )
     return findings
 
 
@@ -185,6 +228,7 @@ __all__ = [
     "SecurityPolicy",
     "SecurityPolicyError",
     "check_against_phishing_db",
+    "check_against_phishing_db_detailed",
     "check_dns_rate_limit",
     "check_dns_rebinding",
     "check_dns_rebinding_detailed",

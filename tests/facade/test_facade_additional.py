@@ -152,7 +152,11 @@ class TestInitAdditional:
         from urlps.exceptions import InvalidURLError
 
         policy = SecurityPolicy.strict(check_phishing=True)
-        with patch("urlps._security.check_against_phishing_db", return_value=True):
+        # (is_phishing, database_available)
+        with patch(
+            "urlps._security.check_against_phishing_db_detailed",
+            return_value=(True, True),
+        ):
             with pytest.raises(InvalidURLError):
                 parse_url_unsafe("https://example.com/", policy=policy)
 
