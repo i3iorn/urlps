@@ -15,17 +15,92 @@ import pytest
 
 from urlps import parse_url
 
+BASE = "https://example.com/p"
+
 try:
     from hypothesis import given, settings
     from hypothesis import strategies as st
 
-    HAS_HYPOTHESIS = True
-except ImportError:  # pragma: no cover - hypothesis is a required dev dep
-    HAS_HYPOTHESIS = False
+    class TestQueryRoundTripProperties:
+        """Property-based coverage of the round-trip invariant."""
 
+        @staticmethod
+        def _queries():
+            safe_key = st.text(
+                alphabet=st.characters(whitelist_categories=("Ll", "Lu", "Nd")),
+                min_size=1,
+                max_size=8,
+            )
+            safe_value = st.text(
+                alphabet=st.characters(whitelist_categories=("Ll", "Lu", "Nd")),
+                min_size=0,
+                max_size=8,
+            )
+            pair = st.tuples(safe_key, safe_value).map(lambda kv: f"{kv[0]}={kv[1]}")
+            return st.lists(pair, min_size=1, max_size=5).map("&".join)
 
-BASE = "https://example.com/p"
+        @given(query=_queries.__func__())
+        @settings(max_examples=200, deadline=None)
+        def test_parse_preserves_query_exactly(self, query):
+            url = parse_url(f"{BASE}?{query}")
+            assert url.query == query
+            assert str(url) == f"{BASE}?{query}"
 
+        @given(query=_queries.__func__())
+        @settings(max_examples=200, deadline=None)
+        def test_stringification_is_idempotent(self, query):
+            once = str(parse_url(f"{BASE}?{query}"))
+            assert str(parse_url(once)) == once
+
+        @given(
+            value=st.text(
+                # Printable ASCII excluding '%': a literal '%' encodes to '%25',
+                # which the double-encoding check rejects by design, so it is not
+                # a valid input for a round-trip property.
+                alphabet=st.characters(
+                    min_codepoint=32, max_codepoint=126, blacklist_characters="%"
+                ),
+                min_size=1,
+                max_size=20,
+            )
+        )
+        @settings(max_examples=200, deadline=None)
+        def test_percent_encoded_value_never_gains_a_parameter(self, value):
+            """However a value is encoded, it must decode back to one parameter.
+
+            This is the general form of the smuggling regression: no matter what a
+            value contains -- '&', '=', '+' included -- encoding it must yield
+            exactly one parameter that decodes back to the original.
+            """
+            from urllib.parse import quote
+
+            encoded = quote(value, safe="")
+            url = parse_url(f"{BASE}?q={encoded}")
+            assert len(url.query_params) == 1
+            assert url.query_params[0] == ("q", value)
+            # And it must survive a full string round trip.
+            assert parse_url(str(url)).query_params == [("q", value)]
+
+        @given(
+            value=st.text(
+                alphabet=st.characters(
+                    min_codepoint=32, max_codepoint=126, blacklist_characters="%"
+                ),
+                min_size=1,
+                max_size=20,
+            )
+        )
+        @settings(max_examples=200, deadline=None)
+        def test_mutation_never_gains_a_parameter(self, value):
+            """Re-serialization on the mutation path must also stay injective."""
+            from urllib.parse import quote
+
+            url = parse_url(f"{BASE}?q={quote(value, safe='')}")
+            mutated = url.with_query_param("extra", "1")
+            assert parse_url(str(mutated)).query_params == [("q", value), ("extra", "1")]
+
+except ImportError:
+    pass
 
 class TestQueryRoundTrip:
     """Parsing must not rewrite the query string."""
@@ -33,16 +108,16 @@ class TestQueryRoundTrip:
     @pytest.mark.parametrize(
         "query",
         [
-            "a=hello%20world",   # %20 must not become '+'
+            "a=hello%20world",  # %20 must not become '+'
             "sig=aGVsbG8%3D&x=1",  # base64 padding must survive verbatim
-            "q=C%2B%2B",         # encoded '+' must not become a bare '+'
-            "q=a+%26+b",         # encoded '&' must not become a delimiter
+            "q=C%2B%2B",  # encoded '+' must not become a bare '+'
+            "q=a+%26+b",  # encoded '&' must not become a delimiter
             "a=1&b=2",
             "flag",
-            "a=1&&b=2",          # semantically empty chunk is still preserved
+            "a=1&&b=2",  # semantically empty chunk is still preserved
             "empty=",
             "k=%E2%9C%93",
-            "a%5Bb%5D=c",        # encoded brackets
+            "a%5Bb%5D=c",  # encoded brackets
         ],
     )
     def test_query_survives_parse_unchanged(self, query):
@@ -171,83 +246,3 @@ class TestCopyQueryCoherence:
         url = parse_url(f"{BASE}?a=1")
         assert hasattr(url.copy(), "_audit_manager")
         assert hasattr(url.with_query_param("b", "2"), "_audit_manager")
-
-
-@pytest.mark.skipif(not HAS_HYPOTHESIS, reason="hypothesis not installed")
-class TestQueryRoundTripProperties:
-    """Property-based coverage of the round-trip invariant."""
-
-    @staticmethod
-    def _queries():
-        safe_key = st.text(
-            alphabet=st.characters(whitelist_categories=("Ll", "Lu", "Nd")),
-            min_size=1,
-            max_size=8,
-        )
-        safe_value = st.text(
-            alphabet=st.characters(whitelist_categories=("Ll", "Lu", "Nd")),
-            min_size=0,
-            max_size=8,
-        )
-        pair = st.tuples(safe_key, safe_value).map(lambda kv: f"{kv[0]}={kv[1]}")
-        return st.lists(pair, min_size=1, max_size=5).map("&".join)
-
-    @given(query=_queries.__func__())
-    @settings(max_examples=200, deadline=None)
-    def test_parse_preserves_query_exactly(self, query):
-        url = parse_url(f"{BASE}?{query}")
-        assert url.query == query
-        assert str(url) == f"{BASE}?{query}"
-
-    @given(query=_queries.__func__())
-    @settings(max_examples=200, deadline=None)
-    def test_stringification_is_idempotent(self, query):
-        once = str(parse_url(f"{BASE}?{query}"))
-        assert str(parse_url(once)) == once
-
-    @given(
-        value=st.text(
-            # Printable ASCII excluding '%': a literal '%' encodes to '%25',
-            # which the double-encoding check rejects by design, so it is not
-            # a valid input for a round-trip property.
-            alphabet=st.characters(
-                min_codepoint=32, max_codepoint=126, blacklist_characters="%"
-            ),
-            min_size=1,
-            max_size=20,
-        )
-    )
-    @settings(max_examples=200, deadline=None)
-    def test_percent_encoded_value_never_gains_a_parameter(self, value):
-        """However a value is encoded, it must decode back to one parameter.
-
-        This is the general form of the smuggling regression: no matter what a
-        value contains -- '&', '=', '+' included -- encoding it must yield
-        exactly one parameter that decodes back to the original.
-        """
-        from urllib.parse import quote
-
-        encoded = quote(value, safe="")
-        url = parse_url(f"{BASE}?q={encoded}")
-        assert len(url.query_params) == 1
-        assert url.query_params[0] == ("q", value)
-        # And it must survive a full string round trip.
-        assert parse_url(str(url)).query_params == [("q", value)]
-
-    @given(
-        value=st.text(
-            alphabet=st.characters(
-                min_codepoint=32, max_codepoint=126, blacklist_characters="%"
-            ),
-            min_size=1,
-            max_size=20,
-        )
-    )
-    @settings(max_examples=200, deadline=None)
-    def test_mutation_never_gains_a_parameter(self, value):
-        """Re-serialization on the mutation path must also stay injective."""
-        from urllib.parse import quote
-
-        url = parse_url(f"{BASE}?q={quote(value, safe='')}")
-        mutated = url.with_query_param("extra", "1")
-        assert parse_url(str(mutated)).query_params == [("q", value), ("extra", "1")]
