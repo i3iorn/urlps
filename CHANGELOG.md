@@ -2,6 +2,48 @@
 
 All notable changes to `urlps` are documented here.
 
+## 0.7.0 - 2026-08-10
+
+Production-readiness release. See [changelogs/0.7.0.md](changelogs/0.7.0.md) for
+detail and [MIGRATION.md](MIGRATION.md) for upgrade steps.
+
+**Security**
+
+- Closed an SSRF bypass: obfuscated IPv4 forms (`0x7f000001`, `017700000001`,
+  `0xc0a80101`) address loopback and private ranges but were accepted with SSRF
+  protection enabled.
+- Security checks that cannot reach a verdict now fail closed instead of
+  reporting "safe".
+- `check_phishing=True` no longer silently provides no protection when the
+  database is unavailable; it now reports the degradation.
+- DNS resolution is now bounded by the documented timeout, which previously
+  applied only to the subsequent connection.
+- Shared mutable state (DNS rate limiter, lazy globals) is now synchronised.
+
+**Fixed**
+
+- Parsing no longer rewrites query strings. The previous re-encoding was lossy
+  and could turn one parameter into two — a parameter-smuggling vector.
+- `with_query()`, `with_query_param()` and `without_query_param()` were silent
+  no-ops and now work.
+- `parse_relative_reference()` no longer rejects references that merely contain
+  `://` in a query value.
+- `copy()`/`with_*` now validate components as strictly as `parse_url()`.
+
+**Added**
+
+- `join()` for RFC 3986 Section 5 reference resolution — the security-preserving
+  equivalent of `urllib.parse.urljoin`.
+- Per-call audit configuration via `audit=AuditConfig(...)`. The previously
+  documented `set_audit_callback()` never existed.
+- `py.typed`, so the `Typing :: Typed` classifier is finally true.
+- Public exports for `DNSRateLimiter`, `SecurityFinding`, `ErrorCode` and more.
+
+**Breaking**
+
+- `str(url)` returns the query as supplied rather than re-encoded.
+- `strict=` removed from `parse_url_unsafe()` and `URL()`; use `policy=`.
+
 ## 0.6.1 - 2026-08-09
 
 - Fixed a scheme-parsing bug where relative URLs containing `://` later in the string (e.g. `?redirect=http://host`, a very common query-parameter shape) were incorrectly rejected as invalid absolute URLs instead of being parsed as relative references.

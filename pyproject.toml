@@ -24,6 +24,7 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: Implementation :: CPython",
   "Topic :: Internet :: WWW/HTTP",
   "Topic :: Software Development :: Libraries",
@@ -52,7 +53,7 @@ dev = [
 Homepage = "https://github.com/i3iorn/urlps"
 Repository = "https://github.com/i3iorn/urlps"
 Documentation = "https://github.com/i3iorn/urlps#readme"
-Changelog = "https://github.com/i3iorn/urlps/blob/master/changelogs/0.6.0.md"
+Changelog = "https://github.com/i3iorn/urlps/blob/master/changelogs/0.7.0.md"
 Issues = "https://github.com/i3iorn/urlps/issues"
 "Bug Tracker" = "https://github.com/i3iorn/urlps/issues"
 
