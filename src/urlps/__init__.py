@@ -300,6 +300,84 @@ def build(
     })
 
 
+def join(
+    base: "str | URL",
+    reference: "str | URL",
+    *,
+    allow_custom_scheme: bool = False,
+    check_dns: bool = False,
+    check_phishing: bool = False,
+    dns_rate_limiter: Any = None,
+    policy: PolicyInput = None,
+    correlation_id: Optional[str] = None,
+    strict_resolution: bool = True,
+) -> "URL":
+    """Resolve a URI reference against a base URI (RFC 3986 Section 5).
+
+    This is the security-preserving equivalent of ``urllib.parse.urljoin``.
+    The resolved target is parsed and validated under a security policy, so
+    resolution cannot be used to escape the checks that ``parse_url`` applies.
+    That matters because reference resolution is exactly where an attacker
+    controls part of the input:
+
+        >>> join("https://example.com/a/b", "../c")
+        URL('https://example.com/c')
+        >>> join("https://example.com/a/", "//evil.example/x")  # authority swap
+        URL('https://evil.example/x')
+
+    The second example shows why validating the *result* is the whole point: a
+    protocol-relative reference legitimately replaces the host, so the target
+    must be re-checked rather than trusted because the base was trusted.
+
+    Dot segments cannot escape the root -- excess ``..`` segments are
+    discarded per RFC 3986 Section 5.2.4 -- so ``join(base, "../../../../etc")``
+    stays within the base authority.
+
+    Args:
+        base: The base URI. Must be absolute (have a scheme).
+        reference: The reference to resolve. May be absolute, protocol-relative,
+            absolute-path, relative-path, query-only, or fragment-only.
+        allow_custom_scheme: Allow non-standard schemes in the result.
+        check_dns: Verify the resolved host resolves to a safe IP.
+        check_phishing: Check the resolved host against the phishing database.
+        dns_rate_limiter: Optional DNSRateLimiter for DNS check isolation.
+        policy: Security policy applied to the resolved target.
+        correlation_id: Optional identifier propagated to audit events.
+        strict_resolution: When False, apply the RFC 3986 Section 5.2.2
+            backwards-compatibility rule that treats a reference whose scheme
+            matches the base scheme as scheme-less. Defaults to True.
+
+    Returns:
+        URL: The validated, resolved target.
+
+    Raises:
+        ValueError: If ``base`` is not absolute.
+        InvalidURLError: If the resolved target fails security validation.
+        URLParseError: If the resolved target is structurally invalid.
+    """
+    from ._resolve import resolve_reference
+
+    base_str = base.as_string() if isinstance(base, URL) else base
+    reference_str = reference.as_string() if isinstance(reference, URL) else reference
+
+    if not isinstance(base_str, str):
+        raise TypeError(f"base must be str or URL, got {type(base).__name__}")
+    if not isinstance(reference_str, str):
+        raise TypeError(f"reference must be str or URL, got {type(reference).__name__}")
+
+    target = resolve_reference(base_str, reference_str, strict=strict_resolution)
+
+    return parse_url(
+        target,
+        allow_custom_scheme=allow_custom_scheme,
+        check_dns=check_dns,
+        check_phishing=check_phishing,
+        dns_rate_limiter=dns_rate_limiter,
+        policy=policy,
+        correlation_id=correlation_id,
+    )
+
+
 def compose_url(components: Mapping[str, Any]) -> str:
     """Compose a URL from components dict.
 
@@ -437,6 +515,7 @@ __all__ = [
     "clear_all_caches",
     "compose_url",
     "get_cache_info",
+    "join",
     "parse_url",
     "parse_url_unsafe"
 ]
