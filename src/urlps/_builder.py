@@ -45,7 +45,14 @@ class Builder:
     """
 
     PATH_SAFE = "-._~!$&'()*+,;=:@%"
-    QUERY_SAFE = "-._~:/?@!$&'()*+,;="
+    # '&', '=' and '+' are deliberately NOT safe here. They are structural when
+    # serializing a key/value pair: an unescaped '&' in a value becomes a
+    # parameter delimiter (letting a value smuggle in an extra parameter), an
+    # unescaped '=' blurs the key/value boundary, and a literal '+' is
+    # indistinguishable from the urlencoded form of a space. Leaving them in
+    # `safe` meant quote_plus() refused to escape them, so serializing the
+    # value "a & b" emitted `a+&+b`, which re-parses as two parameters.
+    QUERY_SAFE = "-._~:/?@!$'()*,;"
     FRAGMENT_SAFE = "-._~!$&'()*+,;=:@/?"
 
     def compose(self, components: Mapping[str, Any]) -> str:
@@ -89,9 +96,22 @@ class Builder:
         normalized_path = self.normalize_path(path)
         if not normalized_path and host:
             normalized_path = "/"
-        serialized_query = query
-        if query_pairs:
+
+        # `query` is authoritative when supplied; `query_pairs` is only a
+        # fallback for callers that provide structured pairs instead.
+        #
+        # This precedence used to be reversed, which made every query override
+        # a silent no-op: URL.copy(query=...) merged the new string into a
+        # component dict that still carried the *old* query_pairs, and those
+        # pairs then won. That is what broke with_query(), with_query_param()
+        # and without_query_param() -- they all computed a correct new query
+        # and then had it discarded.
+        if query is not None:
+            serialized_query = query
+        elif query_pairs:
             serialized_query = self.serialize_query(query_pairs)
+        else:
+            serialized_query = None
 
         url = ""
         if scheme:

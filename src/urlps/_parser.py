@@ -240,7 +240,22 @@ def _validate_query_string_batch(query: str) -> bool:
 
 
 def parse_query_string(query_candidate: Optional[str]) -> Tuple[Optional[str], QueryPairs]:
-    """Parse query string into normalized string and pairs.
+    """Parse a query string into its original form plus decoded pairs.
+
+    Returns ``(raw_query, pairs)``. The first element is the query string
+    **exactly as received** -- parsing is non-destructive.
+
+    This previously returned a re-serialized form built from the decoded
+    pairs, which silently corrupted data: ``quote_plus`` treats ``+``, ``&``
+    and ``=`` as safe, so a decoded literal ``+`` was re-emitted bare (and
+    would decode as a space on the next pass) and a decoded literal ``&`` was
+    re-emitted as a *delimiter*, splitting one parameter into two. Round
+    tripping ``?q=a+%26+b`` produced ``?q=a+&+b``, which re-parses as two
+    parameters -- a parameter-smuggling vector, and fatal for signature
+    verification or proxying.
+
+    Re-encoding is now performed only where the caller explicitly asks for a
+    different query (see ``URL.with_query_param`` / ``canonicalize``).
 
     Performance optimizations:
     - Batch validation of entire query string
@@ -266,7 +281,7 @@ def parse_query_string(query_candidate: Optional[str]) -> Tuple[Optional[str], Q
             raise QueryParsingError("Query keys must be non-empty.", value=chunk, component="query")
         pairs.append((key, _fast_unquote_plus(value_raw) if sep else None))
 
-    return _builder_singleton.serialize_query(pairs), pairs
+    return query_candidate, pairs
 
 
 def parse_fragment_string(fragment_candidate: Optional[str]) -> Optional[str]:

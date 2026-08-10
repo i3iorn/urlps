@@ -273,11 +273,13 @@ class URL:
         components = self._to_dict()
         components.update(overrides)
         components["port"] = _normalize_port(components.get("port"))
+        self._reconcile_query_components(components, overrides)
 
         new_url = object.__new__(URL)
         new_url.recognized_scheme = self.recognized_scheme
         new_url._parser = self._parser
         new_url._builder = self._builder
+        new_url._audit_manager = self._audit_manager
         new_url._strict = self._strict
         new_url._debug = self._debug
         new_url._check_dns = self._check_dns
@@ -288,6 +290,31 @@ class URL:
         new_url._security_findings = []
         new_url.validate(raise_on_error=True)
         return new_url
+
+    def _reconcile_query_components(
+        self,
+        components: Dict[str, Any],
+        overrides: Mapping[str, Any],
+    ) -> None:
+        """Keep ``query`` and ``query_pairs`` from disagreeing after an override.
+
+        They are two representations of one value. Overriding only one of them
+        would otherwise leave the copy carrying the *previous* value in the
+        other, so the stale one has to be re-derived from whichever the caller
+        actually supplied.
+        """
+        overrode_query = "query" in overrides
+        overrode_pairs = "query_pairs" in overrides
+        if overrode_query == overrode_pairs:
+            # Neither (already consistent) or both (caller owns both).
+            return
+
+        if overrode_query:
+            query = components.get("query")
+            components["query_pairs"] = self._builder.parse_query(query) if query else []
+        else:
+            pairs = components.get("query_pairs") or []
+            components["query"] = self._builder.serialize_query(pairs) if pairs else None
 
     def with_scheme(self, scheme: Optional[str]) -> 'URL':
         """Return new URL with different scheme."""

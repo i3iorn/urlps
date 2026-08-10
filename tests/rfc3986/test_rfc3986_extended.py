@@ -133,9 +133,15 @@ class TestQueryStringRFC3986:
         assert params[0][1] == "hello world"
 
     def test_query_percent_encoding_preservation(self):
-        """Percent-encoded characters in query should be preserved"""
+        """Percent-encoded characters in query should be preserved verbatim.
+
+        This previously asserted only `query is not None`, which was weak
+        enough to pass while the parser silently rewrote %20 as '+'.
+        """
         url = parse_url("http://example.com/?key=value%20with%20spaces")
-        assert url.query is not None
+        assert url.query == "key=value%20with%20spaces"
+        assert url.query_params == [("key", "value with spaces")]
+        assert str(url) == "http://example.com/?key=value%20with%20spaces"
 
     def test_query_duplicate_ampersands(self):
         """Multiple consecutive ampersands should be handled"""
