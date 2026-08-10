@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from enum import Enum
-from typing import Dict, Final, FrozenSet, Set
 import os
 import warnings
+from enum import Enum
+from typing import Dict, Final, FrozenSet, Set
 
 
 class OfficialSchemes(Enum):
@@ -78,12 +78,15 @@ def _get_positive_int_from_env(env_name: str, default: int) -> int:
     if raw_value is None:
         return default
 
+    # stacklevel=2 so the warning is attributed to the importer rather than to
+    # this helper, which is what makes it actionable for the user.
     try:
         parsed_value = int(raw_value)
     except ValueError:
         warnings.warn(
             f"Environment variable {env_name} must be an integer; ignoring value.",
             RuntimeWarning,
+            stacklevel=2,
         )
         return default
 
@@ -91,6 +94,7 @@ def _get_positive_int_from_env(env_name: str, default: int) -> int:
         warnings.warn(
             f"Environment variable {env_name} must be a positive integer; ignoring value.",
             RuntimeWarning,
+            stacklevel=2,
         )
         return default
 
@@ -157,29 +161,29 @@ PASSWORD_MASK: Final[str] = "***"
 
 
 __all__ = [
-    "OfficialSchemes",
-    "DEFAULT_PORTS",
-    "SCHEMES_NO_PORT",
-    "OFFICIAL_SCHEMES",
-    "DANGEROUS_PORTS",
-    "UNSAFE_SCHEMES",
-    "STANDARD_PORTS",
-    "MAX_URL_LENGTH",
-    "MAX_SCHEME_LENGTH",
-    "MAX_HOST_LENGTH",
-    "MAX_PATH_LENGTH",
-    "MAX_QUERY_LENGTH",
-    "MAX_FRAGMENT_LENGTH",
-    "MAX_USERINFO_LENGTH",
-    "MAX_IPV6_STRING_LENGTH",
     "BLOCKED_HOSTNAMES",
-    "DEFAULT_DNS_TIMEOUT",
-    "DEFAULT_DNS_LOOKUPS_PER_SECOND",
-    "DEFAULT_DNS_LOOKUPS_PER_HOST",
-    "DEFAULT_DNS_TIME_WINDOW_SECONDS",
+    "DANGEROUS_PORTS",
     "DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS",
-    "PHISHING_DATABASE_URL",
+    "DEFAULT_DNS_LOOKUPS_PER_HOST",
+    "DEFAULT_DNS_LOOKUPS_PER_SECOND",
+    "DEFAULT_DNS_TIMEOUT",
+    "DEFAULT_DNS_TIME_WINDOW_SECONDS",
     "DEFAULT_PHISHING_DATABASE_MAX_BYTES",
     "DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS",
+    "DEFAULT_PORTS",
+    "MAX_FRAGMENT_LENGTH",
+    "MAX_HOST_LENGTH",
+    "MAX_IPV6_STRING_LENGTH",
+    "MAX_PATH_LENGTH",
+    "MAX_QUERY_LENGTH",
+    "MAX_SCHEME_LENGTH",
+    "MAX_URL_LENGTH",
+    "MAX_USERINFO_LENGTH",
+    "OFFICIAL_SCHEMES",
     "PASSWORD_MASK",
+    "PHISHING_DATABASE_URL",
+    "SCHEMES_NO_PORT",
+    "STANDARD_PORTS",
+    "UNSAFE_SCHEMES",
+    "OfficialSchemes",
 ]

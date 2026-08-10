@@ -11,24 +11,24 @@ Tests for:
 - #9: Semantic URL comparison
 - #10: Audit logging
 """
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import Mock, patch
 
 from urlps import (
+    InvalidURLError,
     parse_url,
     parse_url_unsafe,
-    InvalidURLError,
-    URLParseError,
 )
-from urlps.constants import PASSWORD_MASK
 from urlps._security import (
-    is_open_redirect_risk,
     check_dns_rebinding,
     has_double_encoding,
     has_mixed_scripts,
     has_path_traversal,
+    is_open_redirect_risk,
 )
 from urlps._validation import Validator
+from urlps.constants import PASSWORD_MASK
 
 
 class TestOpenRedirectDetection:
@@ -135,10 +135,10 @@ class TestDNSRebindingProtection:
         assert not check_dns_rebinding("192.168.1.1")
         assert not check_dns_rebinding("10.0.0.1")
 
-    def test_check_dns_flag_separate_from_strict(self):
-        """check_dns should work independently of strict mode."""
-        # parse_url is now always strict - use parse_url_unsafe for non-strict
-        url = parse_url_unsafe("http://google.com/", strict=True)
+    def test_check_dns_flag_is_independent_of_policy(self):
+        """check_dns is orthogonal to which policy is in force."""
+        # Hardening is selected via policy= rather than a separate strict flag.
+        url = parse_url_unsafe("http://google.com/", policy="strict")
         assert url.host == "google.com"
 
         # check_dns is a separate flag

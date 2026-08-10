@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pytest
+
 from urlps._security.dns_guard import DNSRateLimiter
 from urlps.exceptions import SecurityPolicyError
+
 
 class TestSecurityPolicy:
     def test_resolve_security_policy_with_security_policy_instance(self):

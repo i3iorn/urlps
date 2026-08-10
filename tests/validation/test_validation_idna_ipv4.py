@@ -1,8 +1,9 @@
 import pytest
 
-from urlps._validation import Validator
-from urlps._parser import Parser
 from urlps import URL
+from urlps._parser import Parser
+from urlps._validation import Validator
+from urlps.exceptions import HostValidationError
 
 
 def test_idna_unicode_roundtrip_host():
@@ -35,6 +36,6 @@ def test_is_valid_ipv4_edge_cases():
 def test_parser_rejects_invalid_unicode_label():
     parser = Parser()
     bad_label = "\udcff"
-    with pytest.raises(Exception):
+    with pytest.raises(HostValidationError):
         parser.parse(f"http://{bad_label}.com")
 

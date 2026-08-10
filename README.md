@@ -88,8 +88,7 @@ url = parse_url("https://api.example.com", policy=policy)
 Recommended for multi-tenant or concurrent applications: inject a dedicated DNS limiter.
 
 ```python
-from urlps import parse_url
-from urlps._security.dns_guard import DNSRateLimiter, DNSRateLimiterConfig
+from urlps import DNSRateLimiter, DNSRateLimiterConfig, parse_url
 
 limiter = DNSRateLimiter(
     DNSRateLimiterConfig(max_lookups_per_second=20, max_lookups_per_host=50)
@@ -121,6 +120,46 @@ url4 = url.with_query_param("new", "value")
 url5 = url.without_query_param("token")
 ```
 
+### Query strings round-trip exactly
+
+Parsing never rewrites the query. This matters if you verify signatures over a
+raw query string, or proxy URLs onward:
+
+```python
+from urlps import parse_url
+
+url = parse_url("https://api.example.com/search?sig=aGVsbG8%3D&q=a+%26+b")
+print(url.query)         # sig=aGVsbG8%3D&q=a+%26+b   (byte-for-byte)
+print(str(url) )         # ...unchanged...
+print(url.query_params)  # [('sig', 'aGVsbG8='), ('q', 'a & b')]
+```
+
+`q=a+%26+b` is **one** parameter whose value contains `&`. Re-encoding is only
+performed when you explicitly change the query (`with_query_param()`,
+`canonicalize()`), and never turns one parameter into two.
+
+### Reference resolution (RFC 3986 §5)
+
+`join()` is the security-preserving equivalent of `urllib.parse.urljoin` — the
+resolved target is validated, so resolution can't be used to slip past the
+checks `parse_url()` applies:
+
+```python
+from urlps import join
+
+join("https://example.com/a/b", "../c")     # https://example.com/c
+join("https://example.com/a/b", "?q=1")     # https://example.com/a/b?q=1
+join("https://example.com/a/b", "#frag")    # https://example.com/a/b#frag
+
+# '..' can never escape the authority
+join("https://example.com/a/b", "../../../../etc/passwd")
+# https://example.com/etc/passwd
+
+# A protocol-relative reference legitimately replaces the host, which is
+# exactly why the *result* is re-validated rather than trusted:
+join("https://example.com/a/", "//localhost/admin")   # raises InvalidURLError
+```
+
 ### Security Checks
 
 ```python
@@ -150,29 +189,48 @@ print(url.as_string(mask_password=True))  # https://admin:***@api.example.com/
 
 ### Audit Logging
 
-```python
-from urlps import set_audit_callback
-import logging
+Audit callbacks are supplied per call via `AuditConfig`, so different callers
+can log differently without sharing global state:
 
-def audit_url_parsing(raw_url, parsed_url, exception):
+```python
+import logging
+from urlps import AuditConfig, parse_url
+
+def audit_url_parsing(logged_url, parsed_url, exception):
     if exception:
         logging.warning(f"Failed to parse URL: {exception}")
     else:
         logging.info(f"Parsed URL to host: {parsed_url.host}")
 
-set_audit_callback(audit_url_parsing)
+url = parse_url(
+    "https://api.example.com/data",
+    audit=AuditConfig(callback=audit_url_parsing),
+)
 ```
 
 Structured event callback:
+
 ```python
-from urlps import set_audit_event_callback
+from urlps import AuditConfig, parse_url
 
 def on_event(event):
-    # event includes: timestamp, level, operation, host, error_code, correlation_id
+    # event includes: timestamp, level, operation, raw_url, host,
+    # error_type, error_code, correlation_id
     print(event)
 
-set_audit_event_callback(on_event)
+url = parse_url(
+    "https://api.example.com/data",
+    correlation_id="request-42",
+    audit=AuditConfig(event_callback=on_event),
+)
 ```
+
+URLs are redacted before being passed to callbacks (credentials and sensitive
+query values are masked). Pass `AuditConfig(..., redact_urls=False)` to opt out.
+A callback that raises is recorded as a failure and never breaks the parse.
+
+The same `audit=` parameter is accepted by `parse_url_unsafe()`, `join()` and
+`build_secure()`.
 
 ### Component Length Limits
 
@@ -218,10 +276,11 @@ Supported variables:
 
 | Function | Description |
 | --- | --- |
-| `parse_url(url, *, allow_custom_scheme=False, check_dns=False, check_phishing=False, dns_rate_limiter=None, policy=None, correlation_id=None)` | Parse URL with policy-aware security checks (recommended) |
-| `parse_url_unsafe(url, *, allow_custom_scheme=False, strict=False, debug=False, check_dns=False, dns_rate_limiter=None, policy=None, correlation_id=None)` | Parse URL for trusted/internal input with optional policy overrides |
+| `parse_url(url, *, allow_custom_scheme=False, check_dns=False, check_phishing=False, dns_rate_limiter=None, policy=None, correlation_id=None, audit=None)` | Parse URL with policy-aware security checks (recommended) |
+| `parse_url_unsafe(url, *, allow_custom_scheme=False, debug=False, check_dns=False, dns_rate_limiter=None, policy=None, correlation_id=None, audit=None)` | Parse URL for trusted/internal input with optional policy overrides |
+| `join(base, reference, *, policy=None, strict_resolution=True, ...)` | Resolve a reference against a base URI (RFC 3986 §5), then validate |
 | `build(*scheme_and_host, port=None, path="/", query=None, fragment=None, userinfo=None)` | Build URL string from components |
-| `build_secure(*scheme_and_host, policy=None, check_dns=False, check_phishing=False, dns_rate_limiter=None, correlation_id=None, ...)` | Build and then validate a URL under a selected security policy |
+| `build_secure(*scheme_and_host, policy=None, check_dns=False, check_phishing=False, dns_rate_limiter=None, correlation_id=None, audit=None, ...)` | Build and then validate a URL under a selected security policy |
 | `compose_url(components)` | Build URL from components dict |
 
 Note: `get_dns_rate_limiter()` and `reset_dns_rate_limiter()` remain available for compatibility, but explicit `dns_rate_limiter=` injection is preferred.

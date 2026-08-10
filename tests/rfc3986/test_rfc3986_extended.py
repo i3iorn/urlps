@@ -11,9 +11,10 @@ This test suite focuses on areas not fully covered in test_rfc3986_compliance.py
 - Scheme-specific validation
 """
 import pytest
-from urlps import parse_url, parse_url_unsafe, compose_url
-from urlps._parser import Parser
+
+from urlps import compose_url, parse_url, parse_url_unsafe
 from urlps._builder import Builder
+from urlps._parser import Parser
 from urlps.exceptions import InvalidURLError, URLParseError
 
 
@@ -45,7 +46,7 @@ class TestPercentEncodingRFC3986:
         import re
         hex_encodings = re.findall(r'%[0-9A-Fa-f]{2}', encoded)
         for enc in hex_encodings:
-            assert enc.isupper() or enc[1] == '2' and enc[2] == '0'  # %20 is uppercase
+            assert enc.isupper() or (enc[1] == '2' and enc[2] == '0')  # %20 is uppercase
 
     def test_percent_encoding_reserved_in_components(self):
         """RFC 3986 § 2.2-2.3: Reserved chars have special meaning in components"""
@@ -132,9 +133,15 @@ class TestQueryStringRFC3986:
         assert params[0][1] == "hello world"
 
     def test_query_percent_encoding_preservation(self):
-        """Percent-encoded characters in query should be preserved"""
+        """Percent-encoded characters in query should be preserved verbatim.
+
+        This previously asserted only `query is not None`, which was weak
+        enough to pass while the parser silently rewrote %20 as '+'.
+        """
         url = parse_url("http://example.com/?key=value%20with%20spaces")
-        assert url.query is not None
+        assert url.query == "key=value%20with%20spaces"
+        assert url.query_params == [("key", "value with spaces")]
+        assert str(url) == "http://example.com/?key=value%20with%20spaces"
 
     def test_query_duplicate_ampersands(self):
         """Multiple consecutive ampersands should be handled"""

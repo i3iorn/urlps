@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 class TestSecurityMixedScripts:
     def test_has_mixed_scripts_non_string(self):
         """Line 397: has_mixed_scripts with non-string returns False."""

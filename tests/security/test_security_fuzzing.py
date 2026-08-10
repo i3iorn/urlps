@@ -10,7 +10,8 @@ Run with:
 import pytest
 
 try:
-    from hypothesis import given, strategies as st, settings, assume
+    from hypothesis import assume, given, settings
+    from hypothesis import strategies as st
     HAS_HYPOTHESIS = True
 except ImportError:
     HAS_HYPOTHESIS = False
@@ -39,9 +40,9 @@ except ImportError:
     def assume(condition):
         pass
 
-from urlps import parse_url, parse_url_unsafe, URLParseError, InvalidURLError
-from urlps._validation import Validator as ValidatorClass, is_valid_userinfo
-from urlps import _security
+from urlps import InvalidURLError, URLParseError, _security, parse_url, parse_url_unsafe
+from urlps._validation import Validator as ValidatorClass
+from urlps._validation import is_valid_userinfo
 
 
 class TestParserFuzzing:
@@ -325,10 +326,21 @@ class TestEdgeCases:
         with pytest.raises(TypeError, match="must be str"):
             parse_url_unsafe(12345)  # type: ignore
 
-    def test_type_validation_strict_not_bool(self):
-        """Ensure TypeError is raised for non-bool strict in parse_url_unsafe."""
+    def test_removed_strict_parameter_is_rejected(self):
+        """`strict` was removed in 0.7.0; `policy=` is the single control."""
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            parse_url_unsafe("http://example.com", strict=True)  # type: ignore[call-arg]
+
+    def test_type_validation_debug_not_bool(self):
+        """Ensure TypeError is raised for a non-bool debug flag."""
         with pytest.raises(TypeError, match="must be bool"):
-            parse_url_unsafe("http://example.com", strict="yes")  # type: ignore
+            parse_url_unsafe("http://example.com", debug="yes")  # type: ignore[arg-type]
+
+    def test_invalid_policy_name_is_rejected(self):
+        from urlps.exceptions import SecurityPolicyError
+
+        with pytest.raises(SecurityPolicyError):
+            parse_url_unsafe("http://example.com", policy="bogus")  # type: ignore[arg-type]
 
 
 class TestHomographDetection:

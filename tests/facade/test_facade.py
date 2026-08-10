@@ -1,6 +1,6 @@
 import pytest
 
-from urlps import parse_url, parse_url_unsafe, compose_url, URL, InvalidURLError
+from urlps import URL, InvalidURLError, compose_url, parse_url, parse_url_unsafe
 
 
 def test_parse_url_returns_URL() -> None:

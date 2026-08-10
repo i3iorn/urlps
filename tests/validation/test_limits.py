@@ -1,18 +1,14 @@
 import pytest
 
-from urlps import parse_url, parse_url_unsafe
-from urlps.exceptions import InvalidURLError
-from urlps import URL
-
+from urlps import URL, parse_url, parse_url_unsafe
 from urlps.constants import (
-    MAX_URL_LENGTH,
-    MAX_SCHEME_LENGTH,
-    MAX_HOST_LENGTH,
+    MAX_FRAGMENT_LENGTH,
     MAX_PATH_LENGTH,
     MAX_QUERY_LENGTH,
-    MAX_FRAGMENT_LENGTH,
+    MAX_URL_LENGTH,
     MAX_USERINFO_LENGTH,
 )
+from urlps.exceptions import InvalidURLError
 
 
 def make_long_path(n):

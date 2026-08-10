@@ -1,7 +1,7 @@
 import pytest
 
-from urlps.exceptions import InvalidURLError
 from urlps._parser import Parser
+from urlps.exceptions import InvalidURLError
 
 
 def test_parse_sets_recognized_scheme_flag() -> None:
@@ -162,9 +162,15 @@ def test_parse_handles_empty_query_string() -> None:
 
 
 def test_parse_query_skips_empty_chunks() -> None:
+    """Empty chunks are ignored when building pairs, but the raw query is kept.
+
+    Parsing is non-destructive: the query string round-trips byte-for-byte
+    even when it contains a semantically empty chunk. Only the decoded pairs
+    skip it.
+    """
     parser = Parser()
     parsed = parser.parse("http://example.com/?a=1&&b=2")
-    assert parsed["query"] == "a=1&b=2"
+    assert parsed["query"] == "a=1&&b=2"
     assert parser.query_pairs == [("a", "1"), ("b", "2")]
 
 

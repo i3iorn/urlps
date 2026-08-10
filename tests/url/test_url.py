@@ -1,9 +1,9 @@
 """Tests for the URL class and related functionality."""
 import pytest
 
-from urlps import InvalidURLError, URL
-from urlps._relative import parse_relative_reference, build_relative_reference, round_trip_relative
+from urlps import URL, InvalidURLError
 from urlps._parser import Parser
+from urlps._relative import build_relative_reference, parse_relative_reference, round_trip_relative
 
 
 def test_netloc_parsing_with_userinfo_and_port() -> None:

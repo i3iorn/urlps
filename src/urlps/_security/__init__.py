@@ -7,8 +7,8 @@ from urllib.parse import urlsplit
 from .._components import SecurityFinding
 from ..exceptions import ErrorCode, InvalidURLError, SecurityPolicyError
 from .dns_guard import (
-    DNSRateLimiterConfig,
     DNSRateLimiter,
+    DNSRateLimiterConfig,
     check_dns_rate_limit,
     check_dns_rebinding,
     check_dns_rebinding_detailed,
@@ -16,7 +16,12 @@ from .dns_guard import (
     reset_dns_rate_limiter,
 )
 from .ip_utils import is_malicious_ipv6_zone_id, is_private_ip, is_ssrf_risk
-from .phishing_db import check_against_phishing_db, get_phishing_db_info, refresh_phishing_db
+from .phishing_db import (
+    check_against_phishing_db,
+    check_against_phishing_db_detailed,
+    get_phishing_db_info,
+    refresh_phishing_db,
+)
 from .policy import PolicyInput, SecurityPolicy, resolve_security_policy
 from .url_checks import (
     extract_host_and_path,
@@ -126,10 +131,39 @@ def collect_security_findings(
             findings.append(_finding("critical", dns_error, "DNS rebinding validation failed.", "host"))
 
     effective_check_phishing = effective_policy.check_phishing
-    if effective_check_phishing and host and check_against_phishing_db(host):
-        findings.append(_finding("critical", ErrorCode.PHISHING_DOMAIN, "Host is identified as a phishing domain.", "host"))
+    if effective_check_phishing and host:
+        is_phishing, db_available = check_against_phishing_db_detailed(host)
+        if is_phishing:
+            findings.append(
+                _finding(
+                    "critical",
+                    ErrorCode.PHISHING_DOMAIN,
+                    "Host is identified as a phishing domain.",
+                    "host",
+                )
+            )
+        elif not db_available:
+            # The caller opted into phishing checking and received none.
+            # Reporting a clean result here would be a lie, so surface it as a
+            # warning finding rather than failing silently. It is not
+            # "critical" because it is a degraded check, not a detected threat;
+            # callers that require the check can treat it as fatal.
+            findings.append(
+                _finding(
+                    "warning",
+                    ErrorCode.PHISHING_DB_UNAVAILABLE,
+                    "Phishing database unavailable; host was not checked.",
+                    "host",
+                )
+            )
 
     return findings
+
+
+# Severities that represent a detected problem with the URL itself. Anything
+# below this is advisory -- it is reported in findings but does not reject the
+# URL, because a degraded check is not the same as a failed one.
+BLOCKING_SEVERITIES = frozenset({"critical", "major"})
 
 
 def validate_url_security(
@@ -140,12 +174,21 @@ def validate_url_security(
     check_phishing: Optional[bool] = None,
     raise_on_error: bool = True,
 ) -> list[SecurityFinding]:
-    """Run policy-based security validation and optionally raise on first finding."""
+    """Run policy-based security validation, raising on the first blocking finding.
+
+    All findings are returned regardless; only blocking severities raise. This
+    lets an advisory finding (for example, "the phishing database could not be
+    downloaded, so the host was not checked") reach the caller without turning
+    a degraded optional check into a hard parse failure.
+    """
     findings = collect_security_findings(url, policy=policy, check_dns=check_dns, check_phishing=check_phishing)
-    if findings and raise_on_error:
-        first = findings[0]
-        code = ErrorCode(first.code)
-        raise InvalidURLError(first.message, component=first.component, value=url, code=code)
+    if raise_on_error:
+        for finding in findings:
+            if finding.severity in BLOCKING_SEVERITIES:
+                code = ErrorCode(finding.code)
+                raise InvalidURLError(
+                    finding.message, component=finding.component, value=url, code=code
+                )
     return findings
 
 
@@ -179,40 +222,41 @@ def clear_caches() -> dict:
 
 
 __all__ = [
-    "is_ssrf_risk",
-    "is_private_ip",
-    "check_dns_rebinding",
-    "has_mixed_scripts",
-    "has_double_encoding",
-    "has_path_traversal",
-    "is_open_redirect_risk",
-    "has_parser_confusion",
-    "is_malicious_ipv6_zone_id",
-    "normalize_url_unicode",
-    "is_dangerous_port",
-    "extract_host_and_path",
-    "validate_url_security",
-    "collect_security_findings",
-    "redact_url_for_logs",
-    "check_dns_rebinding_detailed",
-    "get_cache_info",
-    "clear_caches",
-    "check_against_phishing_db",
-    "refresh_phishing_db",
-    "get_phishing_db_info",
-    "has_credentials",
-    "has_query_injection",
-    "has_suspicious_punycode",
-    "has_scheme_authority",
     "DNSRateLimiter",
     "DNSRateLimiterConfig",
-    "check_dns_rate_limit",
-    "get_dns_rate_limiter",
-    "reset_dns_rate_limiter",
-    "is_non_canonical_url",
-    "get_canonical_url",
-    "SecurityPolicy",
     "PolicyInput",
+    "SecurityPolicy",
     "SecurityPolicyError",
-    "resolve_security_policy"
+    "check_against_phishing_db",
+    "check_against_phishing_db_detailed",
+    "check_dns_rate_limit",
+    "check_dns_rebinding",
+    "check_dns_rebinding_detailed",
+    "clear_caches",
+    "collect_security_findings",
+    "extract_host_and_path",
+    "get_cache_info",
+    "get_canonical_url",
+    "get_dns_rate_limiter",
+    "get_phishing_db_info",
+    "has_credentials",
+    "has_double_encoding",
+    "has_mixed_scripts",
+    "has_parser_confusion",
+    "has_path_traversal",
+    "has_query_injection",
+    "has_scheme_authority",
+    "has_suspicious_punycode",
+    "is_dangerous_port",
+    "is_malicious_ipv6_zone_id",
+    "is_non_canonical_url",
+    "is_open_redirect_risk",
+    "is_private_ip",
+    "is_ssrf_risk",
+    "normalize_url_unicode",
+    "redact_url_for_logs",
+    "refresh_phishing_db",
+    "reset_dns_rate_limiter",
+    "resolve_security_policy",
+    "validate_url_security"
 ]

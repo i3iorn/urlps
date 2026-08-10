@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import logging
 import socket
+import threading
 import time
 from dataclasses import dataclass, field
-from typing import Optional, Set
+from typing import Optional, Set, Tuple
 from urllib import request
 from urllib.error import URLError
 
 from .._patterns import PATTERNS
 from ..constants import (
     DEFAULT_DNS_TIMEOUT,
-    PHISHING_DATABASE_URL,
     DEFAULT_PHISHING_DATABASE_MAX_BYTES,
     DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS,
+    PHISHING_DATABASE_URL,
 )
 from ..exceptions import PhishingDatabaseError
 
@@ -42,11 +43,25 @@ class PhishingDatabaseManager:
 
     def __init__(self) -> None:
         self._db: PhishingDatabase = PhishingDatabase()
+        # Serialises the lazy refresh. Without it, every thread that arrives
+        # while the database is empty starts its own multi-megabyte download.
+        self._refresh_lock = threading.Lock()
 
     # ---------------------------- Public API ---------------------------- #
 
+    @property
+    def is_available(self) -> bool:
+        """Whether the database holds data, i.e. whether checks are meaningful."""
+        return bool(self._db.hostnames)
+
     def check(self, host: str) -> bool:
-        """Return True if host is present in the phishing database."""
+        """Return True if host is present in the phishing database.
+
+        Returns False both when a host is genuinely absent and when the
+        database could not be loaded. Callers that need to distinguish those
+        cases must consult :attr:`is_available` -- see
+        :func:`check_against_phishing_db_detailed`.
+        """
         if not isinstance(host, str):
             return False
 
@@ -55,7 +70,11 @@ class PhishingDatabaseManager:
             return False
 
         if not self._db.hostnames and self._should_attempt_refresh():
-            self.refresh()
+            with self._refresh_lock:
+                # Re-check inside the lock: another thread may have completed
+                # the refresh while we waited.
+                if not self._db.hostnames and self._should_attempt_refresh():
+                    self.refresh()
 
         return normalized in self._db.hostnames
 
@@ -180,6 +199,19 @@ def check_against_phishing_db(host: str) -> bool:
     return _GLOBAL_MANAGER.check(host)
 
 
+def check_against_phishing_db_detailed(host: str) -> Tuple[bool, bool]:
+    """Return ``(is_phishing, database_available)``.
+
+    ``check_against_phishing_db`` alone cannot distinguish "this host is not a
+    known phishing domain" from "the database could not be downloaded, so
+    nothing was actually checked". Opting into ``check_phishing=True`` and
+    silently receiving no protection is the worst failure mode available, so
+    callers get the availability flag and can surface it.
+    """
+    is_phishing = _GLOBAL_MANAGER.check(host)
+    return is_phishing, _GLOBAL_MANAGER.is_available
+
+
 def refresh_phishing_db() -> int:
     """Refresh phishing database and return item count."""
     return _GLOBAL_MANAGER.refresh()
@@ -198,8 +230,9 @@ __all__ = [
     "PhishingDatabase",
     "PhishingDatabaseManager",
     "check_against_phishing_db",
-    "refresh_phishing_db",
+    "check_against_phishing_db_detailed",
+    "clear_phishing_db",
     "get_phishing_db_info",
-    "clear_phishing_db"
+    "refresh_phishing_db"
 ]
 

@@ -1,6 +1,7 @@
 """Tests for Unicode normalization security."""
 import pytest
-from urlps import parse_url, InvalidURLError
+
+from urlps import InvalidURLError, parse_url
 from urlps._security import normalize_url_unicode
 
 

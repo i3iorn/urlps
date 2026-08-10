@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import patch
+
+import pytest
+
 
 class TestInitBuild:
     def test_build_single_arg_host_only(self):
@@ -62,7 +64,7 @@ class TestInitBuild:
 
     def test_clear_all_caches_builder_keys(self):
         """Lines 394-400: builder entries populated after use."""
-        from urlps import parse_url, clear_all_caches
+        from urlps import clear_all_caches, parse_url
         # Warm up caches
         parse_url("https://example.com/path")
         result = clear_all_caches()
@@ -150,7 +152,11 @@ class TestInitAdditional:
         from urlps.exceptions import InvalidURLError
 
         policy = SecurityPolicy.strict(check_phishing=True)
-        with patch("urlps._security.check_against_phishing_db", return_value=True):
+        # (is_phishing, database_available)
+        with patch(
+            "urlps._security.check_against_phishing_db_detailed",
+            return_value=(True, True),
+        ):
             with pytest.raises(InvalidURLError):
                 parse_url_unsafe("https://example.com/", policy=policy)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 class TestValidation:
     def test_to_ascii_host_with_idna_module(self):
         """Line 77: _to_ascii_host using idna module path."""
@@ -86,7 +87,6 @@ class TestValidationAdditional:
     def test_is_valid_host_non_ascii_too_long_after_encode(self):
         """Line 110: host short in Unicode but long ASCII representation."""
         from urlps._validation import Validator
-        from urlps.constants import MAX_HOST_LENGTH
         # Build a host that exceeds MAX_HOST_LENGTH after IDNA encoding
         very_long = "a" * 64 + "." + "b" * 64 + "." + "c" * 64 + "." + "d" * 64 + ".com"
         result = Validator.is_valid_host.__wrapped__(very_long)

@@ -1,6 +1,6 @@
 """Tests for DNS rate limiting."""
 import time
-import pytest
+
 from urlps._security import (
     DNSRateLimiter,
     check_dns_rate_limit,
@@ -404,7 +404,7 @@ class TestIntegrationScenarios:
         ]
 
         # Should allow reasonable usage
-        for user, webhook in webhooks:
+        for _user, webhook in webhooks:
             assert limiter.is_allowed(webhook)
 
     def test_email_filter_scenario(self):

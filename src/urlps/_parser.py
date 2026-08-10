@@ -1,23 +1,34 @@
 """URL parsing module with stateless functions and Parser class."""
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import unquote_plus
-from functools import lru_cache
 
 from ._builder import Builder, QueryPairs
 from ._components import ParseResult
+from ._validation import Validator, is_valid_userinfo
 from .constants import (
-    DEFAULT_PORTS, SCHEMES_NO_PORT, OFFICIAL_SCHEMES, UNSAFE_SCHEMES,
-    MAX_SCHEME_LENGTH, MAX_HOST_LENGTH, MAX_PATH_LENGTH,
-    MAX_QUERY_LENGTH, MAX_FRAGMENT_LENGTH,
+    DEFAULT_PORTS,
+    MAX_FRAGMENT_LENGTH,
+    MAX_HOST_LENGTH,
+    MAX_PATH_LENGTH,
+    MAX_QUERY_LENGTH,
+    MAX_SCHEME_LENGTH,
+    OFFICIAL_SCHEMES,
+    SCHEMES_NO_PORT,
+    UNSAFE_SCHEMES,
 )
 from .exceptions import (
-    URLParseError, HostValidationError, PortValidationError,
-    UserInfoParsingError, MissingHostError, UnsupportedSchemeError,
-    FragmentEncodingError, QueryParsingError,
+    FragmentEncodingError,
+    HostValidationError,
+    MissingHostError,
+    PortValidationError,
+    QueryParsingError,
+    UnsupportedSchemeError,
+    URLParseError,
+    UserInfoParsingError,
 )
-from ._validation import Validator, is_valid_userinfo
 
 _builder_singleton = Builder()
 
@@ -229,7 +240,22 @@ def _validate_query_string_batch(query: str) -> bool:
 
 
 def parse_query_string(query_candidate: Optional[str]) -> Tuple[Optional[str], QueryPairs]:
-    """Parse query string into normalized string and pairs.
+    """Parse a query string into its original form plus decoded pairs.
+
+    Returns ``(raw_query, pairs)``. The first element is the query string
+    **exactly as received** -- parsing is non-destructive.
+
+    This previously returned a re-serialized form built from the decoded
+    pairs, which silently corrupted data: ``quote_plus`` treats ``+``, ``&``
+    and ``=`` as safe, so a decoded literal ``+`` was re-emitted bare (and
+    would decode as a space on the next pass) and a decoded literal ``&`` was
+    re-emitted as a *delimiter*, splitting one parameter into two. Round
+    tripping ``?q=a+%26+b`` produced ``?q=a+&+b``, which re-parses as two
+    parameters -- a parameter-smuggling vector, and fatal for signature
+    verification or proxying.
+
+    Re-encoding is now performed only where the caller explicitly asks for a
+    different query (see ``URL.with_query_param`` / ``canonicalize``).
 
     Performance optimizations:
     - Batch validation of entire query string
@@ -255,7 +281,7 @@ def parse_query_string(query_candidate: Optional[str]) -> Tuple[Optional[str], Q
             raise QueryParsingError("Query keys must be non-empty.", value=chunk, component="query")
         pairs.append((key, _fast_unquote_plus(value_raw) if sep else None))
 
-    return _builder_singleton.serialize_query(pairs), pairs
+    return query_candidate, pairs
 
 
 def parse_fragment_string(fragment_candidate: Optional[str]) -> Optional[str]:
@@ -327,7 +353,7 @@ def parse_url(url: str, allow_custom_scheme: bool = False) -> ParseResult:
 
 class Parser:
     """URL parser class for backward compatibility."""
-    __slots__ = ('_custom_scheme', '_recognized_scheme', '_query_pairs', '_port')
+    __slots__ = ('_custom_scheme', '_port', '_query_pairs', '_recognized_scheme')
 
     def __init__(self) -> None:
         self._custom_scheme = False
@@ -403,7 +429,14 @@ def clear_caches() -> dict:
 
 
 __all__ = [
-    "parse_url", "parse_scheme", "parse_host", "parse_userinfo", "normalize_path",
-    "parse_query_string", "parse_fragment_string", "Parser",
-    "get_cache_info", "clear_caches",
+    "Parser",
+    "clear_caches",
+    "get_cache_info",
+    "normalize_path",
+    "parse_fragment_string",
+    "parse_host",
+    "parse_query_string",
+    "parse_scheme",
+    "parse_url",
+    "parse_userinfo",
 ]

@@ -21,18 +21,18 @@ All public methods and arguments are type-annotated and documented.
 from __future__ import annotations
 
 import ipaddress
-from typing import Any, Dict, Optional, TYPE_CHECKING
 from functools import lru_cache
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from .constants import (
-    MAX_HOST_LENGTH,
-    MAX_SCHEME_LENGTH,
-    MAX_FRAGMENT_LENGTH,
-    MAX_IPV6_STRING_LENGTH,
-    STANDARD_PORTS,
-    MAX_USERINFO_LENGTH,
-)
 from ._patterns import PATTERNS
+from .constants import (
+    MAX_FRAGMENT_LENGTH,
+    MAX_HOST_LENGTH,
+    MAX_IPV6_STRING_LENGTH,
+    MAX_SCHEME_LENGTH,
+    MAX_USERINFO_LENGTH,
+    STANDARD_PORTS,
+)
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -43,7 +43,7 @@ _idna_module: Optional[ModuleType] = None
 _HAS_IDNA: bool = False
 
 try:
-    import idna as _idna_import  # noqa: F401
+    import idna as _idna_import
     _idna_module = _idna_import
     _HAS_IDNA = True
 except ImportError:

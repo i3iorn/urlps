@@ -1,9 +1,10 @@
 """Tests for exception handling and formatting."""
 from urlps.exceptions import (
-    URLpError,
+    _MAX_VALUE_LENGTH,
     InvalidURLError,
     URLParseError,
-    _MAX_VALUE_LENGTH, _safe_truncated_repr,
+    URLpError,
+    _safe_truncated_repr,
 )
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 class TestSecurityCanonical:
     def test_is_non_canonical_url_uppercase_scheme(self):
         """Lines 887->893: uppercase scheme detected as non-canonical."""
@@ -147,8 +148,9 @@ class TestGetCanonicalUrl:
         assert result is not None
         assert "[::1]" in result
 
-    def test_get_canonical_url_ipv6_malformed_uses_hostname(self):
-        """Line 1084: malformed IPv6 falls back to hostname."""
+    def test_get_canonical_url_malformed_ipv6_returns_none(self):
+        """A netloc opening with '[' but never closing it cannot be canonicalized."""
         from urlps._security import get_canonical_url
         # A netloc starting with [ but not well-formed
         result = get_canonical_url("http://[::1/path")
+        assert result is None

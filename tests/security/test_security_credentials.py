@@ -1,5 +1,4 @@
 """Tests for credential leakage detection."""
-import pytest
 from urlps._security import has_credentials
 
 

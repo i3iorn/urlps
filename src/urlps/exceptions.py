@@ -11,8 +11,7 @@ All exceptions inherit from URLpError and provide:
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Optional, Final
-
+from typing import Any, Final, Optional
 
 _MAX_VALUE_LENGTH: Final[int] = 200
 
@@ -36,6 +35,7 @@ class ErrorCode(Enum):
     DNS_RESOLUTION_FAILED = "dns_resolution_failed"
     DNS_CONNECTION_FAILED = "dns_connection_failed"
     PHISHING_DOMAIN = "phishing_domain"
+    PHISHING_DB_UNAVAILABLE = "phishing_db_unavailable"
     DOUBLE_ENCODING = "double_encoding"
     PATH_TRAVERSAL = "path_traversal"
     OPEN_REDIRECT = "open_redirect"
@@ -58,7 +58,7 @@ class URLpError(Exception):
         code: Typed error code (optional).
     """
 
-    __slots__ = ("message", "value", "component", "code")
+    __slots__ = ("code", "component", "message", "value")
 
     def __init__(
         self,
@@ -183,27 +183,27 @@ class DNSConnectionError(DNSRebindingError):
 
 
 __all__ = [
+    "DNSConnectionError",
+    "DNSRateLimitError",
+    "DNSRebindingError",
+    "DNSResolutionError",
     "ErrorCode",
-    "URLpError",
-    "InvalidURLError",
-    "URLParseError",
-    "URLBuildError",
-    "UnsupportedSchemeError",
-    "RelativeReferenceError",
-    "QuerySerializationError",
-    "QueryParsingError",
-    "HostValidationError",
-    "PortValidationError",
-    "PathNormalizationError",
     "FragmentEncodingError",
-    "NetlocBuildingError",
-    "UserInfoParsingError",
+    "HostValidationError",
+    "InvalidURLError",
     "MissingHostError",
     "MissingPortError",
-    "DNSRebindingError",
-    "DNSRateLimitError",
-    "DNSResolutionError",
-    "DNSConnectionError",
+    "NetlocBuildingError",
+    "PathNormalizationError",
+    "PhishingDatabaseError",
+    "PortValidationError",
+    "QueryParsingError",
+    "QuerySerializationError",
+    "RelativeReferenceError",
     "SecurityPolicyError",
-    "PhishingDatabaseError"
+    "URLBuildError",
+    "URLParseError",
+    "URLpError",
+    "UnsupportedSchemeError",
+    "UserInfoParsingError"
 ]

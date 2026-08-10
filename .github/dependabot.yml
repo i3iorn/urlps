@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Keep CI action versions current — the repo previously sat on
+  # actions/setup-python@v4 well past the v5 release.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+
+  # The library itself has no runtime dependencies; this tracks the dev extras.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"

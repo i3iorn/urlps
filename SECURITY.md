@@ -4,7 +4,9 @@
 
 **Please do not open a public issue for security vulnerabilities.**
 
-If you discover a security vulnerability in urlps, please report it via GitHub Security Advisories or by opening a private security issue.
+If you discover a security vulnerability in urlps, please report it privately via
+[GitHub Security Advisories](https://github.com/i3iorn/urlps/security/advisories/new),
+which is the preferred channel.
 
 Include:
 - Description of the vulnerability
@@ -12,7 +14,10 @@ Include:
 - Potential impact assessment
 - Suggested fix (if available)
 
-We will acknowledge receipt within 48 hours and provide updates on progress toward a fix.
+This is a volunteer-maintained project, so response times are best-effort rather
+than guaranteed: expect an acknowledgement within about a week. Please allow 90
+days before public disclosure, and let us know if you intend to disclose sooner
+so we can coordinate.
 
 ## Security Features
 
@@ -118,7 +123,9 @@ Override component length limits via environment variables (e.g., `URLPS_MAX_URL
 
 ✅ **Do:**
 - Use `parse_url()` for all user-supplied URLs
-- Use `policy="strict"` (default) for untrusted input
+- Pass `policy="strict"` explicitly for untrusted input. `parse_url()` defaults to
+  `balanced`, which trades some hardening for fewer false positives — `strict` is
+  not the default and must be opted into.
 - Enable `check_dns=True` when making network requests to untrusted domains
 - Use `mask_password=True` when logging URLs
 - Keep urlps updated to receive security patches
@@ -136,13 +143,12 @@ Override component length limits via environment variables (e.g., `URLPS_MAX_URL
 
 | Version | Supported  | Notes |
 | --- |------------| --- |
-| 0.4.x | ✅ Yes      | Latest - Enhanced security validations, DNS rate limiting, canonical form validation |
-| 0.3.x | ⚠️ Limited | Previous stable - Full security features, upgrade recommended |
-| 0.2.x | ❌ No       | Security features added; upgrade required |
-| 0.1.x | ❌ No       | Legacy - No security protections |
-| 0.0.x | ❌ No       | Legacy |
+| 0.6.x | ✅ Yes      | Current - Scheme-parsing and phishing-database fixes, performance work |
+| 0.5.x | ⚠️ Limited | Previous stable - Policy-based controls; upgrade recommended |
+| 0.4.x | ❌ No       | Superseded - Upgrade required |
+| ≤ 0.3.x | ❌ No     | Legacy - Incomplete or absent security protections |
 
-**Recommendation:** Always use the latest 0.4.x version for complete security protection.
+**Recommendation:** Always use the latest released version for complete security protection.
 
 ## Security Audit
 

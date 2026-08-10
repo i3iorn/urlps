@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 class TestSecurityQueryInjection:
     def test_has_query_injection_encoded_xss_context(self):
         """Lines 1413->1406: %3c followed by script keyword."""

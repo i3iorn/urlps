@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest new functionality or a behaviour change
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that urlps makes hard or impossible today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Sketch the API you would want, if you have one in mind.
+      render: python
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including any workaround you are using now.
+
+  - type: dropdown
+    id: security-impact
+    attributes:
+      label: Does this affect security behaviour?
+      description: Anything that changes what gets accepted or rejected counts.
+      options:
+        - "No — additive convenience only"
+        - "Yes — it would accept URLs currently rejected"
+        - "Yes — it would reject URLs currently accepted"
+        - "Unsure"
+    validations:
+      required: true

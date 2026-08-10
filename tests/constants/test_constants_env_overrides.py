@@ -1,8 +1,9 @@
-import sys
 import importlib
-import pytest
-import os
+import sys
 from pathlib import Path
+
+import pytest
+
 
 # Ensure tests can import the local `urlp` package when running under pytest
 def _ensure_project_in_path():

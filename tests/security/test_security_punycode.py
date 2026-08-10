@@ -1,5 +1,4 @@
 """Tests for enhanced Punycode/IDN validation."""
-import pytest
 from urlps._security import has_suspicious_punycode
 
 
@@ -52,11 +51,7 @@ class TestMixedScriptDetection:
         assert has_suspicious_punycode("xn--ggle-0nd3a.com")
 
     def test_pure_non_ascii_legitimate(self):
-        """Pure non-ASCII (single script) might be legitimate."""
-        # Pure Cyrillic
-        cyrillic_domain = "яндекс"  # Yandex in Cyrillic
-        # This will trigger brand name detection, but pure script is ok
-        # We test that mixed scripts are the issue
+        """A single-script ASCII domain is not flagged; mixing is the signal."""
         assert not has_suspicious_punycode("example-russian.ru")
 
 

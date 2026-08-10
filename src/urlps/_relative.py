@@ -1,29 +1,44 @@
-"""Relative URL reference parsing and building utilities."""
+"""Relative URL reference parsing and building utilities.
+
+For resolving a reference *against a base URI* (RFC 3986 Section 5), use
+:func:`urlps.join`. These helpers only split and recompose a reference.
+"""
 from __future__ import annotations
 
 from typing import Dict, Optional
+
+from ._resolve import split_uri_reference
 from .exceptions import InvalidURLError
 
 
 def parse_relative_reference(reference: str) -> Dict[str, Optional[str]]:
-    """Split a relative URL reference into path, query, and fragment."""
+    """Split a relative URL reference into path, query, and fragment.
+
+    A reference is rejected only if it is genuinely absolute, i.e. it carries
+    its own scheme. It previously rejected any reference containing ``://``
+    anywhere, which wrongly refused ordinary relative references that embed a
+    URL in a query value -- ``/redirect?next=http://example.com`` being the
+    common case. That is the same substring-matching bug fixed in the scheme
+    parser for 0.6.1, which had not been applied here.
+    """
     if not isinstance(reference, str) or reference == "":
         raise InvalidURLError("Relative references must be non-empty strings.")
-    if "://" in reference:
-        raise InvalidURLError("Relative references cannot contain a scheme separator.")
 
-    working = reference
-    fragment: Optional[str] = None
-    if "#" in working:
-        working, _, fragment = working.partition("#")
+    parts = split_uri_reference(reference)
+    if parts.scheme is not None:
+        raise InvalidURLError(
+            "Relative references cannot contain a scheme separator.",
+            value=reference,
+            component="scheme",
+        )
+    if parts.authority is not None:
+        raise InvalidURLError(
+            "Relative references cannot contain an authority component.",
+            value=reference,
+            component="authority",
+        )
 
-    query: Optional[str] = None
-    if "?" in working:
-        path, _, query = working.partition("?")
-    else:
-        path = working
-
-    return {"path": path, "query": query, "fragment": fragment}
+    return {"path": parts.path, "query": parts.query, "fragment": parts.fragment}
 
 
 def build_relative_reference(
@@ -51,4 +66,4 @@ def round_trip_relative(reference: str) -> str:
     return build_relative_reference(path, query=parts["query"], fragment=parts["fragment"])
 
 
-__all__ = ["parse_relative_reference", "build_relative_reference", "round_trip_relative"]
+__all__ = ["build_relative_reference", "parse_relative_reference", "round_trip_relative"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 class TestSecurityPrivateChecks:
     def test_check_ipv6_private_invalid_address(self):
         """Lines 80-81: ValueError in _check_ipv6_private returns False."""
@@ -29,20 +30,30 @@ class TestSecurityPrivateChecks:
         result = _is_octal_hex_ip_private("0x7f.0x0.0x0.0x1")
         assert result is True
 
-    def test_check_resolved_ips_safe_invalid_ip(self):
-        """Lines 169-170: ValueError on invalid sockaddr continues."""
-        from urlps._security.ip_utils import _check_resolved_ips_safe
-        # Simulate addr_info with an invalid IP string in sockaddr
-        addr_info = [(2, 1, 6, "", ("invalid_ip_string", 80))]
-        result = _check_resolved_ips_safe(addr_info)
-        # Should continue and return True (no unsafe IP found)
-        assert result is True
+    def test_check_resolved_ips_safe_invalid_ip_fails_closed(self):
+        """An unparseable resolved address is unsafe, not skippable.
 
-    def test_verify_connection_safe_empty_addr_info(self):
-        """Line 177: _verify_connection_safe with empty list returns True."""
+        This previously hit `continue`, so a resolution returning only
+        unparseable addresses reported "safe" without checking anything.
+        """
+        from urlps._security.ip_utils import _check_resolved_ips_safe
+        addr_info = [(2, 1, 6, "", ("invalid_ip_string", 80))]
+        assert _check_resolved_ips_safe(addr_info) is False
+
+    def test_check_resolved_ips_safe_empty_fails_closed(self):
+        """No addresses means nothing was verified, which is not "safe"."""
+        from urlps._security.ip_utils import _check_resolved_ips_safe
+        assert _check_resolved_ips_safe([]) is False
+
+    def test_check_resolved_ips_safe_accepts_public_addresses(self):
+        from urlps._security.ip_utils import _check_resolved_ips_safe
+        addr_info = [(2, 1, 6, "", ("93.184.215.14", 80))]
+        assert _check_resolved_ips_safe(addr_info) is True
+
+    def test_verify_connection_safe_empty_addr_info_fails_closed(self):
+        """Being unable to determine the peer is not the same as it being safe."""
         from urlps._security.ip_utils import _verify_connection_safe
-        result = _verify_connection_safe([], 1.0)
-        assert result is True
+        assert _verify_connection_safe([], 1.0) is False
 
     def test_is_private_ip_non_string(self):
         """Line 197: is_private_ip with non-string returns False."""
