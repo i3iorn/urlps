@@ -6,7 +6,7 @@ import re
 import unicodedata
 from functools import lru_cache
 from typing import Optional, Set, Tuple
-from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit, urlparse, urlunparse
+from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlsplit, urlunparse, urlunsplit
 
 from .._patterns import PATTERNS
 from ..constants import DANGEROUS_PORTS

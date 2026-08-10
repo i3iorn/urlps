@@ -1,14 +1,17 @@
-import pytest
 import socket
-from unittest.mock import Mock, patch, MagicMock
-from urllib.error import URLError, HTTPError
+from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError, URLError
 
-from urlps.url import URL
-from urlps.exceptions import InvalidURLError
+import pytest
+
 from urlps._security.phishing_db import (
-    refresh_phishing_db, check_against_phishing_db,
-    get_phishing_db_info, clear_phishing_db
+    check_against_phishing_db,
+    clear_phishing_db,
+    get_phishing_db_info,
+    refresh_phishing_db,
 )
+from urlps.exceptions import InvalidURLError
+from urlps.url import URL
 
 
 @pytest.fixture(autouse=True)

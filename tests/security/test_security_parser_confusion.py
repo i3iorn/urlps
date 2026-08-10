@@ -1,6 +1,7 @@
 """Tests for parser confusion detection."""
 import pytest
-from urlps import parse_url, InvalidURLError
+
+from urlps import InvalidURLError, parse_url
 from urlps._security import has_parser_confusion
 
 

@@ -5,9 +5,10 @@ This test suite covers the examples and edge cases specified in RFC 3986
 to ensure full compliance with the URI specification.
 """
 import pytest
-from urlps import parse_url, parse_url_unsafe, compose_url
-from urlps._parser import Parser
+
+from urlps import compose_url, parse_url, parse_url_unsafe
 from urlps._builder import Builder
+from urlps._parser import Parser
 from urlps.exceptions import InvalidURLError
 
 

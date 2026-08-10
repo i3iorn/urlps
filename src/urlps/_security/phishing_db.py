@@ -11,9 +11,9 @@ from urllib.error import URLError
 from .._patterns import PATTERNS
 from ..constants import (
     DEFAULT_DNS_TIMEOUT,
-    PHISHING_DATABASE_URL,
     DEFAULT_PHISHING_DATABASE_MAX_BYTES,
     DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS,
+    PHISHING_DATABASE_URL,
 )
 from ..exceptions import PhishingDatabaseError
 
@@ -198,8 +198,8 @@ __all__ = [
     "PhishingDatabase",
     "PhishingDatabaseManager",
     "check_against_phishing_db",
-    "refresh_phishing_db",
+    "clear_phishing_db",
     "get_phishing_db_info",
-    "clear_phishing_db"
+    "refresh_phishing_db"
 ]
 

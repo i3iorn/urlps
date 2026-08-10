@@ -35,7 +35,18 @@ dynamic = ["version"]
 
 [project.optional-dependencies]
 idna = ["idna>=3.11"]
-dev = ["pytest>=7.4", "mypy>=1.19", "bandit>=1.9", "idna>=3.11"]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    # Required: tests/security/test_security_fuzzing.py degrades to ~48 silently
+    # skipped tests when hypothesis is absent. It must be a hard dev dependency
+    # so the property-based security tests actually run in CI.
+    "hypothesis>=6.98",
+    "mypy>=1.19",
+    "bandit>=1.9",
+    "ruff>=0.7",
+    "idna>=3.11",
+]
 
 [project.urls]
 Homepage = "https://github.com/i3iorn/urlps"
@@ -50,36 +61,50 @@ where = ["src"]
 include = ["urlps*"]
 exclude = ["tests*"]
 
+# PEP 561: ship the py.typed marker so downstream type checkers actually
+# consume our annotations. Without this the "Typing :: Typed" classifier
+# above is a false claim.
+[tool.setuptools.package-data]
+urlps = ["py.typed"]
+
 [tool.setuptools.dynamic]
 version = {attr = "urlps.__version__"}
 
-[tool.black]
+# Linting/formatting is consolidated on ruff (it subsumes the previous black +
+# isort config, which was declared here but never actually run by CI).
+[tool.ruff]
 line-length = 120
-target-version = ["py310", "py311", "py312"]
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
+target-version = "py310"
+extend-exclude = ["build", "dist", ".venv", "performance"]
 
-[tool.isort]
-profile = "black"
-line_length = 120
-multi_line_mode = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-ensure_newline_before_comments = true
-skip_glob = [".git", "__pycache__", ".venv"]
+[tool.ruff.lint]
+# Deliberately scoped to correctness-bearing rules. `UP` (pyupgrade) is not
+# enabled yet: it flags ~265 purely cosmetic annotation modernisations
+# (Optional[X] -> X | None, Dict -> dict) whose diff would swamp behavioural
+# review. Track it as a separate mechanical change.
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes — real bugs (unused imports/vars, undefined names)
+    "I",    # isort — import ordering
+    "B",    # flake8-bugbear — likely bugs
+    "C4",   # flake8-comprehensions
+    "RUF",  # ruff-specific
+]
+ignore = [
+    "E501",    # line length is enforced by the formatter, not the linter
+    "B008",    # function call in default arg — not a pattern we use
+    "RUF012",  # ClassVar annotations for mutable class attrs — noisy here
+    # This library detects homograph/confusable-character attacks, so
+    # confusable Unicode in test data, docstrings and comments is the subject
+    # matter, not a defect. Flagging it is a false positive by construction.
+    "RUF001",  # ambiguous unicode character in string
+    "RUF002",  # ambiguous unicode character in docstring
+    "RUF003",  # ambiguous unicode character in comment
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may shadow builtins and use assert-heavy styles freely.
+"tests/**" = ["B011"]
 
 [tool.mypy]
 python_version = "3.10"
@@ -97,7 +122,6 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = ["-v", "--strict-markers", "--tb=short"]
-asyncio_default_fixture_loop_scope = "function"
 markers = [
     "slow: marks tests as slow",
     "integration: marks tests as integration tests",
@@ -107,10 +131,19 @@ markers = [
 ]
 
 [tool.coverage.run]
+# Measure the installed package by import name, but map it back to the src
+# layout so reports resolve against the working tree.
 source = ["urlps"]
 branch = true
 
+[tool.coverage.paths]
+source = ["src/urlps", "*/site-packages/urlps"]
+
 [tool.coverage.report]
+# Ratchet upward over time; never lower this to make a red build go green.
+fail_under = 90
+show_missing = true
+skip_covered = true
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

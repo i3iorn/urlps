@@ -1,7 +1,7 @@
 import pytest
 
-from urlps.exceptions import InvalidURLError
 from urlps._parser import Parser
+from urlps.exceptions import InvalidURLError
 
 
 def test_parse_sets_recognized_scheme_flag() -> None:

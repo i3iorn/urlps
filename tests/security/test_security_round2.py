@@ -11,24 +11,24 @@ Tests for:
 - #9: Semantic URL comparison
 - #10: Audit logging
 """
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import Mock, patch
 
 from urlps import (
+    InvalidURLError,
     parse_url,
     parse_url_unsafe,
-    InvalidURLError,
-    URLParseError,
 )
-from urlps.constants import PASSWORD_MASK
 from urlps._security import (
-    is_open_redirect_risk,
     check_dns_rebinding,
     has_double_encoding,
     has_mixed_scripts,
     has_path_traversal,
+    is_open_redirect_risk,
 )
 from urlps._validation import Validator
+from urlps.constants import PASSWORD_MASK
 
 
 class TestOpenRedirectDetection:

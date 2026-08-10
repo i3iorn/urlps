@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+
 class TestParser:
     def test_parse_regular_host_idna_error(self):
         """Lines 144-145: IDNA encoding failure raises HostValidationError."""
@@ -24,8 +25,8 @@ class TestParser:
     def test_apply_port_defaults_no_port_scheme_raises(self):
         """Line 259: file scheme with explicit port raises UnsupportedSchemeError."""
         from urlps._parser import apply_port_defaults
-        from urlps.exceptions import UnsupportedSchemeError
         from urlps.constants import SCHEMES_NO_PORT
+        from urlps.exceptions import UnsupportedSchemeError
         # Find a scheme in SCHEMES_NO_PORT to test with
         no_port_scheme = next(iter(SCHEMES_NO_PORT)) if SCHEMES_NO_PORT else None
         if no_port_scheme:

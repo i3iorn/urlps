@@ -3,9 +3,10 @@ Additional comprehensive validation tests for urlp.
 Tests edge cases, security considerations, and boundary conditions.
 """
 import pytest
-from urlps._validation import Validator
-from urlps._security import is_private_ip
+
 from urlps import parse_url, parse_url_unsafe
+from urlps._security import is_private_ip
+from urlps._validation import Validator
 from urlps.exceptions import InvalidURLError, URLParseError
 
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Dict, Optional
+
 from .exceptions import InvalidURLError
 
 
@@ -51,4 +52,4 @@ def round_trip_relative(reference: str) -> str:
     return build_relative_reference(path, query=parts["query"], fragment=parts["fragment"])
 
 
-__all__ = ["parse_relative_reference", "build_relative_reference", "round_trip_relative"]
+__all__ = ["build_relative_reference", "parse_relative_reference", "round_trip_relative"]

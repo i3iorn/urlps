@@ -2,8 +2,8 @@
 import pytest
 
 from urlps._relative import (
-    parse_relative_reference,
     build_relative_reference,
+    parse_relative_reference,
     round_trip_relative,
 )
 from urlps.exceptions import InvalidURLError

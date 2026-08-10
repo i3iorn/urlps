@@ -1,0 +1,70 @@
+name: Bug report
+description: Report incorrect parsing, validation, or building behaviour
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not report security vulnerabilities here.** See
+        [SECURITY.md](https://github.com/i3iorn/urlps/blob/master/SECURITY.md).
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: A minimal snippet we can run as-is.
+      render: python
+      placeholder: |
+        from urlps import parse_url
+
+        url = parse_url("https://example.com/path?a=1")
+        print(str(url))
+    validations:
+      required: true
+
+  - type: input
+    id: input-url
+    attributes:
+      label: Input URL
+      description: The exact URL string involved, unmodified.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What should happen, and why (cite an RFC section if relevant).
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What happened instead. Include the full traceback if one was raised.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: urlps version
+      placeholder: "0.6.1"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version and OS
+      placeholder: "3.12.4 on Windows 11"
+    validations:
+      required: true
+
+  - type: input
+    id: policy
+    attributes:
+      label: Security policy in use
+      description: e.g. default (balanced), "strict", "internal", or a custom SecurityPolicy.
+      placeholder: "default (balanced)"

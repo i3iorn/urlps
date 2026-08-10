@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 class TestSecurityDNS:
     def test_check_dns_rebinding_detailed_empty_host(self):
         """Line 230: empty host returns DNS_RESOLUTION_FAILED."""

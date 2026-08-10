@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 class TestSecurityPunycode:
     def test_has_suspicious_punycode_decoding_fails(self):
         """Lines 1223-1225: malformed xn-- returns True."""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+
 class TestBuilder:
     def test_compose_secure(self):
         """Lines 123-133: compose_secure() builds and validates URL."""

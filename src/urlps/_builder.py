@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any, Iterable, List, Mapping, Optional, Tuple
 from urllib.parse import quote, quote_plus, unquote_plus
-from functools import lru_cache
 
+from ._patterns import PATTERNS
 from .constants import DEFAULT_PORTS, OfficialSchemes
 from .exceptions import (
-    URLBuildError,
     PortValidationError,
+    URLBuildError,
 )
-from ._patterns import PATTERNS
 
 QueryPairs = List[Tuple[str, Optional[str]]]
 

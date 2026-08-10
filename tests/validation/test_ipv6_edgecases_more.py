@@ -2,6 +2,7 @@ import pytest
 
 from urlps._parser import Parser
 from urlps._validation import Validator
+from urlps.exceptions import HostValidationError
 
 
 def test_parser_accepts_compressed_ipv6_literals():
@@ -42,6 +43,6 @@ def test_parser_accepts_zone_index_literals_when_percent_encoded():
 
 def test_parser_rejects_unclosed_bracket():
     p = Parser()
-    with pytest.raises(Exception):
+    with pytest.raises(HostValidationError):
         p.parse("http://[2001:db8::1/path")
 

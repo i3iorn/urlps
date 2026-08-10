@@ -1,6 +1,7 @@
 """Tests for IPv6 zone identifier validation."""
 import pytest
-from urlps import parse_url, InvalidURLError
+
+from urlps import InvalidURLError, parse_url
 from urlps._security import is_malicious_ipv6_zone_id
 
 

@@ -7,12 +7,9 @@ Immutable, auditable, security‑first structures for URL parsing and manipulati
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, List, Optional, Tuple, Dict
-import sys
+from typing import Any, Dict, List, Optional, Tuple
 
 QueryPairs = List[Tuple[str, Optional[str]]]
-
-_SUPPORTS_SLOTS = sys.version_info >= (3, 10)
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +24,7 @@ class URLComponentError(Exception):
 # Data Models
 # ---------------------------------------------------------------------------
 
-@dataclass(frozen=True, slots=_SUPPORTS_SLOTS)
+@dataclass(frozen=True, slots=True)
 class SecurityFinding:
     """Structured security finding emitted by URL validation.
 
@@ -43,7 +40,7 @@ class SecurityFinding:
     component: Optional[str] = None
 
 
-@dataclass(frozen=True, slots=_SUPPORTS_SLOTS)
+@dataclass(frozen=True, slots=True)
 class ParseResult:
     """Immutable result of parsing a URL string.
 
@@ -85,7 +82,7 @@ class ParseResult:
         }
 
 
-@dataclass(frozen=True, slots=_SUPPORTS_SLOTS)
+@dataclass(frozen=True, slots=True)
 class URLComponents:
     """Immutable URL components for construction or manipulation.
 
@@ -111,20 +108,20 @@ class URLComponents:
         Raises:
             URLComponentError: If an update contains invalid data.
         """
-        validated = {
-            "scheme": self._validated_str(updates.get("scheme", self.scheme)),
-            "userinfo": self._validated_str(updates.get("userinfo", self.userinfo)),
-            "host": self._validated_str(updates.get("host", self.host)),
-            "port": self._validated_port(updates.get("port", self.port)),
-            "path": self._validated_str(updates.get("path", self.path), allow_empty=True),
-            "query": self._validated_str(updates.get("query", self.query)),
-            "fragment": self._validated_str(updates.get("fragment", self.fragment)),
-            "query_pairs": self._validated_query_pairs(
+        # Constructed field-by-field rather than via **dict so each argument
+        # keeps its own type; a dict of mixed value types erases them.
+        return URLComponents(
+            scheme=self._validated_str(updates.get("scheme", self.scheme)),
+            userinfo=self._validated_str(updates.get("userinfo", self.userinfo)),
+            host=self._validated_str(updates.get("host", self.host)),
+            port=self._validated_port(updates.get("port", self.port)),
+            path=self._validated_str(updates.get("path", self.path), allow_empty=True) or "",
+            query=self._validated_str(updates.get("query", self.query)),
+            fragment=self._validated_str(updates.get("fragment", self.fragment)),
+            query_pairs=self._validated_query_pairs(
                 updates.get("query_pairs", self.query_pairs)
             ),
-        }
-
-        return URLComponents(**validated)
+        )
 
     # -----------------------------------------------------------------------
     # Validation Helpers
@@ -167,8 +164,8 @@ class URLComponents:
 
 __all__ = [
     "ParseResult",
-    "URLComponents",
     "QueryPairs",
     "SecurityFinding",
     "URLComponentError",
+    "URLComponents",
 ]

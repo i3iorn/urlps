@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from threading import Lock
 from time import time
-from typing import Any, Callable, Dict, Optional, Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional, Protocol
 
 from ._security import redact_url_for_logs
 

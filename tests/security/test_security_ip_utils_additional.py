@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 class TestSecurityPrivateChecks:
     def test_check_ipv6_private_invalid_address(self):
         """Lines 80-81: ValueError in _check_ipv6_private returns False."""

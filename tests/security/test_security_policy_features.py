@@ -1,14 +1,9 @@
-import pytest
 from unittest.mock import patch
 
-from urlps import (
-    SecurityPolicy,
-    InvalidURLError,
-    build_secure,
-    parse_url,
-    parse_url_unsafe
-)
-from urlps._security.dns_guard import check_dns_rebinding_detailed, DNSRateLimiter
+import pytest
+
+from urlps import InvalidURLError, SecurityPolicy, build_secure, parse_url, parse_url_unsafe
+from urlps._security.dns_guard import DNSRateLimiter, check_dns_rebinding_detailed
 from urlps.exceptions import ErrorCode
 
 

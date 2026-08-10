@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 class TestSecurityIPv6ZoneId:
     def test_malicious_ipv6_zone_id_empty_zone(self):
         """Lines 476-477: empty zone ID is malicious."""

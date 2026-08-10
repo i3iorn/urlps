@@ -11,18 +11,25 @@ All public methods and properties are documented below.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Type, cast
+from typing import Any, Dict, List, Mapping, Optional, Type
 
-from ._security import SecurityPolicy, has_parser_confusion, extract_host_and_path, is_open_redirect_risk, \
-    has_path_traversal, redact_url_for_logs, validate_url_security
+from ._audit import AuditManager
 from ._builder import Builder, QueryPairs
-from ._audit import AuditConfig, AuditEventCallback, AuditCallback, AuditManager
-from ._relative import parse_relative_reference, build_relative_reference, round_trip_relative
+from ._components import SecurityFinding
+from ._parser import Parser
+from ._relative import build_relative_reference, parse_relative_reference, round_trip_relative
+from ._security import (
+    SecurityPolicy,
+    extract_host_and_path,
+    has_parser_confusion,
+    has_path_traversal,
+    is_open_redirect_risk,
+    redact_url_for_logs,
+    validate_url_security,
+)
+from ._validation import Validator, is_valid_userinfo
 from .constants import DEFAULT_PORTS, MAX_URL_LENGTH, PASSWORD_MASK
 from .exceptions import InvalidURLError, URLParseError
-from ._parser import Parser
-from ._components import SecurityFinding
-from ._validation import Validator, is_valid_userinfo
 
 
 def _check_type(value: Any, expected: Type, name: str) -> None:
@@ -50,10 +57,25 @@ class URL:
     """
 
     __slots__ = (
-        'recognized_scheme', '_parser', '_builder', '_strict', '_debug',
-        '_check_dns', '_scheme', '_userinfo', '_host', '_port', '_path',
-        '_query', '_fragment', '_query_pairs', '_check_phishing',
-        '_security_policy', '_security_findings', '_correlation_id', '_audit_manager'
+        '_audit_manager',
+        '_builder',
+        '_check_dns',
+        '_check_phishing',
+        '_correlation_id',
+        '_debug',
+        '_fragment',
+        '_host',
+        '_parser',
+        '_path',
+        '_port',
+        '_query',
+        '_query_pairs',
+        '_scheme',
+        '_security_findings',
+        '_security_policy',
+        '_strict',
+        '_userinfo',
+        'recognized_scheme'
     )
 
     def __init__(
@@ -307,14 +329,14 @@ class URL:
         """Return new URL with added query parameter."""
         _check_type(key, str, "key")
         normalized_key = str(key)
-        new_query = cast(str, self._builder.add_param(self._query, normalized_key, value))
+        new_query = self._builder.add_param(self._query, normalized_key, value)
         return self.copy(query=new_query)
 
     def without_query_param(self, key: str) -> 'URL':
         """Return new URL with query parameter removed."""
         _check_type(key, str, "key")
         normalized_key = str(key)
-        new_query = cast(str, self._builder.remove_param(self._query, normalized_key))
+        new_query = self._builder.remove_param(self._query, normalized_key)
         return self.copy(query=new_query)
 
     def without_query(self) -> 'URL':
@@ -482,5 +504,8 @@ def _validate_copy_overrides(overrides: Dict[str, Any]) -> None:
 
 
 __all__ = [
-    "URL", "parse_relative_reference", "build_relative_reference", "round_trip_relative",
+    "URL",
+    "build_relative_reference",
+    "parse_relative_reference",
+    "round_trip_relative",
 ]

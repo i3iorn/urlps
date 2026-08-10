@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Literal, Optional, Union, cast
+from typing import Any, Literal, Optional, Union
 
 from ..exceptions import SecurityPolicyError
 
@@ -128,7 +128,7 @@ def _apply_overrides(
     ):
         return base
 
-    concrete_base = cast(SecurityPolicy, base)
+    concrete_base = base
 
     return SecurityPolicy(
         name=concrete_base.name,
@@ -206,7 +206,7 @@ def resolve_security_policy(
         )
 
     if policy in ("strict", "balanced", "internal"):
-        base = _resolve_named_policy(policy, None, None)  # type: ignore[arg-type]
+        base = _resolve_named_policy(policy, None, None)
         return _apply_overrides(
             base,
             check_dns=check_dns,
@@ -217,4 +217,4 @@ def resolve_security_policy(
     raise SecurityPolicyError(f"Unsupported security policy: {policy!r}")
 
 
-__all__ = ["SecurityPolicy", "PolicyInput", "resolve_security_policy"]
+__all__ = ["PolicyInput", "SecurityPolicy", "resolve_security_policy"]

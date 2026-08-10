@@ -143,17 +143,23 @@ dist_test/
 *.tmp
 *.bak
 
-# Type checking
-py.typed
-
 # Coverage
 .coverage*
 htmlcov/
 
 # Profiling
+# NOTE: performance/*.py scripts ARE tracked. Ignore only the generated output,
+# not the whole directory -- a blanket /performance/ rule made new scripts there
+# silently invisible to git.
 *.prof
 *.pstats
-/performance/
+/performance/*.prof
+/performance/*.txt
+/performance/__pycache__/
 /DEPLOYMENT.md
 /performance_report.html
 .claude/
+
+# Tooling caches not covered above
+.ruff_cache/
+.review_dist/

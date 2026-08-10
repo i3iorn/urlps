@@ -5,7 +5,7 @@ from __future__ import annotations
 import socket
 import unicodedata
 from unittest.mock import patch
-import pytest
+
 
 class TestSecurityAdditional:
     """Additional _security.py tests for remaining uncovered lines."""
@@ -42,7 +42,7 @@ class TestSecurityAdditional:
 
     def test_phishing_db_too_large_returns_empty(self):
         """Oversized phishing DB downloads fail closed with an empty database."""
-        from urlps._security.phishing_db import refresh_phishing_db, get_phishing_db_info
+        from urlps._security.phishing_db import get_phishing_db_info, refresh_phishing_db
         from urlps.constants import DEFAULT_PHISHING_DATABASE_MAX_BYTES
 
         oversized_bytes = b"a" * (DEFAULT_PHISHING_DATABASE_MAX_BYTES + 1)

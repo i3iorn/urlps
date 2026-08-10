@@ -53,11 +53,10 @@ from typing import Any, Mapping, Optional
 
 __version__ = "0.6.1"
 
-from ._audit import AuditManager, AuditConfig, AuditEventCallback, AuditCallback
-from .exceptions import URLpError, InvalidURLError, URLParseError, URLBuildError
-from ._security.policy import SecurityPolicy, PolicyInput, resolve_security_policy
+from ._audit import AuditCallback, AuditConfig, AuditEventCallback, AuditManager
+from ._security.policy import PolicyInput, SecurityPolicy, resolve_security_policy
+from .exceptions import InvalidURLError, URLBuildError, URLParseError, URLpError
 from .url import URL
-
 
 
 def parse_url(
@@ -370,7 +369,7 @@ def get_cache_info() -> dict:
         >>> info['parser']['normalize_path']['hits']
         450
     """
-    from . import _parser, _validation, _security, _builder
+    from . import _builder, _parser, _security, _validation
 
     return {
         'parser': _parser.get_cache_info(),
@@ -401,7 +400,7 @@ def clear_all_caches() -> dict:
         >>> previous['parser']['normalize_path']
         127
     """
-    from . import _parser, _validation, _security, _builder
+    from . import _builder, _parser, _security, _validation
 
     previous = {
         'parser': _parser.clear_caches(),
@@ -422,22 +421,22 @@ def clear_all_caches() -> dict:
 
 
 __all__ = [
-    "__version__",
-    "parse_url",
-    "parse_url_unsafe",
-    "build",
-    "compose_url",
     "URL",
-    "URLpError",
-    "InvalidURLError",
-    "URLParseError",
-    "URLBuildError",
-    "SecurityPolicy",
-    "build_secure",
-    "get_cache_info",
-    "clear_all_caches",
-    "AuditManager",
     "AuditCallback",
     "AuditConfig",
-    "AuditEventCallback"
+    "AuditEventCallback",
+    "AuditManager",
+    "InvalidURLError",
+    "SecurityPolicy",
+    "URLBuildError",
+    "URLParseError",
+    "URLpError",
+    "__version__",
+    "build",
+    "build_secure",
+    "clear_all_caches",
+    "compose_url",
+    "get_cache_info",
+    "parse_url",
+    "parse_url_unsafe"
 ]

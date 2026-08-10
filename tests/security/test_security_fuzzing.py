@@ -10,7 +10,8 @@ Run with:
 import pytest
 
 try:
-    from hypothesis import given, strategies as st, settings, assume
+    from hypothesis import assume, given, settings
+    from hypothesis import strategies as st
     HAS_HYPOTHESIS = True
 except ImportError:
     HAS_HYPOTHESIS = False
@@ -39,9 +40,9 @@ except ImportError:
     def assume(condition):
         pass
 
-from urlps import parse_url, parse_url_unsafe, URLParseError, InvalidURLError
-from urlps._validation import Validator as ValidatorClass, is_valid_userinfo
-from urlps import _security
+from urlps import InvalidURLError, URLParseError, _security, parse_url, parse_url_unsafe
+from urlps._validation import Validator as ValidatorClass
+from urlps._validation import is_valid_userinfo
 
 
 class TestParserFuzzing:

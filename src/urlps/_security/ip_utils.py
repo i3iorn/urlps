@@ -8,7 +8,6 @@ from typing import Iterable, Optional, Sequence, Tuple, Union
 
 from ..constants import BLOCKED_HOSTNAMES
 
-
 IpAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 AddrInfo = Sequence[Tuple[int, int, int, str, tuple]]
 

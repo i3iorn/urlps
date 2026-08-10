@@ -15,20 +15,21 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Callable, Deque, Dict, Optional, Tuple
 
-from .ip_utils import (
-    AddrInfo,
-    _strip_ipv6_brackets, _check_direct_ip_safe, _check_resolved_ips_safe, _verify_connection_safe
-)
-
 from ..constants import (
     DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS,
     DEFAULT_DNS_LOOKUPS_PER_HOST,
     DEFAULT_DNS_LOOKUPS_PER_SECOND,
-    DEFAULT_DNS_TIMEOUT,
     DEFAULT_DNS_TIME_WINDOW_SECONDS,
+    DEFAULT_DNS_TIMEOUT,
 )
-from ..exceptions import ErrorCode, DNSRateLimiterError
-
+from ..exceptions import DNSRateLimiterError, ErrorCode
+from .ip_utils import (
+    AddrInfo,
+    _check_direct_ip_safe,
+    _check_resolved_ips_safe,
+    _strip_ipv6_brackets,
+    _verify_connection_safe,
+)
 
 logger = logging.getLogger(__name__)
 _GLOBAL_RATE_LIMITER: Optional["DNSRateLimiter"] = None
@@ -369,13 +370,13 @@ def check_dns_rebinding(
 
 
 __all__ = [
-    "DNSRateLimiterConfig",
     "DNSRateLimiter",
+    "DNSRateLimiterConfig",
     "check_dns_rate_limit",
+    "check_dns_rebinding",
+    "check_dns_rebinding_detailed",
     "get_dns_rate_limiter",
     "reset_dns_rate_limiter",
-    "check_dns_rebinding_detailed",
-    "check_dns_rebinding",
 ]
 
 
