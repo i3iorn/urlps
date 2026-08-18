@@ -2,6 +2,31 @@
 
 All notable changes to `urlps` are documented here.
 
+## 0.7.1 - 2026-08-18
+
+Robustness/maintainability follow-ups to 0.7.0. See
+[changelogs/0.7.1.md](changelogs/0.7.1.md) for detail. No public API or
+behavior changes.
+
+**Added**
+
+- A standing test that guards against the fail-open security-predicate
+  pattern reappearing in `_security/`.
+- Property-based testing extended to `_resolve.py` path arithmetic and
+  `_parse_inet_aton_ipv4`.
+- A sustained-load soak test for `DNSRateLimiter` (finally uses the `slow`
+  marker).
+- `Makefile`, `docs/architecture.md`, and a permanent CI check that every
+  README code example still runs.
+
+**Fixed**
+
+- `with_scheme(None)` regression (rejected `None` unlike every sibling
+  `with_*` method).
+- Wired up or removed 8 exception subclasses that could never actually be
+  raised.
+- Cleared and permanently gated `ruff` `UP`/format debt.
+
 ## 0.7.0 - 2026-08-10
 
 Production-readiness release. See [changelogs/0.7.0.md](changelogs/0.7.0.md) for

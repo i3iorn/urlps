@@ -62,7 +62,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 from ._audit import AuditCallback, AuditConfig, AuditEventCallback, AuditManager
 from ._components import SecurityFinding
