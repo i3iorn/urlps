@@ -213,6 +213,16 @@ class TestCopyValidatesComponents:
         with pytest.raises(InvalidURLError):
             url.with_scheme("1bad")
 
+    def test_invalid_scheme_type_is_rejected(self):
+        url = parse_url("https://example.com/a")
+        with pytest.raises(InvalidURLError):
+            url.with_scheme(123)  # type: ignore[arg-type]
+
+    def test_with_scheme_none_clears_it(self):
+        """`None` clears the scheme, matching with_host/with_query/with_fragment."""
+        url = parse_url("https://example.com/a")
+        assert url.with_scheme(None).scheme is None
+
     def test_control_characters_rejected_in_path_and_query(self):
         url = parse_url("https://example.com/a")
         with pytest.raises(InvalidURLError):

@@ -322,7 +322,16 @@ class URL:
             components["query"] = self._builder.serialize_query(pairs) if pairs else None
 
     def with_scheme(self, scheme: Optional[str]) -> 'URL':
-        """Return new URL with different scheme."""
+        """Return new URL with different scheme.
+
+        `scheme=None` clears the scheme, consistent with every other `with_*`
+        method (`with_host`, `with_query`, `with_fragment`, `with_userinfo`)
+        accepting `None` to clear their component. Non-str, non-None values are
+        still rejected -- `copy()`/`_validate_copy_overrides` already enforces
+        that and validates the scheme format itself.
+        """
+        if scheme is not None and not isinstance(scheme, str):
+            raise InvalidURLError(f"Invalid scheme: {scheme!r}")
         return self.copy(scheme=scheme)
 
     def with_host(self, host: Optional[str]) -> 'URL':

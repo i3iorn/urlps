@@ -86,18 +86,25 @@ def collect_security_findings(
     except ValueError:
         port = None
 
-    if host and is_malicious_ipv6_zone_id(host):
-        findings.append(
-            _finding("critical", ErrorCode.INVALID_IPV6_ZONE_ID, "IPv6 zone identifier contains invalid characters.", "host")
-        )
-    if host and effective_policy.enforce_ssrf and is_ssrf_risk(host):
-        findings.append(_finding("critical", ErrorCode.SSRF_RISK, "Host poses SSRF risk and is disallowed.", "host"))
-    if host and effective_policy.enforce_mixed_scripts and not is_ascii and has_mixed_scripts(host):
-        findings.append(_finding("major", ErrorCode.MIXED_SCRIPTS, "URL host contains mixed Unicode scripts.", "host"))
-    if path and effective_policy.enforce_path_traversal and has_path_traversal(path):
-        findings.append(_finding("critical", ErrorCode.PATH_TRAVERSAL, "URL path contains path traversal patterns.", "path"))
-    if path and effective_policy.enforce_open_redirect and is_open_redirect_risk(path):
-        findings.append(_finding("major", ErrorCode.OPEN_REDIRECT, "URL path contains open redirect risk patterns.", "path"))
+    # --- Host-related checks ---
+    if host:
+        if is_malicious_ipv6_zone_id(host):
+            findings.append(
+                _finding("critical", ErrorCode.INVALID_IPV6_ZONE_ID, "IPv6 zone identifier contains invalid characters.", "host")
+            )
+        if effective_policy.enforce_ssrf and is_ssrf_risk(host):
+            findings.append(_finding("critical", ErrorCode.SSRF_RISK, "Host poses SSRF risk and is disallowed.", "host"))
+        if effective_policy.enforce_mixed_scripts and not is_ascii and has_mixed_scripts(host):
+            findings.append(_finding("major", ErrorCode.MIXED_SCRIPTS, "URL host contains mixed Unicode scripts.", "host"))
+
+    # --- Path-related checks ---
+    if path:
+        if effective_policy.enforce_path_traversal and has_path_traversal(path):
+            findings.append(_finding("critical", ErrorCode.PATH_TRAVERSAL, "URL path contains path traversal patterns.", "path"))
+        if effective_policy.enforce_open_redirect and is_open_redirect_risk(path):
+            findings.append(_finding("major", ErrorCode.OPEN_REDIRECT, "URL path contains open redirect risk patterns.", "path"))
+
+    # --- URL structural checks ---
     if effective_policy.enforce_parser_confusion and has_parser_confusion(normalized_url):
         findings.append(
             _finding(
@@ -116,6 +123,7 @@ def collect_security_findings(
     if effective_policy.require_canonical and is_non_canonical_url(normalized_url):
         findings.append(_finding("major", ErrorCode.NON_CANONICAL_URL, "URL is not in canonical form.", "url"))
 
+    # --- DNS checks ---
     effective_check_dns = effective_policy.check_dns
     if effective_check_dns and host:
         safe, dns_error = check_dns_rebinding_detailed(
