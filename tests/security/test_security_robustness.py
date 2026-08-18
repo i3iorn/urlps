@@ -8,6 +8,7 @@ Covers the 0.7.0 hardening work:
 * Shared mutable state is synchronised (the project's first concurrency tests).
 """
 
+import ipaddress
 import socket
 import threading
 import time
@@ -100,6 +101,79 @@ class TestObfuscatedIPv4SSRFBypass:
         """The fix must not create false positives on legitimate hosts."""
         assert is_ssrf_risk(host) is False
         assert parse_url(f"https://{host}/x").host is not None
+
+
+try:
+    from hypothesis import assume, given, settings
+    from hypothesis import strategies as st
+
+    def _octet_in_base(value, base):
+        if base == "hex":
+            return f"0x{value:x}"
+        if base == "octal":
+            return f"0{oct(value)[2:]}" if value else "00"
+        return str(value)
+
+    class TestInetAtonPropertyBased:
+        """Generalizes test_agrees_with_inet_aton beyond the fixed host list
+        above: any 1-4 part inet_aton-grammar host, each part independently
+        decimal/octal/hex, must parse the same way this project's grammar
+        and the platform's C library grammar do."""
+
+        @staticmethod
+        def _inet_aton_hosts():
+            base = st.sampled_from(["decimal", "octal", "hex"])
+
+            def build(part_count):
+                if part_count == 4:
+                    octets = st.tuples(*(st.integers(min_value=0, max_value=255) for _ in range(4)))
+                elif part_count == 3:
+                    octets = st.tuples(
+                        st.integers(min_value=0, max_value=255),
+                        st.integers(min_value=0, max_value=255),
+                        st.integers(min_value=0, max_value=0xFFFF),
+                    )
+                elif part_count == 2:
+                    octets = st.tuples(
+                        st.integers(min_value=0, max_value=255),
+                        st.integers(min_value=0, max_value=0xFFFFFF),
+                    )
+                else:
+                    octets = st.tuples(st.integers(min_value=0, max_value=0xFFFFFFFF))
+                return st.tuples(octets, st.tuples(*(base for _ in range(part_count)))).map(
+                    lambda ov: ".".join(_octet_in_base(o, b) for o, b in zip(ov[0], ov[1], strict=True))
+                )
+
+            return st.one_of(*(build(n) for n in (1, 2, 3, 4)))
+
+        @given(host=_inet_aton_hosts.__func__())
+        @settings(max_examples=300, deadline=None)
+        def test_agrees_with_platform_inet_aton(self, host):
+            # socket.inet_aton's grammar is platform-dependent (e.g. this
+            # project's Windows CI runner rejects some single-value decimal
+            # forms glibc accepts) -- when the platform oracle itself can't
+            # parse a case, there's nothing to cross-check, so skip it
+            # rather than asserting on the platform's own inconsistency.
+            try:
+                expected = socket.inet_ntoa(socket.inet_aton(host))
+            except OSError:
+                assume(False)
+                return
+            parsed = _parse_inet_aton_ipv4(host)
+            assert parsed is not None, f"{host} should have parsed"
+            assert str(parsed) == expected
+
+        @given(host=_inet_aton_hosts.__func__())
+        @settings(max_examples=300, deadline=None)
+        def test_result_round_trips_through_ipaddress(self, host):
+            """Whatever it parses to must itself be a valid, re-parseable
+            IPv4Address -- not just a string that happens to look like one."""
+            parsed = _parse_inet_aton_ipv4(host)
+            assert parsed is not None
+            assert ipaddress.IPv4Address(str(parsed)) == parsed
+
+except ImportError:
+    pass
 
 
 class TestFailClosed:
