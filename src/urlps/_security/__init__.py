@@ -1,11 +1,19 @@
 """Unified security checks for URL validation (SSRF, parser confusion, and URL hardening)."""
+
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any
 from urllib.parse import urlsplit
 
 from .._components import SecurityFinding
-from ..exceptions import ErrorCode, InvalidURLError, SecurityPolicyError
+from ..exceptions import (
+    DNSConnectionError,
+    DNSRateLimitError,
+    DNSResolutionError,
+    ErrorCode,
+    InvalidURLError,
+    SecurityPolicyError,
+)
 from .dns_guard import (
     DNSRateLimiter,
     DNSRateLimiterConfig,
@@ -43,7 +51,7 @@ from .url_checks import (
 )
 
 
-def _finding(severity: str, code: ErrorCode, message: str, component: Optional[str]) -> SecurityFinding:
+def _finding(severity: str, code: ErrorCode, message: str, component: str | None) -> SecurityFinding:
     """Create a normalized security finding object."""
     return SecurityFinding(severity=severity, code=code.value, message=message, component=component)
 
@@ -52,8 +60,8 @@ def collect_security_findings(
     url: str,
     *,
     policy: PolicyInput = None,
-    check_dns: Optional[bool] = None,
-    check_phishing: Optional[bool] = None,
+    check_dns: bool | None = None,
+    check_phishing: bool | None = None,
 ) -> list[SecurityFinding]:
     """Collect policy-aware security findings without raising exceptions."""
     effective_policy = resolve_security_policy(policy, check_dns=check_dns, check_phishing=check_phishing)
@@ -73,7 +81,9 @@ def collect_security_findings(
         f"{split_for_double.path}?{split_for_double.query}" if split_for_double is not None else normalized_url
     )
     if effective_policy.enforce_double_encoding and has_double_encoding(double_encoding_target):
-        findings.append(_finding("critical", ErrorCode.DOUBLE_ENCODING, "URL contains double-encoded characters.", "url"))
+        findings.append(
+            _finding("critical", ErrorCode.DOUBLE_ENCODING, "URL contains double-encoded characters.", "url")
+        )
 
     if not has_authority_syntax:
         return findings
@@ -86,18 +96,38 @@ def collect_security_findings(
     except ValueError:
         port = None
 
-    if host and is_malicious_ipv6_zone_id(host):
-        findings.append(
-            _finding("critical", ErrorCode.INVALID_IPV6_ZONE_ID, "IPv6 zone identifier contains invalid characters.", "host")
-        )
-    if host and effective_policy.enforce_ssrf and is_ssrf_risk(host):
-        findings.append(_finding("critical", ErrorCode.SSRF_RISK, "Host poses SSRF risk and is disallowed.", "host"))
-    if host and effective_policy.enforce_mixed_scripts and not is_ascii and has_mixed_scripts(host):
-        findings.append(_finding("major", ErrorCode.MIXED_SCRIPTS, "URL host contains mixed Unicode scripts.", "host"))
-    if path and effective_policy.enforce_path_traversal and has_path_traversal(path):
-        findings.append(_finding("critical", ErrorCode.PATH_TRAVERSAL, "URL path contains path traversal patterns.", "path"))
-    if path and effective_policy.enforce_open_redirect and is_open_redirect_risk(path):
-        findings.append(_finding("major", ErrorCode.OPEN_REDIRECT, "URL path contains open redirect risk patterns.", "path"))
+    # --- Host-related checks ---
+    if host:
+        if is_malicious_ipv6_zone_id(host):
+            findings.append(
+                _finding(
+                    "critical",
+                    ErrorCode.INVALID_IPV6_ZONE_ID,
+                    "IPv6 zone identifier contains invalid characters.",
+                    "host",
+                )
+            )
+        if effective_policy.enforce_ssrf and is_ssrf_risk(host):
+            findings.append(
+                _finding("critical", ErrorCode.SSRF_RISK, "Host poses SSRF risk and is disallowed.", "host")
+            )
+        if effective_policy.enforce_mixed_scripts and not is_ascii and has_mixed_scripts(host):
+            findings.append(
+                _finding("major", ErrorCode.MIXED_SCRIPTS, "URL host contains mixed Unicode scripts.", "host")
+            )
+
+    # --- Path-related checks ---
+    if path:
+        if effective_policy.enforce_path_traversal and has_path_traversal(path):
+            findings.append(
+                _finding("critical", ErrorCode.PATH_TRAVERSAL, "URL path contains path traversal patterns.", "path")
+            )
+        if effective_policy.enforce_open_redirect and is_open_redirect_risk(path):
+            findings.append(
+                _finding("major", ErrorCode.OPEN_REDIRECT, "URL path contains open redirect risk patterns.", "path")
+            )
+
+    # --- URL structural checks ---
     if effective_policy.enforce_parser_confusion and has_parser_confusion(normalized_url):
         findings.append(
             _finding(
@@ -108,14 +138,19 @@ def collect_security_findings(
             )
         )
     if effective_policy.enforce_query_injection and query and has_query_injection(query):
-        findings.append(_finding("major", ErrorCode.QUERY_INJECTION, "URL query contains injection-like patterns.", "query"))
+        findings.append(
+            _finding("major", ErrorCode.QUERY_INJECTION, "URL query contains injection-like patterns.", "query")
+        )
     if effective_policy.reject_credentials and has_credentials(normalized_url):
-        findings.append(_finding("major", ErrorCode.CREDENTIALS_IN_URL, "URL credentials are disallowed by policy.", "userinfo"))
+        findings.append(
+            _finding("major", ErrorCode.CREDENTIALS_IN_URL, "URL credentials are disallowed by policy.", "userinfo")
+        )
     if effective_policy.block_dangerous_ports and is_dangerous_port(port, block_dangerous_ports=True):
         findings.append(_finding("major", ErrorCode.DANGEROUS_PORT, "URL uses a blocked dangerous port.", "port"))
     if effective_policy.require_canonical and is_non_canonical_url(normalized_url):
         findings.append(_finding("major", ErrorCode.NON_CANONICAL_URL, "URL is not in canonical form.", "url"))
 
+    # --- DNS checks ---
     effective_check_dns = effective_policy.check_dns
     if effective_check_dns and host:
         safe, dns_error = check_dns_rebinding_detailed(
@@ -165,13 +200,24 @@ def collect_security_findings(
 # URL, because a degraded check is not the same as a failed one.
 BLOCKING_SEVERITIES = frozenset({"critical", "major"})
 
+# DNS-specific findings raise their matching DNSRebindingError subclass so a
+# caller can distinguish "rate limited" from "resolution failed" from
+# "connection check failed" without inspecting .code -- all three remain
+# InvalidURLError subclasses, so existing `except InvalidURLError` callers are
+# unaffected. Every other finding still raises the generic InvalidURLError.
+_EXCEPTION_TYPES_BY_CODE = {
+    ErrorCode.DNS_RATE_LIMITED: DNSRateLimitError,
+    ErrorCode.DNS_RESOLUTION_FAILED: DNSResolutionError,
+    ErrorCode.DNS_CONNECTION_FAILED: DNSConnectionError,
+}
+
 
 def validate_url_security(
     url: str,
     *,
     policy: PolicyInput = None,
-    check_dns: Optional[bool] = None,
-    check_phishing: Optional[bool] = None,
+    check_dns: bool | None = None,
+    check_phishing: bool | None = None,
     raise_on_error: bool = True,
 ) -> list[SecurityFinding]:
     """Run policy-based security validation, raising on the first blocking finding.
@@ -186,15 +232,17 @@ def validate_url_security(
         for finding in findings:
             if finding.severity in BLOCKING_SEVERITIES:
                 code = ErrorCode(finding.code)
-                raise InvalidURLError(
-                    finding.message, component=finding.component, value=url, code=code
-                )
+                exception_type = _EXCEPTION_TYPES_BY_CODE.get(code, InvalidURLError)
+                raise exception_type(finding.message, component=finding.component, value=url, code=code)
     return findings
 
 
-_CACHED_FUNCTIONS: List[Any] = [
-    is_private_ip, is_ssrf_risk, has_mixed_scripts,
-    has_parser_confusion, find_authority_marker,
+_CACHED_FUNCTIONS: list[Any] = [
+    is_private_ip,
+    is_ssrf_risk,
+    has_mixed_scripts,
+    has_parser_confusion,
+    find_authority_marker,
 ]
 
 
@@ -258,5 +306,5 @@ __all__ = [
     "refresh_phishing_db",
     "reset_dns_rate_limiter",
     "resolve_security_policy",
-    "validate_url_security"
+    "validate_url_security",
 ]

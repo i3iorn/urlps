@@ -30,9 +30,14 @@ CI runs exactly these, and all of them are blocking:
 ```bash
 pytest -q --cov=urlps --cov-report=term-missing   # tests + coverage gate
 ruff check src/ tests/                            # lint
+ruff format --check src/ tests/                   # formatting
 mypy src/urlps --ignore-missing-imports           # types
 bandit -r src/urlps -ll                           # static security analysis
 ```
+
+`make check` runs all of them in one command (Windows: install `make` via
+`choco install make` or `scoop install make`, or just run the commands above
+directly -- there's no requirement to use it).
 
 Notes:
 

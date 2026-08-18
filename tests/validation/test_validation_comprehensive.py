@@ -2,6 +2,7 @@
 Additional comprehensive validation tests for urlp.
 Tests edge cases, security considerations, and boundary conditions.
 """
+
 import pytest
 
 from urlps import parse_url, parse_url_unsafe
@@ -16,12 +17,20 @@ class TestSchemeValidationComprehensive:
     def test_valid_schemes(self):
         """Test various valid scheme formats"""
         valid_schemes = [
-            "http", "https", "ftp", "ftps", "ssh", "file",
-            "a", "z",  # single char
+            "http",
+            "https",
+            "ftp",
+            "ftps",
+            "ssh",
+            "file",
+            "a",
+            "z",  # single char
             "http+ssh",  # with plus
             "my-scheme",  # with hyphen
             "my.scheme",  # with dot
-            "a0", "scheme2", "http2",  # with numbers
+            "a0",
+            "scheme2",
+            "http2",  # with numbers
         ]
         for scheme in valid_schemes:
             assert Validator.is_valid_scheme(scheme), f"Failed for {scheme}"
@@ -179,8 +188,16 @@ class TestPortValidationComprehensive:
     def test_valid_ports(self):
         """Test valid port numbers"""
         valid_ports = [
-            1, 80, 443, 8080, 3000, 65535,
-            "1", "80", "443", "65535",
+            1,
+            80,
+            443,
+            8080,
+            3000,
+            65535,
+            "1",
+            "80",
+            "443",
+            "65535",
         ]
         for port in valid_ports:
             assert Validator.is_valid_port(port), f"Failed for {port}"
@@ -293,7 +310,7 @@ class TestSecurityConsiderations:
 
     def test_control_character_rejection(self):
         """Control characters should be rejected"""
-        control_chars = ["\x01", "\x02", "\x1F", "\x7F"]
+        control_chars = ["\x01", "\x02", "\x1f", "\x7f"]
         for char in control_chars:
             with pytest.raises(InvalidURLError):
                 parse_url(f"http://example.com/path{char}test")
@@ -412,21 +429,15 @@ class TestUnicodeHandling:
     def test_unicode_in_path(self):
         """Unicode in path should be percent-encoded"""
         from urlps import compose_url
-        result = compose_url({
-            "scheme": "http",
-            "host": "example.com",
-            "path": "/тест"
-        })
+
+        result = compose_url({"scheme": "http", "host": "example.com", "path": "/тест"})
         assert "%" in result
 
     def test_emoji_in_components(self):
         """Emoji and other Unicode should be handled"""
         from urlps import compose_url
-        result = compose_url({
-            "scheme": "http",
-            "host": "example.com",
-            "path": "/😀"
-        })
+
+        result = compose_url({"scheme": "http", "host": "example.com", "path": "/😀"})
         assert "%" in result  # Should be percent-encoded
 
 

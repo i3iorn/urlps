@@ -37,4 +37,3 @@ def test_path_and_query_percent_encoding_and_validator():
             assert Validator.is_valid_query_param(v)
         else:
             assert Validator.is_valid_query_param(chunk)
-

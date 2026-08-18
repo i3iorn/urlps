@@ -11,7 +11,7 @@ All exceptions inherit from URLpError and provide:
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Final, Optional
+from typing import Any, Final
 
 _MAX_VALUE_LENGTH: Final[int] = 200
 
@@ -65,14 +65,14 @@ class URLpError(Exception):
         message: str,
         *,
         value: Any = None,
-        component: Optional[str] = None,
-        code: Optional[ErrorCode] = None,
+        component: str | None = None,
+        code: ErrorCode | None = None,
     ) -> None:
         super().__init__(message)
         self.message: str = message
         self.value: Any = value
-        self.component: Optional[str] = component
-        self.code: Optional[ErrorCode] = code
+        self.component: str | None = component
+        self.code: ErrorCode | None = code
 
     def __str__(self) -> str:
         base = self.message
@@ -94,14 +94,18 @@ class URLpError(Exception):
 # Specific Exception Types
 # ---------------------------------------------------------------------------
 
+
 class SecurityPolicyError(URLpError):
     """Raised when an invalid or unsupported security policy is requested."""
+
 
 class InvalidURLError(URLpError):
     """Raised for invalid URLs or invalid URL components."""
 
+
 class PhishingDatabaseError(URLpError):
     """Raised when phishing database retrieval fails."""
+
 
 class URLParseError(InvalidURLError):
     """Raised when parsing a URL fails."""
@@ -119,10 +123,6 @@ class RelativeReferenceError(InvalidURLError):
     """Raised when a relative reference is invalid."""
 
 
-class QuerySerializationError(InvalidURLError):
-    """Raised when serializing query parameters fails."""
-
-
 class QueryParsingError(InvalidURLError):
     """Raised when parsing a query string fails."""
 
@@ -135,16 +135,8 @@ class PortValidationError(InvalidURLError):
     """Raised when a port is missing or invalid."""
 
 
-class PathNormalizationError(InvalidURLError):
-    """Raised when a path cannot be normalized."""
-
-
 class FragmentEncodingError(InvalidURLError):
     """Raised when a fragment is invalid or cannot be encoded."""
-
-
-class NetlocBuildingError(InvalidURLError):
-    """Raised when constructing userinfo@host:port fails."""
 
 
 class UserInfoParsingError(InvalidURLError):
@@ -155,16 +147,14 @@ class MissingHostError(InvalidURLError):
     """Raised when a required host is missing."""
 
 
-class MissingPortError(InvalidURLError):
-    """Raised when a required port is missing."""
-
-
 # ---------------------------------------------------------------------------
 # DNS‑related Exceptions
 # ---------------------------------------------------------------------------
 
+
 class DNSRateLimiterError(URLpError):
     """Raised when DNS rate limiting encounters an invalid state or input."""
+
 
 class DNSRebindingError(InvalidURLError):
     """Base class for DNS rebinding validation failures."""
@@ -192,18 +182,14 @@ __all__ = [
     "HostValidationError",
     "InvalidURLError",
     "MissingHostError",
-    "MissingPortError",
-    "NetlocBuildingError",
-    "PathNormalizationError",
     "PhishingDatabaseError",
     "PortValidationError",
     "QueryParsingError",
-    "QuerySerializationError",
     "RelativeReferenceError",
     "SecurityPolicyError",
     "URLBuildError",
     "URLParseError",
     "URLpError",
     "UnsupportedSchemeError",
-    "UserInfoParsingError"
+    "UserInfoParsingError",
 ]

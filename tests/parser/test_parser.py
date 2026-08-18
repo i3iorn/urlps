@@ -179,16 +179,19 @@ def test_parse_query_rejects_empty_keys() -> None:
     with pytest.raises(InvalidURLError):
         parser.parse("http://example.com/?=value")
 
+
 def test_single_character_scheme() -> None:
     parser = Parser()
     parsed = parser.parse("a://example.com")
     assert parsed["scheme"] == "a"
     assert parser.recognized_scheme is False
 
+
 def test_parse_path_with_multiple_consecutive_slashes() -> None:
     parser = Parser()
     parsed = parser.parse("http://example.com//a///b/c")
     assert parsed["path"] == "/a/b/c"
+
 
 def test_parse_path_with_only_dots() -> None:
     parser = Parser()

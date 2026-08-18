@@ -1,4 +1,3 @@
-import socket
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
 
@@ -28,7 +27,7 @@ class TestPhishingDBBasicFunctionality:
     def test_check_against_phishing_db_detects_known_host(self):
         fake_text = "malicious.example.com\nphish.bad\n"
         mock_resp = MagicMock()
-        mock_resp.__enter__().read.return_value = fake_text.encode('utf-8')
+        mock_resp.__enter__().read.return_value = fake_text.encode("utf-8")
         mock_resp.__enter__().status = 200
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp) as mocked_get:
@@ -38,7 +37,7 @@ class TestPhishingDBBasicFunctionality:
     def test_check_against_phishing_db_returns_false_for_safe_host(self):
         fake_text = "malicious.example.com\nphish.bad\n"
         mock_resp = MagicMock()
-        mock_resp.__enter__().read.return_value = fake_text.encode('utf-8')
+        mock_resp.__enter__().read.return_value = fake_text.encode("utf-8")
         mock_resp.__enter__().status = 200
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
@@ -47,7 +46,7 @@ class TestPhishingDBBasicFunctionality:
     def test_url_raises_on_phishing_domain(self):
         fake_text = "evil.com\n"
         mock_resp = MagicMock()
-        mock_resp.__enter__().read.return_value = fake_text.encode('utf-8')
+        mock_resp.__enter__().read.return_value = fake_text.encode("utf-8")
         mock_resp.__enter__().status = 200
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
@@ -62,7 +61,7 @@ class TestPhishingDBBasicFunctionality:
         """Host matching should be case-insensitive."""
         fake_text = "malicious.example.com\n"
         mock_resp = MagicMock()
-        mock_resp.__enter__().read.return_value = fake_text.encode('utf-8')
+        mock_resp.__enter__().read.return_value = fake_text.encode("utf-8")
         mock_resp.__enter__().status = 200
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
@@ -73,7 +72,7 @@ class TestPhishingDBBasicFunctionality:
         """Hosts with trailing dots should be normalized."""
         fake_text = "malicious.example.com\n"
         mock_resp = MagicMock()
-        mock_resp.__enter__().read.return_value = fake_text.encode('utf-8')
+        mock_resp.__enter__().read.return_value = fake_text.encode("utf-8")
         mock_resp.__enter__().status = 200
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
@@ -98,11 +97,7 @@ class TestPhishingDBNetworkFailures:
     def test_handles_http_404_error(self):
         """HTTP 404 error should result in empty set."""
         error = HTTPError(
-            url="https://phish.co.za/latest/ALL-phishing-domains.lst",
-            code=404,
-            msg="Not Found",
-            hdrs={},
-            fp=None
+            url="https://phish.co.za/latest/ALL-phishing-domains.lst", code=404, msg="Not Found", hdrs={}, fp=None
         )
         with patch("urlps._security.phishing_db.request.urlopen", side_effect=error):
             assert check_against_phishing_db("any.host") is False
@@ -114,14 +109,14 @@ class TestPhishingDBNetworkFailures:
             code=500,
             msg="Internal Server Error",
             hdrs={},
-            fp=None
+            fp=None,
         )
         with patch("urlps._security.phishing_db.request.urlopen", side_effect=error):
             assert check_against_phishing_db("any.host") is False
 
     def test_handles_connection_timeout(self):
         """Connection timeout should result in empty set."""
-        with patch("urlps._security.phishing_db.request.urlopen", side_effect=socket.timeout("timed out")):
+        with patch("urlps._security.phishing_db.request.urlopen", side_effect=TimeoutError("timed out")):
             assert check_against_phishing_db("any.host") is False
 
     def test_handles_connection_refused(self):
@@ -132,6 +127,7 @@ class TestPhishingDBNetworkFailures:
     def test_handles_ssl_error(self):
         """SSL errors should result in empty set."""
         import ssl
+
         ssl_error = ssl.SSLError("certificate verify failed")
         with patch("urlps._security.phishing_db.request.urlopen", side_effect=ssl_error):
             assert check_against_phishing_db("any.host") is False
@@ -189,7 +185,7 @@ class TestPhishingDBResponseHandling:
 
         mock_resp = MagicMock()
         mock_resp.__enter__().status = 200
-        mock_resp.__enter__().read.return_value = fake_text.encode('utf-8')
+        mock_resp.__enter__().read.return_value = fake_text.encode("utf-8")
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
             assert check_against_phishing_db("host0.example.com") is True

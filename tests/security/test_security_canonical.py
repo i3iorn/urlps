@@ -1,4 +1,5 @@
 """Tests for canonical form validation."""
+
 from urlps._security import get_canonical_url, is_non_canonical_url
 
 

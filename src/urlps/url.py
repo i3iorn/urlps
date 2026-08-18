@@ -11,9 +11,11 @@ rather than by module-level setters.
 
 All public methods and properties are documented below.
 """
+
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Type
+from collections.abc import Mapping
+from typing import Any
 
 from ._audit import AuditConfig, AuditManager
 from ._builder import Builder, QueryPairs
@@ -34,7 +36,7 @@ from .constants import DEFAULT_PORTS, MAX_URL_LENGTH, PASSWORD_MASK
 from .exceptions import InvalidURLError, URLParseError
 
 
-def _check_type(value: Any, expected: Type, name: str) -> None:
+def _check_type(value: Any, expected: type, name: str) -> None:
     """Validate that value is of expected type."""
     if not isinstance(value, expected):
         raise TypeError(f"{name} must be {expected.__name__}, got {type(value).__name__}")
@@ -62,45 +64,45 @@ class URL:
     """
 
     __slots__ = (
-        '_audit_manager',
-        '_builder',
-        '_check_dns',
-        '_check_phishing',
-        '_correlation_id',
-        '_debug',
-        '_fragment',
-        '_host',
-        '_parser',
-        '_path',
-        '_port',
-        '_query',
-        '_query_pairs',
-        '_scheme',
-        '_security_findings',
-        '_security_policy',
-        '_userinfo',
-        'recognized_scheme'
+        "_audit_manager",
+        "_builder",
+        "_check_dns",
+        "_check_phishing",
+        "_correlation_id",
+        "_debug",
+        "_fragment",
+        "_host",
+        "_parser",
+        "_path",
+        "_port",
+        "_query",
+        "_query_pairs",
+        "_scheme",
+        "_security_findings",
+        "_security_policy",
+        "_userinfo",
+        "recognized_scheme",
     )
 
     def __init__(
-        self, url: str, *,
-        parser: Optional[Parser] = None,
-        builder: Optional[Builder] = None,
+        self,
+        url: str,
+        *,
+        parser: Parser | None = None,
+        builder: Builder | None = None,
         debug: bool = False,
         check_dns: bool = False,
         check_phishing: bool = False,
-        security_policy: Optional[SecurityPolicy] = None,
-        correlation_id: Optional[str] = None,
-        audit: Optional[AuditConfig] = None,
+        security_policy: SecurityPolicy | None = None,
+        correlation_id: str | None = None,
+        audit: AuditConfig | None = None,
     ) -> None:
         _check_type(url, str, "url")
         _check_type(debug, bool, "debug")
         _check_type(check_dns, bool, "check_dns")
         _check_type(check_phishing, bool, "check_phishing")
         if audit is not None and not isinstance(audit, AuditConfig):
-            raise TypeError(
-                f"audit must be AuditConfig, got {type(audit).__name__}"
-            )
+            raise TypeError(f"audit must be AuditConfig, got {type(audit).__name__}")
 
         self._parser = parser if parser is not None else Parser()
         self._builder = builder if builder is not None else Builder()
@@ -109,13 +111,11 @@ class URL:
         self._check_dns = check_dns
         self._check_phishing = check_phishing
         self._security_policy = (
-            security_policy
-            if security_policy is not None
-            else SecurityPolicy.internal(check_dns=check_dns)
+            security_policy if security_policy is not None else SecurityPolicy.internal(check_dns=check_dns)
         )
-        self._security_findings: List[SecurityFinding] = []
+        self._security_findings: list[SecurityFinding] = []
         self._correlation_id = correlation_id
-        self.recognized_scheme: Optional[bool] = None
+        self.recognized_scheme: bool | None = None
 
         self._parse_and_validate(url)
 
@@ -131,16 +131,8 @@ class URL:
         try:
             if self._security_policy.enforce_parser_confusion and has_parser_confusion(url):
                 _, pre_path = extract_host_and_path(url)
-                if not (
-                    pre_path
-                    and (
-                        is_open_redirect_risk(pre_path)
-                        or has_path_traversal(pre_path)
-                    )
-                ):
-                    raise InvalidURLError(
-                        "URL contains ambiguous syntax that could cause parser confusion."
-                    )
+                if not (pre_path and (is_open_redirect_risk(pre_path) or has_path_traversal(pre_path))):
+                    raise InvalidURLError("URL contains ambiguous syntax that could cause parser confusion.")
             parsed = self._parser.parse(url)
             self.recognized_scheme = self._parser.recognized_scheme
             self._apply_parsed(parsed)
@@ -152,19 +144,14 @@ class URL:
                 correlation_id=self._correlation_id,
             )
         except Exception as exc:
-            self._audit_manager.invoke(
-                raw_url=url,
-                parsed_url=None,
-                exception=exc,
-                correlation_id=self._correlation_id
-            )
+            self._audit_manager.invoke(raw_url=url, parsed_url=None, exception=exc, correlation_id=self._correlation_id)
             raise
 
     def _security_checks(self) -> None:
         """Run security validations on parsed URL."""
         self.validate(raise_on_error=True)
 
-    def _apply_parsed(self, components: Mapping[str, Optional[Any]]) -> None:
+    def _apply_parsed(self, components: Mapping[str, Any | None]) -> None:
         """Apply parsed components to instance."""
         scheme_component = components.get("scheme")
         self._scheme = str(scheme_component) if scheme_component is not None else None
@@ -181,32 +168,29 @@ class URL:
         self._fragment = str(fragment_component) if fragment_component is not None else None
         query_pairs = components.get("query_pairs")
         if isinstance(query_pairs, list):
-            self._query_pairs = [
-                (str(k), None if v is None else str(v))
-                for k, v in query_pairs
-            ]
+            self._query_pairs = [(str(k), None if v is None else str(v)) for k, v in query_pairs]
         else:
             self._query_pairs = list(getattr(self._parser, "query_pairs", []))
         findings = components.get("security_findings")
         self._security_findings = list(findings) if isinstance(findings, list) else []
 
     @property
-    def scheme(self) -> Optional[str]:
+    def scheme(self) -> str | None:
         """The URL scheme (e.g., 'http', 'https')."""
         return self._scheme
 
     @property
-    def host(self) -> Optional[str]:
+    def host(self) -> str | None:
         """The host component (IDNA-encoded if applicable)."""
         return self._host
 
     @property
-    def port(self) -> Optional[int]:
+    def port(self) -> int | None:
         """The explicit port, or None if not present."""
         return self._port
 
     @property
-    def userinfo(self) -> Optional[str]:
+    def userinfo(self) -> str | None:
         """The userinfo component (e.g., 'user:pass')."""
         return self._userinfo
 
@@ -216,12 +200,12 @@ class URL:
         return self._path
 
     @property
-    def query(self) -> Optional[str]:
+    def query(self) -> str | None:
         """The query string (without '?'), or None if not present."""
         return self._query
 
     @property
-    def fragment(self) -> Optional[str]:
+    def fragment(self) -> str | None:
         """The fragment string (without '#'), or None if not present."""
         return self._fragment
 
@@ -233,12 +217,10 @@ class URL:
     @property
     def netloc(self) -> str:
         """Return the network location (userinfo@host:port)."""
-        return self._builder.build_netloc(
-            self._userinfo, self._host, self._port, self._scheme
-        )
+        return self._builder.build_netloc(self._userinfo, self._host, self._port, self._scheme)
 
     @property
-    def effective_port(self) -> Optional[int]:
+    def effective_port(self) -> int | None:
         """Return explicit port or scheme default."""
         if self._port is not None:
             return self._port
@@ -265,7 +247,7 @@ class URL:
             return f"{self._scheme}://{self._host}:{port}"
         return f"{self._scheme}://{self._host}"
 
-    def copy(self, **overrides: Any) -> 'URL':
+    def copy(self, **overrides: Any) -> URL:
         """Create a copy with optional component overrides.
 
         Args:
@@ -298,7 +280,7 @@ class URL:
 
     def _reconcile_query_components(
         self,
-        components: Dict[str, Any],
+        components: dict[str, Any],
         overrides: Mapping[str, Any],
     ) -> None:
         """Keep ``query`` and ``query_pairs`` from disagreeing after an override.
@@ -321,35 +303,44 @@ class URL:
             pairs = components.get("query_pairs") or []
             components["query"] = self._builder.serialize_query(pairs) if pairs else None
 
-    def with_scheme(self, scheme: Optional[str]) -> 'URL':
-        """Return new URL with different scheme."""
+    def with_scheme(self, scheme: str | None) -> URL:
+        """Return new URL with different scheme.
+
+        `scheme=None` clears the scheme, consistent with every other `with_*`
+        method (`with_host`, `with_query`, `with_fragment`, `with_userinfo`)
+        accepting `None` to clear their component. Non-str, non-None values are
+        still rejected -- `copy()`/`_validate_copy_overrides` already enforces
+        that and validates the scheme format itself.
+        """
+        if scheme is not None and not isinstance(scheme, str):
+            raise InvalidURLError(f"Invalid scheme: {scheme!r}")
         return self.copy(scheme=scheme)
 
-    def with_host(self, host: Optional[str]) -> 'URL':
+    def with_host(self, host: str | None) -> URL:
         """Return new URL with different host."""
         return self.copy(host=host)
 
-    def with_port(self, port: Optional[int]) -> 'URL':
+    def with_port(self, port: int | None) -> URL:
         """Return new URL with different port."""
         return self.copy(port=port)
 
-    def with_path(self, path: str) -> 'URL':
+    def with_path(self, path: str) -> URL:
         """Return new URL with different path."""
         return self.copy(path=path)
 
-    def with_query(self, query: Optional[str]) -> 'URL':
+    def with_query(self, query: str | None) -> URL:
         """Return new URL with different query string."""
         return self.copy(query=query)
 
-    def with_fragment(self, fragment: Optional[str]) -> 'URL':
+    def with_fragment(self, fragment: str | None) -> URL:
         """Return new URL with different fragment."""
         return self.copy(fragment=fragment)
 
-    def with_userinfo(self, userinfo: Optional[str]) -> 'URL':
+    def with_userinfo(self, userinfo: str | None) -> URL:
         """Return new URL with different userinfo."""
         return self.copy(userinfo=userinfo)
 
-    def with_netloc(self, netloc: str) -> 'URL':
+    def with_netloc(self, netloc: str) -> URL:
         """Return new URL with different netloc (userinfo@host:port)."""
         parser = Parser()
         userinfo, host, port = parser.parse_netloc(netloc, require_host=bool(netloc))
@@ -357,29 +348,29 @@ class URL:
             port = DEFAULT_PORTS.get(self._scheme.lower())
         return self.copy(userinfo=userinfo, host=host, port=port)
 
-    def with_query_param(self, key: str, value: Optional[str] = None) -> 'URL':
+    def with_query_param(self, key: str, value: str | None = None) -> URL:
         """Return new URL with added query parameter."""
         _check_type(key, str, "key")
         normalized_key = str(key)
         new_query = self._builder.add_param(self._query, normalized_key, value)
         return self.copy(query=new_query)
 
-    def without_query_param(self, key: str) -> 'URL':
+    def without_query_param(self, key: str) -> URL:
         """Return new URL with query parameter removed."""
         _check_type(key, str, "key")
         normalized_key = str(key)
         new_query = self._builder.remove_param(self._query, normalized_key)
         return self.copy(query=new_query)
 
-    def without_query(self) -> 'URL':
+    def without_query(self) -> URL:
         """Return new URL without query string or fragment."""
         return self.copy(query=None, query_pairs=[], fragment=None)
 
-    def same_origin(self, other: 'URL') -> bool:
+    def same_origin(self, other: URL) -> bool:
         """Check if this URL has the same origin as another URL."""
         return self.origin == other.origin
 
-    def canonicalize(self) -> 'URL':
+    def canonicalize(self) -> URL:
         """Return a canonicalized copy of this URL (lowercase scheme/host, sorted query, normalized path)."""
         canonical_scheme = self._scheme.lower() if self._scheme else None
         canonical_host = str(self._host).lower() if self._host else None
@@ -391,13 +382,16 @@ class URL:
         canonical_query = self._builder.serialize_query(sorted_pairs) if sorted_pairs else None
 
         new_url = self.copy(
-            scheme=canonical_scheme, host=canonical_host,
-            port=canonical_port, path=canonical_path, query=canonical_query,
+            scheme=canonical_scheme,
+            host=canonical_host,
+            port=canonical_port,
+            path=canonical_path,
+            query=canonical_query,
         )
         new_url._query_pairs = sorted_pairs
         return new_url
 
-    def is_semantically_equal(self, other: 'URL') -> bool:
+    def is_semantically_equal(self, other: URL) -> bool:
         """Check semantic equality after normalization."""
         if not isinstance(other, URL):
             return False
@@ -414,17 +408,17 @@ class URL:
         return self._builder.compose(components)
 
     @property
-    def security_findings(self) -> List[SecurityFinding]:
+    def security_findings(self) -> list[SecurityFinding]:
         """Return the last computed security findings for this URL instance."""
         return list(self._security_findings)
 
     def validate(
         self,
         *,
-        policy: Optional[SecurityPolicy] = None,
+        policy: SecurityPolicy | None = None,
         raise_on_error: bool = False,
-        raw_url: Optional[str] = None,
-    ) -> List[SecurityFinding]:
+        raw_url: str | None = None,
+    ) -> list[SecurityFinding]:
         """Validate this URL against a security policy and return findings."""
         effective_policy = policy if policy is not None else self._security_policy
         candidate_url = raw_url if raw_url is not None else self.as_string()
@@ -444,12 +438,17 @@ class URL:
         """Return a log-safe representation with sensitive values redacted."""
         return redact_url_for_logs(self.as_string())
 
-    def _to_dict(self) -> Dict[str, Any]:
+    def _to_dict(self) -> dict[str, Any]:
         """Convert URL to dictionary of components."""
         return {
-            "scheme": self._scheme, "userinfo": self._userinfo, "host": self._host,
-            "port": self._port, "path": self._path, "query": self._query,
-            "fragment": self._fragment, "query_pairs": list(self._query_pairs),
+            "scheme": self._scheme,
+            "userinfo": self._userinfo,
+            "host": self._host,
+            "port": self._port,
+            "path": self._path,
+            "query": self._query,
+            "fragment": self._fragment,
+            "query_pairs": list(self._query_pairs),
         }
 
     def __str__(self) -> str:
@@ -466,8 +465,7 @@ class URL:
 
     def __hash__(self) -> int:
         """Return a hash of the URL object (for use in sets/dicts)."""
-        return hash((self._scheme, self._userinfo, self._host, self._port,
-                     self._path, self._query, self._fragment))
+        return hash((self._scheme, self._userinfo, self._host, self._port, self._path, self._query, self._fragment))
 
     def __eq__(self, other: object) -> bool:
         """Check equality with another URL object."""
@@ -500,7 +498,7 @@ class URL:
         return self.as_string() >= other.as_string()
 
 
-def _normalize_port(value: Optional[Any]) -> Optional[int]:
+def _normalize_port(value: Any | None) -> int | None:
     """Normalize port value to int or None."""
     if value is None or value == "":
         return None
@@ -517,7 +515,7 @@ def _normalize_port(value: Optional[Any]) -> Optional[int]:
     return candidate
 
 
-def _validate_copy_overrides(overrides: Dict[str, Any]) -> None:
+def _validate_copy_overrides(overrides: dict[str, Any]) -> None:
     """Validate copy() override arguments.
 
     Overrides are checked against the same component validators the parser
@@ -526,43 +524,38 @@ def _validate_copy_overrides(overrides: Dict[str, Any]) -> None:
     that ``parse_url`` would have rejected -- component validation on the
     mutation path was strictly weaker than on the parse path.
     """
-    valid_keys = {'scheme', 'host', 'port', 'path', 'query', 'fragment',
-                  'userinfo', 'query_pairs'}
+    valid_keys = {"scheme", "host", "port", "path", "query", "fragment", "userinfo", "query_pairs"}
     invalid_keys = set(overrides.keys()) - valid_keys
     if invalid_keys:
         raise InvalidURLError(f"Invalid override(s): {', '.join(sorted(invalid_keys))}")
 
-    for key in ('scheme', 'host', 'path', 'query', 'fragment'):
+    for key in ("scheme", "host", "path", "query", "fragment"):
         if key in overrides and overrides[key] is not None:
             if not isinstance(overrides[key], str):
                 raise InvalidURLError(f"{key} must be a string")
 
-    if 'userinfo' in overrides and overrides['userinfo'] is not None:
-        if not isinstance(overrides['userinfo'], str):
+    if "userinfo" in overrides and overrides["userinfo"] is not None:
+        if not isinstance(overrides["userinfo"], str):
             raise InvalidURLError("userinfo must be a string")
-        if not is_valid_userinfo(overrides['userinfo']):
+        if not is_valid_userinfo(overrides["userinfo"]):
             raise InvalidURLError("Invalid userinfo format.")
 
-    scheme = overrides.get('scheme')
+    scheme = overrides.get("scheme")
     if scheme is not None and not Validator.is_valid_scheme(scheme.lower()):
         raise InvalidURLError(f"Invalid scheme: {scheme!r}", value=scheme, component="scheme")
 
-    host = overrides.get('host')
+    host = overrides.get("host")
     if host is not None and not _is_valid_host_override(host):
         raise InvalidURLError(f"Invalid host: {host!r}", value=host, component="host")
 
-    fragment = overrides.get('fragment')
+    fragment = overrides.get("fragment")
     if fragment is not None and not Validator.is_valid_fragment(fragment):
-        raise InvalidURLError(
-            f"Invalid fragment: {fragment!r}", value=fragment, component="fragment"
-        )
+        raise InvalidURLError(f"Invalid fragment: {fragment!r}", value=fragment, component="fragment")
 
-    for key in ('path', 'query'):
+    for key in ("path", "query"):
         value = overrides.get(key)
         if value is not None and not Validator.is_url_safe_string(value):
-            raise InvalidURLError(
-                f"{key} contains invalid control characters.", value=value, component=key
-            )
+            raise InvalidURLError(f"{key} contains invalid control characters.", value=value, component=key)
 
 
 def _is_valid_host_override(host: str) -> bool:

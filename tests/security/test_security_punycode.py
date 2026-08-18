@@ -1,4 +1,5 @@
 """Tests for enhanced Punycode/IDN validation."""
+
 from urlps._security import has_suspicious_punycode
 
 
@@ -161,7 +162,7 @@ class TestSuspiciousTLDs:
 
     def test_free_tlds(self):
         """Free TLDs are commonly used in phishing."""
-        free_tlds = ['tk', 'ml', 'ga', 'cf', 'gq']
+        free_tlds = ["tk", "ml", "ga", "cf", "gq"]
         for tld in free_tlds:
             # Non-punycode with free TLD is not automatically suspicious
             assert not has_suspicious_punycode(f"example.{tld}")
@@ -170,14 +171,14 @@ class TestSuspiciousTLDs:
 
     def test_cheap_tlds(self):
         """Cheap TLDs are commonly used in phishing."""
-        cheap_tlds = ['xyz', 'top', 'work', 'click', 'link']
+        cheap_tlds = ["xyz", "top", "work", "click", "link"]
         for tld in cheap_tlds:
             # Punycode with cheap TLD is suspicious
             assert has_suspicious_punycode(f"xn--example-xyz.{tld}")
 
     def test_reputable_tlds(self):
         """Reputable TLDs should not be automatically flagged."""
-        reputable_tlds = ['com', 'org', 'net', 'edu', 'gov']
+        reputable_tlds = ["com", "org", "net", "edu", "gov"]
         for tld in reputable_tlds:
             # Even with punycode, reputable TLD is less suspicious
             # (unless other factors apply)

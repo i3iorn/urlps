@@ -1,4 +1,5 @@
 """Tests for the URL class and related functionality."""
+
 import pytest
 
 from urlps import URL, InvalidURLError
@@ -270,4 +271,3 @@ def test_url_components_with_updates() -> None:
     # Update with None port
     updated3 = components.with_updates(port=None)
     assert updated3.port is None
-

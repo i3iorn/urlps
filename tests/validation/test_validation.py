@@ -47,4 +47,3 @@ def test_is_valid_port_edge_cases():
     assert Validator.is_valid_port("443")
     assert not Validator.is_valid_port(70000)
     assert not Validator.is_valid_port("notanint")
-

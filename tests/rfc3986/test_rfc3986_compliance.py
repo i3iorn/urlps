@@ -4,6 +4,7 @@ Comprehensive RFC 3986 compliance tests for URL parsing and building.
 This test suite covers the examples and edge cases specified in RFC 3986
 to ensure full compliance with the URI specification.
 """
+
 import pytest
 
 from urlps import compose_url, parse_url, parse_url_unsafe
@@ -83,11 +84,7 @@ class TestReservedCharacters:
 
     def test_percent_encoding_normalization(self):
         """Percent-encoding should be normalized to uppercase"""
-        components = {
-            "scheme": "http",
-            "host": "example.com",
-            "path": "/test path"
-        }
+        components = {"scheme": "http", "host": "example.com", "path": "/test path"}
         result = compose_url(components)
         assert "%20" in result  # Uppercase hex digits
         assert "%2f" not in result.lower() or "%2F" in result
@@ -311,11 +308,7 @@ class TestEdgeCases:
 
     def test_unicode_in_path(self):
         """Unicode in path should be percent-encoded"""
-        result = compose_url({
-            "scheme": "http",
-            "host": "example.com",
-            "path": "/путь"
-        })
+        result = compose_url({"scheme": "http", "host": "example.com", "path": "/путь"})
         assert "%" in result  # Should be percent-encoded
 
     def test_relative_reference_no_scheme(self):
@@ -394,7 +387,7 @@ class TestPercentEncodingNormalization:
         encoded = builder.percent_encode("hello world", safe="")
         # All percent encodings should be uppercase
         assert "%20" in encoded or "%2D" in encoded  # Space or other encoded chars
-        assert all(c.isupper() for c in encoded if c.isalpha() and encoded[encoded.index(c)-1] == '%')
+        assert all(c.isupper() for c in encoded if c.isalpha() and encoded[encoded.index(c) - 1] == "%")
 
     def test_unreserved_chars_not_encoded(self):
         """Unreserved characters should not be percent-encoded"""

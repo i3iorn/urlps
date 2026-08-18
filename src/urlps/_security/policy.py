@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal, Union
 
 from ..exceptions import SecurityPolicyError
 
@@ -33,7 +33,7 @@ class SecurityPolicy:
     dns_retries: int = 2
     dns_backoff_base_seconds: float = 0.05
     dns_backoff_jitter_seconds: float = 0.02
-    dns_rate_limiter: Optional[Any] = None
+    dns_rate_limiter: Any | None = None
 
     @classmethod
     def strict(
@@ -42,8 +42,8 @@ class SecurityPolicy:
         check_dns: bool = False,
         check_phishing: bool = False,
         dns_fail_open_on_connect_error: bool = False,
-        dns_rate_limiter: Optional[Any] = None,
-    ) -> "SecurityPolicy":
+        dns_rate_limiter: Any | None = None,
+    ) -> SecurityPolicy:
         return cls(
             name="strict",
             check_dns=check_dns,
@@ -59,8 +59,8 @@ class SecurityPolicy:
         check_dns: bool = False,
         check_phishing: bool = False,
         dns_fail_open_on_connect_error: bool = True,
-        dns_rate_limiter: Optional[Any] = None,
-    ) -> "SecurityPolicy":
+        dns_rate_limiter: Any | None = None,
+    ) -> SecurityPolicy:
         return cls(
             name="balanced",
             check_dns=check_dns,
@@ -80,8 +80,8 @@ class SecurityPolicy:
         check_dns: bool = False,
         enforce_ssrf: bool = False,
         dns_fail_open_on_connect_error: bool = True,
-        dns_rate_limiter: Optional[Any] = None,
-    ) -> "SecurityPolicy":
+        dns_rate_limiter: Any | None = None,
+    ) -> SecurityPolicy:
         return cls(
             name="internal",
             enforce_ssrf=enforce_ssrf,
@@ -109,11 +109,12 @@ class SecurityPolicy:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _apply_overrides(
     base: SecurityPolicy,
     *,
-    check_dns: Optional[bool],
-    check_phishing: Optional[bool],
+    check_dns: bool | None,
+    check_phishing: bool | None,
     dns_rate_limiter: Any = _UNSET,
 ) -> SecurityPolicy:
     """Return a new policy if overrides differ; otherwise return base."""
@@ -156,8 +157,8 @@ def _apply_overrides(
 @lru_cache(maxsize=16)
 def _resolve_named_policy(
     policy_name: PolicyName,
-    check_dns: Optional[bool],
-    check_phishing: Optional[bool],
+    check_dns: bool | None,
+    check_phishing: bool | None,
 ) -> SecurityPolicy:
     """Resolve a named policy with optional overrides."""
     if policy_name == "strict":
@@ -180,11 +181,12 @@ def _resolve_named_policy(
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def resolve_security_policy(
-    policy: Optional[PolicyInput | str],
+    policy: PolicyInput | str | None,
     *,
-    check_dns: Optional[bool] = None,
-    check_phishing: Optional[bool] = None,
+    check_dns: bool | None = None,
+    check_phishing: bool | None = None,
     dns_rate_limiter: Any = _UNSET,
 ) -> SecurityPolicy:
     """Resolve a policy input into a concrete SecurityPolicy instance."""

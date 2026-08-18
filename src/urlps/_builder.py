@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from functools import lru_cache
-from typing import Any, Iterable, List, Mapping, Optional, Tuple
+from typing import Any
 from urllib.parse import quote, quote_plus, unquote_plus
 
 from ._patterns import PATTERNS
@@ -11,7 +12,7 @@ from .exceptions import (
     URLBuildError,
 )
 
-QueryPairs = List[Tuple[str, Optional[str]]]
+QueryPairs = list[tuple[str, str | None]]
 
 _PERCENT_ENCODE_PATTERN = PATTERNS["percent_encode"]
 
@@ -137,7 +138,7 @@ class Builder:
         policy: Any = None,
         check_dns: bool = False,
         check_phishing: bool = False,
-        correlation_id: Optional[str] = None,
+        correlation_id: str | None = None,
     ) -> str:
         """Compose then validate a URL under a security policy."""
         from . import parse_url
@@ -152,13 +153,7 @@ class Builder:
         )
         return validated.as_string()
 
-    def build_netloc(
-        self,
-        userinfo: Optional[str],
-        host: Optional[str],
-        port: Optional[int],
-        scheme: Optional[str]
-    ) -> str:
+    def build_netloc(self, userinfo: str | None, host: str | None, port: int | None, scheme: str | None) -> str:
         """Build the network location (authority) component of a URL.
 
         Constructs the netloc string in the format: [userinfo@]host[:port]
@@ -197,7 +192,7 @@ class Builder:
             parts.append(f":{display_port}")
         return "".join(parts)
 
-    def normalize_path(self, path: Optional[str]) -> str:
+    def normalize_path(self, path: str | None) -> str:
         """Normalize a URL path according to RFC 3986.
 
         Performs the following normalizations:
@@ -231,7 +226,7 @@ class Builder:
         # Check if path ends with "." or "./" which should result in trailing slash
         ends_with_dot_segment = path.endswith("/.") or path.endswith("/./")
 
-        segments: List[str] = []
+        segments: list[str] = []
         for segment in path.split("/"):
             if not segment or segment == ".":
                 continue
@@ -270,11 +265,11 @@ class Builder:
 
         Performance: Skips expensive unquote_plus() for strings without % or +.
         """
-        if '%' not in value and '+' not in value:
+        if "%" not in value and "+" not in value:
             return value
         return unquote_plus(value)
 
-    def parse_query(self, query: Optional[str]) -> QueryPairs:
+    def parse_query(self, query: str | None) -> QueryPairs:
         """Parse a query string into a list of key-value pairs.
 
         Splits the query string on '&' delimiters and decodes each key-value pair.
@@ -324,7 +319,7 @@ class Builder:
         """Shared implementation for query serialization."""
         if not params:
             return ""
-        encoded: List[str] = []
+        encoded: list[str] = []
         # _encode_for_query is a module-level LRU cache; called directly (no
         # per-call closure) to reduce repeated encoding work across calls.
         for key, value in params:
@@ -336,7 +331,7 @@ class Builder:
                 encoded.append(f"{encoded_key}={encoded_value}")
         return "&".join(encoded)
 
-    def add_param(self, query: Optional[str], key: str, value: Optional[str] = None) -> str:
+    def add_param(self, query: str | None, key: str, value: str | None = None) -> str:
         """Add a parameter to a query string.
 
         Appends a new key-value pair to the existing query string.
@@ -361,7 +356,7 @@ class Builder:
         pairs.append((key, value))
         return self.serialize_query(pairs)
 
-    def remove_param(self, query: Optional[str], key: str) -> str:
+    def remove_param(self, query: str | None, key: str) -> str:
         """Remove all occurrences of a parameter from a query string.
 
         Removes ALL key-value pairs matching the given key.
@@ -383,7 +378,7 @@ class Builder:
         pairs = [(k, v) for k, v in self.parse_query(query) if k != key]
         return self.serialize_query(pairs)
 
-    def merge_params(self, query: Optional[str], updates: Mapping[str, Any]) -> str:
+    def merge_params(self, query: str | None, updates: Mapping[str, Any]) -> str:
         """Merge new parameters into a query string.
 
         Adds new key-value pairs from the updates mapping. Does not remove

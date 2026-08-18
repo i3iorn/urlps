@@ -1,4 +1,5 @@
 """Tests for IPv6 zone identifier validation."""
+
 import pytest
 
 from urlps import InvalidURLError, parse_url

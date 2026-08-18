@@ -1,4 +1,5 @@
 """Tests for query parameter injection detection."""
+
 from urlps._security import has_query_injection
 
 

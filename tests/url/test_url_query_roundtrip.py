@@ -9,6 +9,7 @@ Regression coverage for two defects fixed in 0.7.0:
   ``+`` came back bare (decoding as a space next pass) and a decoded literal
   ``&`` came back as a *delimiter*, turning one parameter into two.
 """
+
 from urllib.parse import parse_qsl
 
 import pytest
@@ -57,9 +58,7 @@ try:
                 # Printable ASCII excluding '%': a literal '%' encodes to '%25',
                 # which the double-encoding check rejects by design, so it is not
                 # a valid input for a round-trip property.
-                alphabet=st.characters(
-                    min_codepoint=32, max_codepoint=126, blacklist_characters="%"
-                ),
+                alphabet=st.characters(min_codepoint=32, max_codepoint=126, blacklist_characters="%"),
                 min_size=1,
                 max_size=20,
             )
@@ -83,9 +82,7 @@ try:
 
         @given(
             value=st.text(
-                alphabet=st.characters(
-                    min_codepoint=32, max_codepoint=126, blacklist_characters="%"
-                ),
+                alphabet=st.characters(min_codepoint=32, max_codepoint=126, blacklist_characters="%"),
                 min_size=1,
                 max_size=20,
             )
@@ -101,6 +98,7 @@ try:
 
 except ImportError:
     pass
+
 
 class TestQueryRoundTrip:
     """Parsing must not rewrite the query string."""

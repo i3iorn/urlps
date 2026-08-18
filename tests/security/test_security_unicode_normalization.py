@@ -1,4 +1,5 @@
 """Tests for Unicode normalization security."""
+
 import pytest
 
 from urlps import InvalidURLError, parse_url
@@ -12,7 +13,7 @@ class TestUnicodeNormalization:
         """Test NFC normalization."""
         # Combining characters (NFD) should be normalized to composed form (NFC)
         nfd = "e\u0301"  # e + combining acute accent
-        nfc = "\u00e9"   # é (precomposed)
+        nfc = "\u00e9"  # é (precomposed)
 
         assert normalize_url_unicode(f"http://example.com/{nfd}") == f"http://example.com/{nfc}"
 

@@ -10,6 +10,7 @@ This test suite focuses on areas not fully covered in test_rfc3986_compliance.py
 - Relative reference resolution
 - Scheme-specific validation
 """
+
 import pytest
 
 from urlps import compose_url, parse_url, parse_url_unsafe
@@ -26,11 +27,7 @@ class TestPercentEncodingRFC3986:
         # Unreserved: ALPHA / DIGIT / "-" / "." / "_" / "~"
 
         # Test that unreserved chars don't get encoded
-        result = compose_url({
-            "scheme": "http",
-            "host": "example.com",
-            "path": "/test-value_123.ext~file"
-        })
+        result = compose_url({"scheme": "http", "host": "example.com", "path": "/test-value_123.ext~file"})
         assert "-" in result
         assert "_" in result
         assert "." in result
@@ -44,9 +41,10 @@ class TestPercentEncodingRFC3986:
         assert "%20" in encoded
         # Check that hex digits after % are uppercase
         import re
-        hex_encodings = re.findall(r'%[0-9A-Fa-f]{2}', encoded)
+
+        hex_encodings = re.findall(r"%[0-9A-Fa-f]{2}", encoded)
         for enc in hex_encodings:
-            assert enc.isupper() or (enc[1] == '2' and enc[2] == '0')  # %20 is uppercase
+            assert enc.isupper() or (enc[1] == "2" and enc[2] == "0")  # %20 is uppercase
 
     def test_percent_encoding_reserved_in_components(self):
         """RFC 3986 § 2.2-2.3: Reserved chars have special meaning in components"""
@@ -68,7 +66,7 @@ class TestPercentEncodingRFC3986:
         # Our implementation should normalize uppercase
         result = builder.percent_encode("test", safe="")
         # Check that any percent-encodings are uppercase
-        assert not any(c.islower() for i, c in enumerate(result) if i > 0 and result[i-1] == '%')
+        assert not any(c.islower() for i, c in enumerate(result) if i > 0 and result[i - 1] == "%")
 
     def test_punycode_host_validation(self):
         """IDNA-encoded hosts should pass validation"""
@@ -432,7 +430,8 @@ class TestNormalizationRFC3986:
         encoded = builder.percent_encode("test", safe="")
         # Any percent-encodings should be uppercase
         import re
-        for match in re.finditer(r'%[0-9a-fA-F]{2}', encoded):
+
+        for match in re.finditer(r"%[0-9a-fA-F]{2}", encoded):
             assert match.group(0) == match.group(0).upper()
 
     def test_port_normalization_default_omitted(self):
@@ -543,7 +542,6 @@ class TestValidationStrictness:
 
         # Valid IPv6 - use parse_url_unsafe for loopback
         assert parse_url_unsafe("http://[::1]/").host == "[::1]"
-
 
 
 class TestBoundaryConditions:

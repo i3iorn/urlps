@@ -13,20 +13,21 @@ distinction is load-bearing: ``http://a`` (undefined path) and ``http://a/``
 ``""`` inherits the base query while ``"?"`` clears it. ``None`` means
 undefined and ``""`` means empty throughout this module.
 """
+
 from __future__ import annotations
 
 import re
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
 # RFC 3986 Appendix B: the reference implementation's parsing regex. Using the
 # RFC's own expression keeps the undefined/empty distinction that a hand-rolled
 # splitter tends to lose.
 _URI_REFERENCE_RE = re.compile(
-    r"^(?:([^:/?#]+):)?"      # scheme
-    r"(?://([^/?#]*))?"       # authority
-    r"([^?#]*)"               # path (always defined, possibly empty)
-    r"(?:\?([^#]*))?"         # query
-    r"(?:#(.*))?$",           # fragment
+    r"^(?:([^:/?#]+):)?"  # scheme
+    r"(?://([^/?#]*))?"  # authority
+    r"([^?#]*)"  # path (always defined, possibly empty)
+    r"(?:\?([^#]*))?"  # query
+    r"(?:#(.*))?$",  # fragment
     re.DOTALL,
 )
 
@@ -34,11 +35,11 @@ _URI_REFERENCE_RE = re.compile(
 class UriParts(NamedTuple):
     """The five generic URI components. ``None`` means undefined."""
 
-    scheme: Optional[str]
-    authority: Optional[str]
+    scheme: str | None
+    authority: str | None
     path: str
-    query: Optional[str]
-    fragment: Optional[str]
+    query: str | None
+    fragment: str | None
 
 
 def split_uri_reference(reference: str) -> UriParts:
@@ -118,7 +119,7 @@ def remove_dot_segments(path: str) -> str:
     return "".join(output_segments)
 
 
-def merge_paths(base_authority: Optional[str], base_path: str, reference_path: str) -> str:
+def merge_paths(base_authority: str | None, base_path: str, reference_path: str) -> str:
     """Merge a relative reference path onto a base path (RFC 3986 Section 5.2.3)."""
     if base_authority is not None and base_path == "":
         return "/" + reference_path
@@ -182,9 +183,7 @@ def transform_reference(base: UriParts, reference: UriParts, *, strict: bool = T
     if reference.path.startswith("/"):
         resolved_path = remove_dot_segments(reference.path)
     else:
-        resolved_path = remove_dot_segments(
-            merge_paths(base.authority, base.path, reference.path)
-        )
+        resolved_path = remove_dot_segments(merge_paths(base.authority, base.path, reference.path))
 
     return UriParts(
         scheme=base.scheme,
@@ -222,9 +221,7 @@ def resolve_reference(base: str, reference: str, *, strict: bool = True) -> str:
     """
     base_parts = split_uri_reference(base)
     if base_parts.scheme is None:
-        raise ValueError(
-            f"Base URI must be absolute (have a scheme); got {base!r}"
-        )
+        raise ValueError(f"Base URI must be absolute (have a scheme); got {base!r}")
 
     reference_parts = split_uri_reference(reference)
     target = transform_reference(base_parts, reference_parts, strict=strict)

@@ -11,6 +11,7 @@ class TestInitBuild:
     def test_build_single_arg_host_only(self):
         """Lines 273-274: build() with a single positional arg (host only)."""
         from urlps import build
+
         result = build("example.com")
         assert "example.com" in result
 
@@ -18,12 +19,14 @@ class TestInitBuild:
         """Lines 278-279: build() with zero args raises URLBuildError."""
         from urlps import build
         from urlps.exceptions import URLBuildError
+
         with pytest.raises(URLBuildError):
             build()
 
     def test_build_secure_returns_string(self):
         """Line 333: build_secure() returns validated URL string."""
         from urlps import build_secure
+
         result = build_secure("https", "example.com", path="/api")
         assert "example.com" in result
         assert result.startswith("https://")
@@ -32,6 +35,7 @@ class TestInitBuild:
         """build_secure() with a custom policy."""
         from urlps import build_secure
         from urlps._security import SecurityPolicy
+
         policy = SecurityPolicy.balanced()
         result = build_secure("https", "example.com", path="/v1", policy=policy)
         assert "https://example.com/v1" in result
@@ -39,6 +43,7 @@ class TestInitBuild:
     def test_get_cache_info_structure(self):
         """Lines 354-356: get_cache_info() returns expected keys."""
         from urlps import get_cache_info
+
         info = get_cache_info()
         assert "parser" in info
         assert "validation" in info
@@ -48,6 +53,7 @@ class TestInitBuild:
     def test_get_cache_info_builder_keys(self):
         """Lines 354-356: builder cache info has expected keys."""
         from urlps import get_cache_info
+
         info = get_cache_info()
         builder_info = info["builder"]
         assert "percent_encode" in builder_info
@@ -56,6 +62,7 @@ class TestInitBuild:
     def test_clear_all_caches_returns_dict(self):
         """Lines 385-402: clear_all_caches() returns previous cache sizes."""
         from urlps import clear_all_caches
+
         result = clear_all_caches()
         assert "parser" in result
         assert "validation" in result
@@ -65,6 +72,7 @@ class TestInitBuild:
     def test_clear_all_caches_builder_keys(self):
         """Lines 394-400: builder entries populated after use."""
         from urlps import clear_all_caches, parse_url
+
         # Warm up caches
         parse_url("https://example.com/path")
         result = clear_all_caches()
@@ -74,6 +82,7 @@ class TestInitBuild:
         """parse_url() passing a SecurityPolicy instance directly."""
         from urlps import parse_url
         from urlps._security import SecurityPolicy
+
         policy = SecurityPolicy.balanced()
         url = parse_url("https://example.com/", policy=policy)
         assert url.host == "example.com"
@@ -82,9 +91,11 @@ class TestInitBuild:
         """parse_url_unsafe() with explicit policy uses resolve_security_policy."""
         from urlps import parse_url_unsafe
         from urlps._security import SecurityPolicy
+
         policy = SecurityPolicy.internal()
         url = parse_url_unsafe("http://localhost/test", policy=policy)
         assert url.host == "localhost"
+
 
 class TestInitAdditional:
     """Cover remaining __init__.py lines."""
@@ -93,6 +104,7 @@ class TestInitAdditional:
         """parse_url_unsafe with SecurityPolicy object routes via resolve."""
         from urlps import parse_url_unsafe
         from urlps._security.policy import SecurityPolicy
+
         p = SecurityPolicy.internal()
         url = parse_url_unsafe("http://localhost/test", policy=p)
         assert url.host == "localhost"
@@ -100,18 +112,22 @@ class TestInitAdditional:
     def test_compose_url_with_query_pairs_dict(self):
         """compose_url with query_pairs builds properly."""
         from urlps import compose_url
-        result = compose_url({
-            "scheme": "https",
-            "host": "api.example.com",
-            "path": "/v1",
-            "query_pairs": [("page", "1"), ("size", "50")],
-        })
+
+        result = compose_url(
+            {
+                "scheme": "https",
+                "host": "api.example.com",
+                "path": "/v1",
+                "query_pairs": [("page", "1"), ("size", "50")],
+            }
+        )
         assert "api.example.com" in result
         assert "page=1" in result
 
     def test_get_cache_info_full_structure(self):
         """get_cache_info() returns all expected sub-keys."""
         from urlps import get_cache_info, parse_url
+
         parse_url("https://example.com/warm")
         info = get_cache_info()
         assert "parser" in info
@@ -123,6 +139,7 @@ class TestInitAdditional:
     def test_clear_all_caches_includes_builder(self):
         """clear_all_caches() populates builder sub-dict after cache warmup."""
         from urlps import clear_all_caches, parse_url
+
         parse_url("https://example.com/")
         result = clear_all_caches()
         assert "builder" in result
@@ -159,4 +176,3 @@ class TestInitAdditional:
         ):
             with pytest.raises(InvalidURLError):
                 parse_url_unsafe("https://example.com/", policy=policy)
-

@@ -1,15 +1,20 @@
 """IP and host safety helpers for security checks."""
+
 from __future__ import annotations
 
 import ipaddress
 import socket
+from collections.abc import Iterable, Sequence
 from functools import lru_cache
-from typing import Iterable, Optional, Sequence, Tuple, Union
 
 from ..constants import BLOCKED_HOSTNAMES
 
-IpAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
-AddrInfo = Sequence[Tuple[int, int, int, str, tuple]]
+# `X | Y` works here at runtime (not just in annotations) because it's a
+# plain module-level assignment, not something `from __future__ import
+# annotations` defers -- and PEP 604's `|` between two classes is a native
+# runtime operation from Python 3.10, which matches requires-python.
+IpAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+AddrInfo = Sequence[tuple[int, int, int, str, tuple]]
 
 
 def _is_ip_safe(ip: IpAddress) -> bool:
@@ -58,7 +63,7 @@ def _is_ipv4_mapped_ipv6(host_lower: str) -> bool:
     return host_lower.startswith("[::ffff:")
 
 
-def _parse_ip_octet(part: str) -> Optional[int]:
+def _parse_ip_octet(part: str) -> int | None:
     """Parse IP octet in decimal, octal, or hex format."""
     lower_part = part.lower()
     try:
@@ -112,7 +117,7 @@ def _is_octal_hex_ip_private(host: str) -> bool:
         return False
 
 
-def _parse_inet_aton_ipv4(host: str) -> Optional[ipaddress.IPv4Address]:
+def _parse_inet_aton_ipv4(host: str) -> ipaddress.IPv4Address | None:
     """Parse a host using the classic inet_aton(3) grammar, or return None.
 
     This is deliberately broader than ``ipaddress.IPv4Address``, because it is
@@ -172,7 +177,7 @@ def _is_obfuscated_ip_private(host: str) -> bool:
     return not _is_ip_safe(address)
 
 
-def _check_direct_ip_safe(host: str) -> Optional[bool]:
+def _check_direct_ip_safe(host: str) -> bool | None:
     """Check if host is a direct IP and if it is safe; None if not an IP."""
     try:
         return _is_ip_safe(ipaddress.ip_address(host))
@@ -180,7 +185,7 @@ def _check_direct_ip_safe(host: str) -> Optional[bool]:
         return None
 
 
-def _check_resolved_ips_safe(addr_info: Iterable[Tuple[int, int, int, str, tuple]]) -> bool:
+def _check_resolved_ips_safe(addr_info: Iterable[tuple[int, int, int, str, tuple]]) -> bool:
     """Check that all resolved IPs in addr_info are safe.
 
     Fails closed: an address we cannot parse is treated as unsafe rather than
@@ -201,7 +206,7 @@ def _check_resolved_ips_safe(addr_info: Iterable[Tuple[int, int, int, str, tuple
 
 
 def _verify_connection_safe(
-    addr_info: Iterable[Tuple[int, int, int, str, tuple]],
+    addr_info: Iterable[tuple[int, int, int, str, tuple]],
     timeout: float,
     *,
     fail_open_on_error: bool = True,
@@ -227,7 +232,7 @@ def _verify_connection_safe(
             return _is_ip_safe(ipaddress.ip_address(test_socket.getpeername()[0]))
         except (ValueError, IndexError, TypeError):
             return False
-    except (socket.timeout, OSError):
+    except (TimeoutError, OSError):
         return bool(fail_open_on_error)
     finally:
         test_socket.close()
@@ -272,7 +277,7 @@ def is_malicious_ipv6_zone_id(host: str) -> bool:
         return False
 
     try:
-        inner = host[1:host.index("]")]
+        inner = host[1 : host.index("]")]
         if "%25" in inner or "%" in inner:
             zone_id = inner.split("%25" if "%25" in inner else "%", 1)[1]
             if not zone_id:

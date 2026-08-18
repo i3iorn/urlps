@@ -45,4 +45,3 @@ def test_parser_rejects_unclosed_bracket():
     p = Parser()
     with pytest.raises(HostValidationError):
         p.parse("http://[2001:db8::1/path")
-

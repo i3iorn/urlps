@@ -38,4 +38,3 @@ def test_parser_rejects_invalid_unicode_label():
     bad_label = "\udcff"
     with pytest.raises(HostValidationError):
         parser.parse(f"http://{bad_label}.com")
-

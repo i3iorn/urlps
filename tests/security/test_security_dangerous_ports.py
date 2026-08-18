@@ -1,4 +1,5 @@
 """Tests for dangerous port validation."""
+
 from urlps._security import is_dangerous_port
 from urlps.constants import DANGEROUS_PORTS
 

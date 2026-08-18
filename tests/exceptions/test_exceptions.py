@@ -1,4 +1,5 @@
 """Tests for exception handling and formatting."""
+
 from urlps.exceptions import (
     _MAX_VALUE_LENGTH,
     InvalidURLError,

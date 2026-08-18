@@ -79,16 +79,16 @@ target-version = "py310"
 extend-exclude = ["build", "dist", ".venv", "performance"]
 
 [tool.ruff.lint]
-# Deliberately scoped to correctness-bearing rules. `UP` (pyupgrade) is not
-# enabled yet: it flags ~265 purely cosmetic annotation modernisations
-# (Optional[X] -> X | None, Dict -> dict) whose diff would swamp behavioural
-# review. Track it as a separate mechanical change.
 select = [
     "E",    # pycodestyle errors
     "F",    # pyflakes — real bugs (unused imports/vars, undefined names)
     "I",    # isort — import ordering
     "B",    # flake8-bugbear — likely bugs
     "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade — was deferred at first (would have swamped
+            # behavioural review); applied as its own mechanical pass once
+            # the debt (265 -> 296 violations, still growing) was worth
+            # clearing on its own. Keep it on so the gap can't reopen.
     "RUF",  # ruff-specific
 ]
 ignore = [

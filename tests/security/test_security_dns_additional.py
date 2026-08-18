@@ -8,6 +8,7 @@ class TestSecurityDNS:
         """Line 230: empty host returns DNS_RESOLUTION_FAILED."""
         from urlps._security import check_dns_rebinding_detailed
         from urlps.exceptions import ErrorCode
+
         safe, error = check_dns_rebinding_detailed("")
         assert safe is False
         assert error == ErrorCode.DNS_RESOLUTION_FAILED
@@ -16,6 +17,7 @@ class TestSecurityDNS:
         """Lines 232->234 branch: private IP detected directly."""
         from urlps._security import check_dns_rebinding_detailed
         from urlps.exceptions import ErrorCode
+
         safe, error = check_dns_rebinding_detailed("127.0.0.1")
         assert safe is False
         assert error == ErrorCode.SSRF_RISK
@@ -23,6 +25,7 @@ class TestSecurityDNS:
     def test_check_dns_rebinding_detailed_safe_direct_ip(self):
         """Lines 232->234 branch: safe IP detected directly returns True."""
         from urlps._security import check_dns_rebinding_detailed
+
         # An IP literal short-circuits via the direct-IP check, so no DNS
         # resolution happens and this stays deterministic offline.
         safe, error = check_dns_rebinding_detailed("93.184.216.34")

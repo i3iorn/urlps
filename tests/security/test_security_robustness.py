@@ -7,8 +7,11 @@ Covers the 0.7.0 hardening work:
 * ``check_phishing=True`` no longer silently degrades to no protection.
 * Shared mutable state is synchronised (the project's first concurrency tests).
 """
+
+import ipaddress
 import socket
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
@@ -100,6 +103,79 @@ class TestObfuscatedIPv4SSRFBypass:
         assert parse_url(f"https://{host}/x").host is not None
 
 
+try:
+    from hypothesis import assume, given, settings
+    from hypothesis import strategies as st
+
+    def _octet_in_base(value, base):
+        if base == "hex":
+            return f"0x{value:x}"
+        if base == "octal":
+            return f"0{oct(value)[2:]}" if value else "00"
+        return str(value)
+
+    class TestInetAtonPropertyBased:
+        """Generalizes test_agrees_with_inet_aton beyond the fixed host list
+        above: any 1-4 part inet_aton-grammar host, each part independently
+        decimal/octal/hex, must parse the same way this project's grammar
+        and the platform's C library grammar do."""
+
+        @staticmethod
+        def _inet_aton_hosts():
+            base = st.sampled_from(["decimal", "octal", "hex"])
+
+            def build(part_count):
+                if part_count == 4:
+                    octets = st.tuples(*(st.integers(min_value=0, max_value=255) for _ in range(4)))
+                elif part_count == 3:
+                    octets = st.tuples(
+                        st.integers(min_value=0, max_value=255),
+                        st.integers(min_value=0, max_value=255),
+                        st.integers(min_value=0, max_value=0xFFFF),
+                    )
+                elif part_count == 2:
+                    octets = st.tuples(
+                        st.integers(min_value=0, max_value=255),
+                        st.integers(min_value=0, max_value=0xFFFFFF),
+                    )
+                else:
+                    octets = st.tuples(st.integers(min_value=0, max_value=0xFFFFFFFF))
+                return st.tuples(octets, st.tuples(*(base for _ in range(part_count)))).map(
+                    lambda ov: ".".join(_octet_in_base(o, b) for o, b in zip(ov[0], ov[1], strict=True))
+                )
+
+            return st.one_of(*(build(n) for n in (1, 2, 3, 4)))
+
+        @given(host=_inet_aton_hosts.__func__())
+        @settings(max_examples=300, deadline=None)
+        def test_agrees_with_platform_inet_aton(self, host):
+            # socket.inet_aton's grammar is platform-dependent (e.g. this
+            # project's Windows CI runner rejects some single-value decimal
+            # forms glibc accepts) -- when the platform oracle itself can't
+            # parse a case, there's nothing to cross-check, so skip it
+            # rather than asserting on the platform's own inconsistency.
+            try:
+                expected = socket.inet_ntoa(socket.inet_aton(host))
+            except OSError:
+                assume(False)
+                return
+            parsed = _parse_inet_aton_ipv4(host)
+            assert parsed is not None, f"{host} should have parsed"
+            assert str(parsed) == expected
+
+        @given(host=_inet_aton_hosts.__func__())
+        @settings(max_examples=300, deadline=None)
+        def test_result_round_trips_through_ipaddress(self, host):
+            """Whatever it parses to must itself be a valid, re-parseable
+            IPv4Address -- not just a string that happens to look like one."""
+            parsed = _parse_inet_aton_ipv4(host)
+            assert parsed is not None
+            assert ipaddress.IPv4Address(str(parsed)) == parsed
+
+except ImportError:
+    pass
+
+
 class TestFailClosed:
     """A check that cannot reach a verdict must not report success."""
 
@@ -139,9 +215,7 @@ class TestPhishingDegradation:
             "urlps._security.check_against_phishing_db_detailed",
             return_value=(False, False),
         ):
-            findings = collect_security_findings(
-                "https://example.com/", policy="strict", check_phishing=True
-            )
+            findings = collect_security_findings("https://example.com/", policy="strict", check_phishing=True)
         codes = {f.code for f in findings}
         assert "phishing_db_unavailable" in codes
 
@@ -201,6 +275,48 @@ class TestDNSResolutionTimeout:
             assert _resolve_addr_info("example.com", None) == expected
 
 
+class TestDNSExceptionTypes:
+    """DNS rebinding findings raise their matching typed subclass.
+
+    validate_url_security previously wrapped every finding in a flat
+    InvalidURLError regardless of which ErrorCode it carried, so a caller
+    could not distinguish "rate limited" from "resolution failed" from
+    "connection check failed" without inspecting .code by hand.
+    """
+
+    @pytest.mark.parametrize(
+        ("error_code_name", "exception_cls_name"),
+        [
+            ("DNS_RATE_LIMITED", "DNSRateLimitError"),
+            ("DNS_RESOLUTION_FAILED", "DNSResolutionError"),
+            ("DNS_CONNECTION_FAILED", "DNSConnectionError"),
+        ],
+    )
+    def test_dns_finding_raises_matching_subclass(self, error_code_name, exception_cls_name):
+        from urlps import exceptions as exc_module
+
+        error_code = getattr(exc_module.ErrorCode, error_code_name)
+        expected_cls = getattr(exc_module, exception_cls_name)
+
+        with patch(
+            "urlps._security.check_dns_rebinding_detailed",
+            return_value=(False, error_code),
+        ):
+            with pytest.raises(expected_cls):
+                parse_url("https://example.com/", check_dns=True)
+
+    def test_dns_exception_subclasses_remain_invalid_url_error(self):
+        """Existing `except InvalidURLError` callers must be unaffected."""
+        from urlps.exceptions import ErrorCode
+
+        with patch(
+            "urlps._security.check_dns_rebinding_detailed",
+            return_value=(False, ErrorCode.DNS_RESOLUTION_FAILED),
+        ):
+            with pytest.raises(InvalidURLError):
+                parse_url("https://example.com/", check_dns=True)
+
+
 class TestConcurrency:
     """First concurrency coverage; shared mutable state must be synchronised.
 
@@ -211,11 +327,7 @@ class TestConcurrency:
 
     def test_rate_limiter_never_exceeds_its_budget(self):
         budget = 5
-        limiter = DNSRateLimiter(
-            DNSRateLimiterConfig(
-                max_lookups_per_second=budget, max_lookups_per_host=10_000
-            )
-        )
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(max_lookups_per_second=budget, max_lookups_per_host=10_000))
         threads = 64
         barrier = threading.Barrier(threads)
         results = []
@@ -258,9 +370,7 @@ class TestConcurrency:
         assert errors == []
 
     def test_stats_snapshot_is_consistent_under_load(self):
-        limiter = DNSRateLimiter(
-            DNSRateLimiterConfig(max_lookups_per_second=1000, max_lookups_per_host=1000)
-        )
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(max_lookups_per_second=1000, max_lookups_per_host=1000))
         errors = []
 
         def reader():
@@ -319,3 +429,61 @@ class TestConcurrency:
             list(pool.map(worker, urls * 4))
 
         assert errors == []
+
+    @pytest.mark.slow
+    def test_rate_limiter_holds_its_budget_under_sustained_load(self):
+        """The other rate-limiter tests above run one short burst. A token
+        bucket can drift once multiple refill windows and cleanup passes
+        actually happen back to back under contention -- that only shows up
+        over a longer soak, not a single burst, so it needs its own test
+        rather than just cranking up the numbers in the existing ones."""
+        budget = 20
+        limiter = DNSRateLimiter(
+            DNSRateLimiterConfig(
+                max_lookups_per_second=budget,
+                max_lookups_per_host=10_000,
+                cleanup_interval_seconds=0.05,
+                time_window_seconds=1.0,
+            )
+        )
+        duration_seconds = 3.0
+        start = time.monotonic()
+        deadline = start + duration_seconds
+        errors = []
+        allowed_timestamps = []
+        timestamps_lock = threading.Lock()
+
+        def worker():
+            try:
+                while time.monotonic() < deadline:
+                    if limiter.is_allowed("sustained.example.com"):
+                        now = time.monotonic()
+                        with timestamps_lock:
+                            allowed_timestamps.append(now)
+            except Exception as exc:
+                errors.append(exc)
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = [pool.submit(worker) for _ in range(8)]
+            for future in futures:
+                future.result()
+
+        assert errors == []
+
+        # This is a continuous token bucket (starts with `budget` tokens,
+        # refills at `budget`/second), not a fixed-window counter -- so the
+        # invariant isn't "<= budget per calendar second", it's "cumulative
+        # allowed count by time t never exceeds the initial burst plus what
+        # refilled by then". A small tolerance absorbs scheduling jitter
+        # between "is_allowed returned True" and "we recorded the
+        # timestamp"; the point of this soak is to catch drift across many
+        # refill/cleanup cycles, not to nail sub-millisecond timing.
+        allowed_timestamps.sort()
+        tolerance = 2
+        for index, timestamp in enumerate(allowed_timestamps, start=1):
+            elapsed = timestamp - start
+            capacity_by_now = budget + budget * elapsed
+            assert index <= capacity_by_now + tolerance, (
+                f"{index} lookups allowed by t={elapsed:.3f}s, but capacity was only "
+                f"~{capacity_by_now:.1f} (budget={budget})"
+            )

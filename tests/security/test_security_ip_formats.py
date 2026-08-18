@@ -7,6 +7,7 @@ These tests cover detection of private/reserved IPs encoded in:
 - Mixed notation (0x7f.0.0.1)
 - IPv4-mapped IPv6 (::ffff:127.0.0.1)
 """
+
 import pytest
 
 from urlps._security import (
@@ -192,8 +193,8 @@ class TestParseIPOctet:
     def test_octal_octet(self):
         """Parse octal octets (leading zero)"""
         assert _parse_ip_octet("0177") == 127  # 0o177 = 127
-        assert _parse_ip_octet("012") == 10    # 0o12 = 10
-        assert _parse_ip_octet("00") == 0      # 0o0 = 0
+        assert _parse_ip_octet("012") == 10  # 0o12 = 10
+        assert _parse_ip_octet("00") == 0  # 0o0 = 0
 
     def test_hex_octet(self):
         """Parse hexadecimal octets"""
