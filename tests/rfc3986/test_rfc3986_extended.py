@@ -143,7 +143,7 @@ class TestQueryStringRFC3986:
 
     def test_query_duplicate_ampersands(self):
         """Multiple consecutive ampersands should be handled"""
-        url = parse_url("http://example.com/?a=1&&b=2")
+        url = parse_url("http://example.com/?a=1&&b=2", policy="balanced")
         # Empty param between && should be skipped
         params = url.query_params
         assert ("a", "1") in params
@@ -167,7 +167,7 @@ class TestPathSegmentRFC3986:
 
     def test_path_dot_segment(self):
         """Single dot represents current directory"""
-        url = parse_url("http://example.com/a/./b")
+        url = parse_url("http://example.com/a/./b", policy="balanced")
         assert url.path == "/a/b"
 
     def test_path_double_dot_segment(self):
@@ -222,17 +222,17 @@ class TestAuthorityValidationRFC3986:
 
     def test_userinfo_colon_as_delimiter(self):
         """Colon in userinfo separates username from password"""
-        url = parse_url("http://user:password@example.com/")
+        url = parse_url("http://user:password@example.com/", policy="balanced")
         assert url.userinfo == "user:password"
 
     def test_userinfo_multiple_colons(self):
         """Multiple colons allowed in password"""
-        url = parse_url("http://user:pass:word:extra@example.com/")
+        url = parse_url("http://user:pass:word:extra@example.com/", policy="balanced")
         assert url.userinfo == "user:pass:word:extra"
 
     def test_userinfo_empty_password(self):
         """Empty password is allowed (trailing colon)"""
-        url = parse_url("http://user:@example.com/")
+        url = parse_url("http://user:@example.com/", policy="balanced")
         assert url.userinfo == "user:"
 
     def test_userinfo_at_as_delimiter(self):
@@ -243,7 +243,7 @@ class TestAuthorityValidationRFC3986:
 
     def test_host_normalization_lowercase(self):
         """Host should be case-normalized (typically to lowercase)"""
-        url = parse_url("http://EXAMPLE.COM/")
+        url = parse_url("http://EXAMPLE.COM/", policy="balanced")
         # RFC 3986 recommends case-normalization of scheme and host
         assert url.host.lower() == "example.com"
 
@@ -296,7 +296,7 @@ class TestSchemeValidationRFC3986:
 
     def test_scheme_case_insensitive_normalization(self):
         """Schemes are normalized to lowercase"""
-        url = parse_url("HTTP://example.com/")
+        url = parse_url("HTTP://example.com/", policy="balanced")
         assert url.scheme == "http"
 
     def test_scheme_separator_variants(self):
@@ -407,12 +407,12 @@ class TestNormalizationRFC3986:
 
     def test_scheme_normalization_case(self):
         """Scheme normalization: case to lowercase"""
-        url = parse_url("HTTP://EXAMPLE.COM/")
+        url = parse_url("HTTP://EXAMPLE.COM/", policy="balanced")
         assert url.scheme == "http"
 
     def test_host_normalization_case(self):
         """Host normalization: case to lowercase (recommended)"""
-        url = parse_url("http://EXAMPLE.COM/")
+        url = parse_url("http://EXAMPLE.COM/", policy="balanced")
         # RFC recommends lowercase
         assert url.host.lower() == "example.com"
 
@@ -436,7 +436,7 @@ class TestNormalizationRFC3986:
 
     def test_port_normalization_default_omitted(self):
         """Explicit default ports should be omitted in normalized form"""
-        url = parse_url("http://example.com:80/")
+        url = parse_url("http://example.com:80/", policy="balanced")
         # When reconstructed, default port should be hidden
         reconstructed = url.as_string()
         assert ":80" not in reconstructed
@@ -469,7 +469,7 @@ class TestCrossComponentInteractions:
     def test_userinfo_requires_host(self):
         """Userinfo (@) requires a host"""
         # This should parse, but userinfo is part of authority
-        url = parse_url("http://user@example.com/")
+        url = parse_url("http://user@example.com/", policy="balanced")
         assert url.userinfo == "user"
 
     def test_port_requires_host(self):
@@ -529,7 +529,7 @@ class TestValidationStrictness:
     def test_userinfo_format_validation(self):
         """Userinfo format must be valid"""
         # Valid
-        url = parse_url("http://user%3Aname:pass%40word@example.com/")
+        url = parse_url("http://user%3Aname:pass%40word@example.com/", policy="balanced")
         assert url.userinfo is not None
 
     def test_host_format_validation(self):

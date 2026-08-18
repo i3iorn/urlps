@@ -1,5 +1,31 @@
 # Migration Guide
 
+## 0.7.x → 0.8.0
+
+`parse_url()` without an explicit `policy=` argument now uses `"strict"`
+instead of `"balanced"`. This is a real behavior change if you parse any of:
+
+- URLs with credentials in userinfo (`http://user:pass@host/`)
+- Non-canonical URLs (`HTTP://EXAMPLE.COM/`, `http://example.com:80/`)
+- Query strings matching injection-like patterns (`<script>`, `javascript:`, ...)
+- URLs targeting commonly-exploited ports (22, 25, 3306, 6379, ...)
+- Punycode-encoded hosts (`xn--...`), including entirely legitimate ones —
+  the new check is deliberately aggressive (see
+  [changelogs/0.8.0.md](changelogs/0.8.0.md))
+
+**Action required:** if any of the above previously parsed successfully in
+your code without you passing `policy=`, pass `policy="balanced"` explicitly
+to keep the old behavior:
+
+```python
+# 0.7.x behaviour, now explicit
+url = parse_url("http://user:pass@example.com:8080/path", policy="balanced")
+```
+
+`parse_url_unsafe()` is unaffected.
+
+---
+
 ## 0.6.x → 0.7.0
 
 0.7.0 fixes two data-correctness bugs and removes a redundant parameter. Most

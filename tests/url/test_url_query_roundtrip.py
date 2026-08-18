@@ -119,7 +119,7 @@ class TestQueryRoundTrip:
         ],
     )
     def test_query_survives_parse_unchanged(self, query):
-        url = parse_url(f"{BASE}?{query}")
+        url = parse_url(f"{BASE}?{query}", policy="balanced")
         assert url.query == query
         assert str(url) == f"{BASE}?{query}"
 

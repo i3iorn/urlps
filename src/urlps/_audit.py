@@ -210,3 +210,11 @@ class AuditManager:
             "error_code": error_code,
             "correlation_id": correlation_id,
         }
+
+
+# Shared instance for the common case of no audit configuration. `invoke()`
+# is a no-op whenever both callbacks are unset, and that path never touches
+# `_lock`/`_failure_count`/`_last_error`, so sharing this single instance
+# across every audit-less URL() is safe and avoids allocating a Lock() on
+# every parse -- the hot path for the vast majority of callers.
+NO_OP_AUDIT_MANAGER = AuditManager()

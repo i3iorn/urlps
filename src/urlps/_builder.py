@@ -5,6 +5,7 @@ from functools import lru_cache
 from typing import Any
 from urllib.parse import quote, quote_plus, unquote_plus
 
+from ._cache_config import BUILDER_PATH_ENCODE_CACHE_SIZE, BUILDER_QUERY_ENCODE_CACHE_SIZE
 from ._patterns import PATTERNS
 from .constants import DEFAULT_PORTS, OfficialSchemes
 from .exceptions import (
@@ -17,7 +18,7 @@ QueryPairs = list[tuple[str, str | None]]
 _PERCENT_ENCODE_PATTERN = PATTERNS["percent_encode"]
 
 
-@lru_cache(maxsize=8192)
+@lru_cache(maxsize=BUILDER_QUERY_ENCODE_CACHE_SIZE)
 def _encode_for_query(value: str, safe: str) -> str:
     """Encode a query component with quote_plus and normalize percent-encodings to uppercase.
 
@@ -252,7 +253,7 @@ class Builder:
         return self._percent_encode_cached(value, safe)
 
     @staticmethod
-    @lru_cache(maxsize=1024)
+    @lru_cache(maxsize=BUILDER_PATH_ENCODE_CACHE_SIZE)
     def _percent_encode_cached(value: str, safe: str) -> str:
         """Cached percent-encoding with uppercase hex normalization."""
         encoded = quote(value, safe=safe)

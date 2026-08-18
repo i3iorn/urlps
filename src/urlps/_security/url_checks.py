@@ -8,6 +8,7 @@ import unicodedata
 from functools import lru_cache
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlsplit, urlunparse, urlunsplit
 
+from .._cache_config import SECURITY_CACHE_SIZE
 from .._patterns import PATTERNS
 from ..constants import DANGEROUS_PORTS
 
@@ -43,7 +44,7 @@ _TRACKED_UNICODE_SCRIPTS = frozenset(
 )
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def find_authority_marker(url: str) -> int:
     """Return the index of a genuine scheme '://' authority marker, or -1.
 
@@ -74,7 +75,7 @@ def has_scheme_authority(url: str) -> bool:
     return find_authority_marker(url) != -1 or url.startswith("//")
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def has_mixed_scripts(host: str) -> bool:
     """Detect potential homograph attacks using mixed Unicode scripts."""
     if not isinstance(host, str):
@@ -123,10 +124,23 @@ def has_path_traversal(path: str) -> bool:
 
 
 def is_open_redirect_risk(path: str) -> bool:
-    """Check if path could cause an open redirect (//, backslash)."""
+    """Check if path could cause an open redirect (//, backslash), including percent-encoded forms.
+
+    A raw backslash or leading "//" is checked first since some clients
+    (older IIS/browser combinations) treat a backslash as a path separator
+    equivalent to "/". The same check is repeated against the percent-decoded
+    form so an encoded backslash (e.g. "%5c") can't slip past by only ever
+    appearing "safe" in its raw, still-encoded representation.
+    """
     if not isinstance(path, str):
         return False
-    return "\\" in path or path.startswith("//")
+    if "\\" in path or path.startswith("//"):
+        return True
+    try:
+        decoded = unquote(path)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return "\\" in decoded or decoded.startswith("//")
 
 
 def _has_mixed_path_separators(after_scheme: str) -> bool:
@@ -176,7 +190,7 @@ def _has_confusing_userinfo_markers(authority: str) -> bool:
     return any(terminator in before_last_at for terminator in ("/", "?", "#"))
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def has_parser_confusion(url: str) -> bool:
     """Detect ambiguous URLs that could be parsed differently by different parsers.
 
@@ -190,7 +204,13 @@ def has_parser_confusion(url: str) -> bool:
 
     after_scheme = url[marker + 3 :]
 
-    if _has_mixed_path_separators(after_scheme):
+    # Cheap guards ahead of the helper cascade below: "\\" and "@" are each
+    # checked by two of the helpers, so a single membership test up front
+    # lets the overwhelmingly common case (neither character present) skip
+    # straight past both pairs instead of calling into each one to find out.
+    has_backslash = "\\" in after_scheme
+
+    if has_backslash and _has_mixed_path_separators(after_scheme):
         return True
     if _has_slash_before_domain_dot(after_scheme):
         return True
@@ -201,12 +221,13 @@ def has_parser_confusion(url: str) -> bool:
 
     if not authority:
         return False
-    if "\\" in authority:
+    if has_backslash and "\\" in authority:
         return True
-    if _has_multiple_at_symbols(authority):
-        return True
-    if _has_confusing_userinfo_markers(authority):
-        return True
+    if "@" in authority:
+        if _has_multiple_at_symbols(authority):
+            return True
+        if _has_confusing_userinfo_markers(authority):
+            return True
 
     return False
 
@@ -341,12 +362,16 @@ def extract_host_and_path(url: str) -> tuple[str, str]:
     else:
         return "", ""
 
-    if "/" in after_scheme:
-        host_portion = after_scheme.split("/", 1)[0]
-        path_portion = after_scheme[after_scheme.find("/") :]
-    else:
-        host_portion, path_portion = after_scheme, ""
+    # The host/path split always needs both halves, so partition() once
+    # (one scan) strictly beats an "x in s" pre-check plus split()/find()
+    # (two-plus scans) for the same separator.
+    host_portion, sep, rest = after_scheme.partition("/")
+    path_portion = sep + rest
 
+    # Userinfo and explicit ports are the exception rather than the rule, so
+    # keep the cheap "x in s" pre-check here: it lets the common case (no
+    # "@"/":") skip straight past without paying for a partition() call and
+    # tuple allocation that would just be discarded.
     if "@" in host_portion:
         host_portion = host_portion.split("@", 1)[1]
 

@@ -123,6 +123,17 @@ _ALLOWLIST = {
     ),
     (
         "url_checks.py",
+        "is_open_redirect_risk",
+        False,
+    ): (
+        "Same detector shape as has_path_traversal: the raw path is checked "
+        "for '\\\\' / leading '//' before the try block, so a decode "
+        "failure only skips the *additional* percent-decoded recheck. "
+        "False means 'the decoded form added nothing', not 'declared safe "
+        "from scratch' -- the raw check already ran."
+    ),
+    (
+        "url_checks.py",
         "has_credentials",
         False,
     ): (

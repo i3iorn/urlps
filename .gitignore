@@ -155,6 +155,7 @@ htmlcov/
 *.pstats
 /performance/*.prof
 /performance/*.txt
+/performance/*.json
 /performance/__pycache__/
 /DEPLOYMENT.md
 /performance_report.html
@@ -163,3 +164,4 @@ htmlcov/
 # Tooling caches not covered above
 .ruff_cache/
 .review_dist/
+!/performance/benchmark_results.json

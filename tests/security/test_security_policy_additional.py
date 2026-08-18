@@ -25,12 +25,12 @@ class TestSecurityPolicy:
         assert resolved.name == "internal"
         assert resolved.enforce_ssrf is False
 
-    def test_resolve_security_policy_none_returns_balanced(self):
-        """resolve with None returns balanced policy."""
+    def test_resolve_security_policy_none_returns_strict(self):
+        """resolve with None returns the strict policy (the project default)."""
         from urlps._security.policy import resolve_security_policy
 
         resolved = resolve_security_policy(None)
-        assert resolved.name == "balanced"
+        assert resolved.name == "strict"
 
     def test_resolve_security_policy_strict_string(self):
         """resolve with 'strict' string."""

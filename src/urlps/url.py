@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ._audit import AuditConfig, AuditManager
+from ._audit import NO_OP_AUDIT_MANAGER, AuditConfig, AuditManager
 from ._builder import Builder, QueryPairs
 from ._components import SecurityFinding
 from ._parser import Parser
@@ -106,7 +106,7 @@ class URL:
 
         self._parser = parser if parser is not None else Parser()
         self._builder = builder if builder is not None else Builder()
-        self._audit_manager = AuditManager(audit)
+        self._audit_manager = AuditManager(audit) if audit is not None else NO_OP_AUDIT_MANAGER
         self._debug = debug
         self._check_dns = check_dns
         self._check_phishing = check_phishing
@@ -213,6 +213,11 @@ class URL:
     def query_params(self) -> QueryPairs:
         """Return query parameters as list of (key, value) tuples."""
         return list(self._query_pairs)
+
+    @property
+    def query_pairs(self) -> QueryPairs:
+        """Alias for query_params."""
+        return self.query_params
 
     @property
     def netloc(self) -> str:

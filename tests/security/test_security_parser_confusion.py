@@ -75,7 +75,7 @@ class TestParserConfusion:
 
     def test_valid_urls_pass(self):
         """Valid URLs should parse successfully."""
-        url = parse_url("https://user:pass@example.com:8080/path")
+        url = parse_url("https://user:pass@example.com:8080/path", policy="balanced")
         assert url.host == "example.com"
         assert url.port == 8080
 

@@ -40,6 +40,7 @@ class ErrorCode(Enum):
     PATH_TRAVERSAL = "path_traversal"
     OPEN_REDIRECT = "open_redirect"
     MIXED_SCRIPTS = "mixed_scripts"
+    SUSPICIOUS_PUNYCODE = "suspicious_punycode"
     PARSER_CONFUSION = "parser_confusion"
     QUERY_INJECTION = "query_injection"
     CREDENTIALS_IN_URL = "credentials_in_url"

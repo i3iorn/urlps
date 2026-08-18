@@ -2,6 +2,25 @@
 
 All notable changes to `urlps` are documented here.
 
+## 0.8.0 - 2026-08-18
+
+**Breaking:** `parse_url()`'s default security policy is now `"strict"`
+(was `"balanced"`). See [changelogs/0.8.0.md](changelogs/0.8.0.md) for the
+full list of what's now blocked by default and how to opt back into the old
+behavior with `policy="balanced"`.
+
+**Added**
+
+- `has_suspicious_punycode()` (Punycode/IDN homograph detection) is now
+  actually wired into validation via a new
+  `SecurityPolicy.enforce_suspicious_punycode` field (strict-only — see
+  changelog for why).
+
+**Fixed**
+
+- `is_open_redirect_risk()` now also checks the percent-decoded path, so
+  `%5cevil.com` is caught the same way a raw backslash already was.
+
 ## 0.7.1 - 2026-08-18
 
 Robustness/maintainability follow-ups to 0.7.0. See
