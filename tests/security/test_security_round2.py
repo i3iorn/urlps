@@ -66,19 +66,19 @@ class TestURLCanonicalization:
 
     def test_scheme_lowercase(self):
         """Scheme should be normalized to lowercase."""
-        url = parse_url("HTTP://EXAMPLE.COM/path")
+        url = parse_url("HTTP://EXAMPLE.COM/path", policy="balanced")
         canonical = url.canonicalize()
         assert canonical.scheme == "http"
 
     def test_host_lowercase(self):
         """Host should be normalized to lowercase."""
-        url = parse_url("http://EXAMPLE.COM/path")
+        url = parse_url("http://EXAMPLE.COM/path", policy="balanced")
         canonical = url.canonicalize()
         assert canonical.host == "example.com"
 
     def test_default_port_removed(self):
         """Default port should be removed."""
-        url = parse_url("http://example.com:80/path")
+        url = parse_url("http://example.com:80/path", policy="balanced")
         canonical = url.canonicalize()
         assert canonical.port is None
 
@@ -100,7 +100,7 @@ class TestPasswordMasking:
 
     def test_password_masked_in_as_string(self):
         """Password should be masked when requested."""
-        url = parse_url("http://user:secret@example.com/path")
+        url = parse_url("http://user:secret@example.com/path", policy="balanced")
         masked = url.as_string(mask_password=True)
         assert "secret" not in masked
         assert PASSWORD_MASK in masked
@@ -108,13 +108,13 @@ class TestPasswordMasking:
 
     def test_password_not_masked_by_default(self):
         """Password should not be masked by default."""
-        url = parse_url("http://user:secret@example.com/path")
+        url = parse_url("http://user:secret@example.com/path", policy="balanced")
         normal = url.as_string()
         assert "secret" in normal
 
     def test_no_password_unchanged(self):
         """URL without password should be unchanged."""
-        url = parse_url("http://user@example.com/path")
+        url = parse_url("http://user@example.com/path", policy="balanced")
         masked = url.as_string(mask_password=True)
         assert "user@" in masked
 
@@ -301,21 +301,21 @@ class TestSemanticURLComparison:
 
     def test_case_insensitive_scheme(self):
         """Different case schemes should be semantically equal."""
-        url1 = parse_url("HTTP://example.com/path")
+        url1 = parse_url("HTTP://example.com/path", policy="balanced")
         url2 = parse_url("http://example.com/path")
 
         assert url1.is_semantically_equal(url2)
 
     def test_case_insensitive_host(self):
         """Different case hosts should be semantically equal."""
-        url1 = parse_url("http://EXAMPLE.COM/path")
+        url1 = parse_url("http://EXAMPLE.COM/path", policy="balanced")
         url2 = parse_url("http://example.com/path")
 
         assert url1.is_semantically_equal(url2)
 
     def test_default_port_equivalence(self):
         """URLs with/without default port should be semantically equal."""
-        url1 = parse_url("http://example.com:80/path")
+        url1 = parse_url("http://example.com:80/path", policy="balanced")
         url2 = parse_url("http://example.com/path")
 
         assert url1.is_semantically_equal(url2)

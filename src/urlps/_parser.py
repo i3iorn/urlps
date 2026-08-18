@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import unquote_plus
 
 from ._builder import Builder, QueryPairs
+from ._cache_config import PARSER_CACHE_SIZE
 from ._components import ParseResult
 from ._validation import Validator, is_valid_userinfo
 from .constants import (
@@ -86,28 +87,24 @@ def parse_scheme(url: str, allow_custom: bool = False) -> tuple[str | None, str,
 
 def split_fragment(url: str) -> tuple[str, str | None]:
     """Split fragment from URL."""
-    if "#" not in url:
-        return url, None
-    base, _, fragment = url.partition("#")
-    return base, fragment
+    # partition() alone finds and splits in one scan; checking "#" in url
+    # first would scan the string twice for the same answer.
+    base, sep, fragment = url.partition("#")
+    return base, fragment if sep else None
 
 
 def split_query(url: str) -> tuple[str, str | None]:
     """Split query string from URL."""
-    if "?" not in url:
-        return url, None
-    base, _, query = url.partition("?")
-    return base, query
+    base, sep, query = url.partition("?")
+    return base, query if sep else None
 
 
 def split_authority(url: str) -> tuple[str, str]:
     """Split authority from path in URL."""
     if not url:
         return "", ""
-    if "/" in url:
-        authority, _, path = url.partition("/")
-        return authority, f"/{path}"
-    return url, ""
+    authority, sep, path = url.partition("/")
+    return authority, f"/{path}" if sep else ""
 
 
 def parse_userinfo(authority: str) -> tuple[str | None, str]:
@@ -197,7 +194,7 @@ def parse_host(host_candidate: str, require_host: bool = False) -> tuple[str | N
     return parse_regular_host(host_candidate)
 
 
-@lru_cache(maxsize=1024)
+@lru_cache(maxsize=PARSER_CACHE_SIZE)
 def normalize_path(path_candidate: str) -> str:
     """Normalize URL path by resolving . and .. segments.
 

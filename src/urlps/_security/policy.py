@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Literal, Union
 
+from .._cache_config import POLICY_CACHE_SIZE
 from ..exceptions import SecurityPolicyError
 
 PolicyName = Literal["strict", "balanced", "internal"]
@@ -26,6 +27,16 @@ class SecurityPolicy:
     block_dangerous_ports: bool = True
     reject_credentials: bool = True
     require_canonical: bool = True
+    # has_suspicious_punycode() deliberately trades false positives for false
+    # negatives -- its own test suite documents plain ASCII domains like
+    # "carnival.com" or "click.com" as intended flags (confusable-letter and
+    # excessive-hyphen heuristics apply regardless of whether the host is
+    # actually Punycode-encoded). That is too aggressive for a default-on
+    # check against arbitrary URLs, so -- unlike enforce_mixed_scripts, which
+    # only fires on genuinely mixed-script raw Unicode and stays on
+    # everywhere -- this follows the same strict-only pattern as
+    # enforce_query_injection/block_dangerous_ports/reject_credentials.
+    enforce_suspicious_punycode: bool = True
     check_dns: bool = False
     check_phishing: bool = False
     enforce_dns_rate_limit: bool = True
@@ -71,6 +82,7 @@ class SecurityPolicy:
             block_dangerous_ports=False,
             reject_credentials=False,
             require_canonical=False,
+            enforce_suspicious_punycode=False,
         )
 
     @classmethod
@@ -94,6 +106,7 @@ class SecurityPolicy:
             block_dangerous_ports=False,
             reject_credentials=False,
             require_canonical=False,
+            enforce_suspicious_punycode=False,
             check_dns=check_dns,
             check_phishing=False,
             enforce_dns_rate_limit=True,
@@ -143,6 +156,7 @@ def _apply_overrides(
         block_dangerous_ports=concrete_base.block_dangerous_ports,
         reject_credentials=concrete_base.reject_credentials,
         require_canonical=concrete_base.require_canonical,
+        enforce_suspicious_punycode=concrete_base.enforce_suspicious_punycode,
         check_dns=effective_dns,
         check_phishing=effective_phishing,
         enforce_dns_rate_limit=concrete_base.enforce_dns_rate_limit,
@@ -154,7 +168,7 @@ def _apply_overrides(
     )
 
 
-@lru_cache(maxsize=16)
+@lru_cache(maxsize=POLICY_CACHE_SIZE)
 def _resolve_named_policy(
     policy_name: PolicyName,
     check_dns: bool | None,
@@ -199,7 +213,7 @@ def resolve_security_policy(
         )
 
     if policy is None:
-        base = _resolve_named_policy("balanced", None, None)
+        base = _resolve_named_policy("strict", None, None)
         return _apply_overrides(
             base,
             check_dns=check_dns,

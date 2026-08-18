@@ -11,7 +11,7 @@ Quick Start:
 Main Entry Points:
     parse_url(url, **options) -> URL
         Parsing with security checks, governed by a policy (default:
-        "balanced"). Enabled under every built-in policy:
+        "strict"). Enabled under every built-in policy:
         - SSRF protection (blocks private IPs, localhost, metadata endpoints)
         - Path traversal detection (.., null bytes, encoded variants)
         - Homograph attack detection (mixed Unicode scripts)
@@ -19,7 +19,8 @@ Main Entry Points:
         - Double-encoding detection
 
         Query-injection heuristics, dangerous-port blocking, credential
-        rejection and canonical-form enforcement require policy="strict".
+        rejection, canonical-form enforcement, and aggressive Punycode/
+        confusable-character heuristics require policy="strict".
 
         Use this for parsing URLs from untrusted sources (user input, external APIs).
 
@@ -62,8 +63,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-__version__ = "0.7.1"
+__version__ = "0.8.0"
 
+from . import _parser
+from . import url as _url
 from ._audit import AuditCallback, AuditConfig, AuditEventCallback, AuditManager
 from ._components import SecurityFinding
 from ._security.dns_guard import DNSRateLimiter, DNSRateLimiterConfig
@@ -96,7 +99,12 @@ def parse_url(
     """Parse a URL with security checks applied (recommended entry point).
 
     Use this for URLs from untrusted sources. Which checks run is determined
-    entirely by the security policy; the default is ``balanced``.
+    entirely by the security policy; the default is ``strict`` -- the
+    strongest built-in preset, maximizing protection at the cost of more
+    false positives on unusual-but-legitimate input. Pass ``policy="balanced"``
+    for fewer false positives (query injection, dangerous ports, credentials
+    in userinfo, non-canonical form, and the aggressive Punycode heuristics
+    are relaxed), or ``policy="internal"`` for trusted/internal traffic.
 
     Enabled under every built-in policy:
         - SSRF protection: blocks private IPs (10.x, 192.168.x, 172.16-31.x)
@@ -104,15 +112,19 @@ def parse_url(
         - Cloud metadata blocking: 169.254.169.254, metadata.google.internal
         - Path traversal detection: ``../``, null bytes, encoded variants
         - Double-encoding detection: ``%25`` patterns used to bypass filters
-        - Open redirect detection: backslashes, leading ``//``
+        - Open redirect detection: backslashes, leading ``//`` (raw or
+          percent-encoded)
         - Homograph detection: mixed Unicode scripts (Cyrillic 'а' vs Latin 'a')
         - Parser confusion: ambiguous URLs parsed differently across parsers
 
-    NOT enabled by default -- these require ``policy="strict"``:
+    Enabled by default (``strict``), relaxed under ``policy="balanced"``:
         - Query injection heuristics
         - Dangerous port blocking
         - Rejection of credentials in userinfo
         - Canonical form enforcement
+        - Aggressive Punycode/confusable-character heuristics (flags plain
+          ASCII lookalike patterns too, e.g. "rn" for "m" -- more false
+          positives than the always-on mixed-script check above)
 
     Optional, off by default under every policy:
         - DNS rebinding (``check_dns=True``): verifies the host resolves to a
@@ -156,9 +168,6 @@ def parse_url(
 
     For internal/development URLs, use parse_url_unsafe() instead.
     """
-    from . import _parser as _parser
-    from . import url as _url
-
     resolved_policy = resolve_security_policy(
         policy,
         check_dns=check_dns,
@@ -236,9 +245,6 @@ def parse_url_unsafe(
     Security Note:
         For production use with untrusted input, always use parse_url() instead.
     """
-    from . import _parser as _parser
-    from . import url as _url
-
     resolved_policy = (
         resolve_security_policy(policy, dns_rate_limiter=dns_rate_limiter)
         if policy is not None

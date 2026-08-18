@@ -137,22 +137,22 @@ class TestAuthorityComponent:
 
     def test_userinfo_with_colon(self):
         """Userinfo can contain colons in password"""
-        url = parse_url("http://user:pass:word@example.com/")
+        url = parse_url("http://user:pass:word@example.com/", policy="balanced")
         assert url.userinfo == "user:pass:word"
 
     def test_userinfo_without_password(self):
         """Userinfo without password"""
-        url = parse_url("http://user@example.com/")
+        url = parse_url("http://user@example.com/", policy="balanced")
         assert url.userinfo == "user"
 
     def test_empty_password(self):
         """Empty password should be allowed"""
-        url = parse_url("http://user:@example.com/")
+        url = parse_url("http://user:@example.com/", policy="balanced")
         assert url.userinfo == "user:"
 
     def test_host_case_insensitive(self):
         """Host names are case-insensitive"""
-        url1 = parse_url("http://EXAMPLE.COM/path")
+        url1 = parse_url("http://EXAMPLE.COM/path", policy="balanced")
         url2 = parse_url("http://example.com/path")
         # Both should work, though case may be preserved
         assert url1.host.lower() == url2.host.lower()
@@ -185,7 +185,7 @@ class TestAuthorityComponent:
 
     def test_port_default_http(self):
         """Default port 80 for HTTP"""
-        url = parse_url("http://example.com:80/")
+        url = parse_url("http://example.com:80/", policy="balanced")
         assert url.port == 80
         assert url.effective_port == 80
 
@@ -264,13 +264,13 @@ class TestSchemeSpecific:
 
     def test_scheme_case_insensitive(self):
         """Scheme is case-insensitive"""
-        url1 = parse_url("HTTP://example.com/")
+        url1 = parse_url("HTTP://example.com/", policy="balanced")
         url2 = parse_url("http://example.com/")
         assert url1.scheme.lower() == url2.scheme.lower()
 
     def test_scheme_normalization(self):
         """Scheme should be normalized to lowercase"""
-        url = parse_url("HTTP://example.com/")
+        url = parse_url("HTTP://example.com/", policy="balanced")
         assert url.scheme == "http"
 
     def test_file_scheme_no_port(self):
@@ -356,9 +356,9 @@ class TestCompositionRoundTrip:
     def test_complex_url_roundtrip(self):
         """Complex URL with all components should round-trip"""
         original = "https://user:pass@example.com:8443/path/to/resource?key1=val1&key2=val2#section"
-        url = parse_url(original)
+        url = parse_url(original, policy="balanced")
         reconstructed = url.as_string()
-        url2 = parse_url(reconstructed)
+        url2 = parse_url(reconstructed, policy="balanced")
         assert url2.scheme == url.scheme
         assert url2.userinfo == url.userinfo
         assert url2.host == url.host
@@ -403,12 +403,12 @@ class TestCaseNormalization:
 
     def test_scheme_lowercase(self):
         """Scheme should be normalized to lowercase"""
-        url = parse_url("HTTP://example.com/")
+        url = parse_url("HTTP://example.com/", policy="balanced")
         assert url.scheme == "http"
 
     def test_host_lowercase_recommended(self):
         """Host should typically be lowercase (though case-insensitive)"""
-        url = parse_url("http://EXAMPLE.COM/")
+        url = parse_url("http://EXAMPLE.COM/", policy="balanced")
         # The implementation may preserve case, but comparison should be case-insensitive
         assert url.host.lower() == "example.com"
 

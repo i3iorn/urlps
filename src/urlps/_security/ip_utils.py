@@ -7,6 +7,7 @@ import socket
 from collections.abc import Iterable, Sequence
 from functools import lru_cache
 
+from .._cache_config import SECURITY_CACHE_SIZE
 from ..constants import BLOCKED_HOSTNAMES
 
 # `X | Y` works here at runtime (not just in annotations) because it's a
@@ -238,7 +239,7 @@ def _verify_connection_safe(
         test_socket.close()
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def is_private_ip(host: str) -> bool:
     """Check if host is a private/reserved IP address."""
     if not isinstance(host, str):
@@ -246,7 +247,7 @@ def is_private_ip(host: str) -> bool:
     return _check_ipv4_private(host) or _check_ipv6_private(host)
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def is_ssrf_risk(host: str) -> bool:
     """Check if host poses SSRF risk (blocked hostnames, private IPs, and ambiguous IPs).
 

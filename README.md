@@ -36,28 +36,42 @@ url = parse_url("https://example.com/path")
 new_url = url.with_host("other.com").with_port(8080)
 print(new_url)  # https://other.com:8080/path
 
-# Policy-based validation
+# Policy-based validation (policy="strict" is the default; shown explicitly
+# here -- see "Security" below for what it blocks and when to relax it)
 strict_url = parse_url("https://example.com", policy="strict")
-balanced_url = parse_url("HTTP://EXAMPLE.com", policy="balanced")
 ```
 
 ### Security
 
-`parse_url()` blocks by default:
+`parse_url()` defaults to `policy="strict"` -- the strongest built-in preset.
+It blocks:
 - Private IPs (192.168.x.x, 10.x.x.x, 172.16.x.x)
 - Localhost and loopback addresses
 - Link-local addresses (169.254.x.x)
 - `.local` and `.internal` domains
 - Path traversal patterns (`../`)
 - Double-encoded characters
+- Open redirect patterns (leading `//`, backslashes, raw or percent-encoded)
 - Mixed Unicode scripts (homograph attacks)
 - URL parser confusion attacks
-
-`parse_url(..., policy="strict")` additionally blocks:
 - Query parameter injection
 - Dangerous ports (commonly exploited)
 - Non-canonical URL forms (filter bypass prevention)
-- Credentials in URL userinfo by default (`user:pass@host`)
+- Credentials in URL userinfo (`user:pass@host`)
+- Suspicious Punycode/IDN domains (confusable characters, excessive
+  hyphens, brand-like names combined with non-ASCII)
+
+The last five are the ones `policy="balanced"` relaxes -- it's meant for
+parsing URLs you intend to inspect/canonicalize/reconstruct yourself rather
+than reject outright, and it trades some protection for fewer false
+positives (the Punycode heuristic in particular flags some plain ASCII
+domains too, e.g. `carnival.com` for containing "rn"):
+
+```python
+from urlps import parse_url
+
+balanced_url = parse_url("HTTP://EXAMPLE.com", policy="balanced")
+```
 
 Use `parse_url_unsafe()` for internal/development URLs:
 ```python
@@ -71,9 +85,9 @@ trusted_policy = SecurityPolicy.internal(check_dns=True)
 internal_checked = parse_url_unsafe("http://intranet.local/service", policy=trusted_policy)
 ```
 
-Need selective hardening? Use policy presets:
-- `policy="strict"`: maximum protections, DNS connect checks fail-closed by default
-- `policy="balanced"` (default): fewer false positives, DNS connect checks fail-open by default
+Need to adjust the tradeoff? Use policy presets:
+- `policy="strict"` (default): maximum protections, DNS connect checks fail-closed by default
+- `policy="balanced"`: fewer false positives, DNS connect checks fail-open by default
 - `policy="internal"`: trusted/internal traffic
 
 DNS connect behavior can be customized per policy:
@@ -109,7 +123,7 @@ url = parse_url(
 ```python
 from urlps import parse_url
 
-url = parse_url("https://user:pass@example.com:8080/path?token=abc")
+url = parse_url("https://user:pass@example.com:8080/path?token=abc", policy="balanced")
 print(url.netloc)         # user:pass@example.com:8080
 print(url.effective_port) # 8080
 
@@ -174,8 +188,11 @@ except InvalidURLError as e:
 # DNS rebinding detection (optional - rate-limited to prevent DoS)
 url_dns = parse_url("https://api.example.com/", check_dns=True)
 
-# URL canonicalization
-url_raw = parse_url("HTTP://EXAMPLE.COM:80/path?z=1&a=2")
+# URL canonicalization (policy="balanced": the raw non-canonical/credentialed
+# forms below are exactly what strict's require_canonical/reject_credentials
+# would block -- use balanced when you want to parse first and canonicalize
+# after, rather than reject upfront)
+url_raw = parse_url("HTTP://EXAMPLE.COM:80/path?z=1&a=2", policy="balanced")
 canonical = url_raw.canonicalize()
 print(canonical.scheme)  # "http"
 print(canonical.host)    # "example.com"
@@ -183,7 +200,7 @@ print(canonical.port)    # None (default port removed)
 print(canonical.query)   # "a=2&z=1" (sorted)
 
 # Password masking
-url = parse_url("https://admin:secret123@api.example.com/")
+url = parse_url("https://admin:secret123@api.example.com/", policy="balanced")
 print(url.as_string(mask_password=True))  # https://admin:***@api.example.com/
 ```
 
@@ -270,6 +287,8 @@ Supported variables:
 - `URLPS_MAX_USERINFO_LENGTH`
 - `URLPS_MAX_IPV6_STRING_LENGTH`
 
+Internal `@lru_cache` sizes are also overridable this way -- see [Cache Sizing](#cache-sizing) below.
+
 ## API Reference
 
 ### Main Functions
@@ -309,6 +328,57 @@ print(stats['parser']['normalize_path']['hits'])
 # Clear all caches (useful for long-running apps)
 previous = clear_all_caches()
 ```
+
+### Cache Sizing
+
+Every internal `@lru_cache` (security/host checks, validation predicates, path
+normalization, percent-encoding, policy resolution) is sized from a small set
+of environment variables, all read **once, at import time**. Python's
+`functools.lru_cache` bakes `maxsize` in when the decorated function is
+defined, so these must be set *before* `import urlps` runs -- setting them
+afterwards, or after the first `parse_url()` call, has no effect:
+
+```python
+import os
+os.environ["URLPS_CACHE_SIZE_SECURITY"] = "8192"
+import urlps  # cache sizes are now locked in for this process
+```
+
+| Variable | Default | Covers |
+| --- | --- | --- |
+| `URLPS_CACHE_SIZE_SECURITY` | 512 | `is_ssrf_risk`, `is_private_ip`, `has_parser_confusion`, `has_mixed_scripts`, `find_authority_marker` -- keyed on host or full URL |
+| `URLPS_CACHE_SIZE_VALIDATION` | 512 | `is_valid_host`, `is_valid_scheme`, `is_url_safe_string`, `is_valid_fragment`, etc. |
+| `URLPS_CACHE_SIZE_PARSER` | 1024 | `normalize_path` |
+| `URLPS_CACHE_SIZE_BUILDER_QUERY_ENCODE` | 8192 | percent-encoding of query keys/values |
+| `URLPS_CACHE_SIZE_BUILDER_PATH_ENCODE` | 1024 | percent-encoding of path segments |
+| `URLPS_CACHE_SIZE_POLICY` | 16 | resolved named policies (`strict`/`balanced`/`internal` x overrides) -- rarely worth changing, the working set is inherently tiny |
+
+**Which value fits your workload?** A cache only helps when the *same* input
+(same host, same URL shape) is seen again within the cache's window --
+otherwise every lookup is a miss and the cache is pure overhead with no
+benefit. Use `get_cache_info()` after a representative burst of real traffic
+to check hit rates before guessing:
+
+- **Short-lived script/CLI** (parses a handful of URLs and exits): defaults
+  are fine either way -- there's rarely enough repetition for cache size to
+  matter, and the downside of an "oversized" cache here is negligible.
+- **Long-running service with a bounded set of upstream hosts** (an internal
+  proxy, a service validating callback URLs from a fixed partner list):
+  keep the defaults, or size `URLPS_CACHE_SIZE_SECURITY`/`_VALIDATION` to
+  comfortably exceed your distinct-host count. A cache that fits your whole
+  working set converges to a near-100% hit rate and stays there.
+- **High-diversity, public-facing workload** (a crawler, a webhook receiver
+  from many tenants, a link-checker over arbitrary user-submitted URLs):
+  the default 512 is easy to blow through in a single request burst, at
+  which point the cache is being evicted before it's ever reused --
+  raise `URLPS_CACHE_SIZE_SECURITY`/`_VALIDATION` substantially (several
+  thousand), or accept that there may be little to gain from caching this
+  workload at all if hosts are effectively unique per request.
+- **Memory-constrained environment**: lower the values, especially the
+  builder encode caches (8192/1024 by default) if you build many large,
+  distinct query strings -- each cache entry holds a copy of the encoded
+  string, and eviction under memory pressure is not automatic the way it
+  is for cache-key diversity.
 
 ## Comparison with urllib.parse
 

@@ -53,7 +53,7 @@ dev = [
 Homepage = "https://github.com/i3iorn/urlps"
 Repository = "https://github.com/i3iorn/urlps"
 Documentation = "https://github.com/i3iorn/urlps#readme"
-Changelog = "https://github.com/i3iorn/urlps/blob/master/changelogs/0.7.1.md"
+Changelog = "https://github.com/i3iorn/urlps/blob/master/changelogs/0.8.0.md"
 Issues = "https://github.com/i3iorn/urlps/issues"
 "Bug Tracker" = "https://github.com/i3iorn/urlps/issues"
 

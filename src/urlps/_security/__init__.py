@@ -67,19 +67,20 @@ def collect_security_findings(
     effective_policy = resolve_security_policy(policy, check_dns=check_dns, check_phishing=check_phishing)
     findings: list[SecurityFinding] = []
 
-    normalized_url = normalize_url_unicode(url)
-
-    is_ascii = True
-    try:
-        normalized_url.encode("ascii")
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        is_ascii = False
+    # NFC-normalizing a pure-ASCII string is always a no-op (Unicode
+    # Normalization Form C only recomposes sequences involving combining
+    # marks, none of which exist in ASCII), and str.isascii() is a dedicated
+    # C-level scan -- no bytes allocation, no exception machinery -- so this
+    # skips both the encode()/except dance and the normalize() pass entirely
+    # for the common case of an all-ASCII URL.
+    is_ascii = url.isascii()
+    normalized_url = url if is_ascii else normalize_url_unicode(url)
 
     has_authority_syntax = has_scheme_authority(normalized_url)
-    split_for_double = urlsplit(normalized_url) if has_authority_syntax else None
-    double_encoding_target = (
-        f"{split_for_double.path}?{split_for_double.query}" if split_for_double is not None else normalized_url
-    )
+    # Reused below for host/query/port when authority syntax is present, so
+    # this URL only gets split once instead of twice.
+    split = urlsplit(normalized_url) if has_authority_syntax else None
+    double_encoding_target = f"{split.path}?{split.query}" if split is not None else normalized_url
     if effective_policy.enforce_double_encoding and has_double_encoding(double_encoding_target):
         findings.append(
             _finding("critical", ErrorCode.DOUBLE_ENCODING, "URL contains double-encoded characters.", "url")
@@ -88,8 +89,11 @@ def collect_security_findings(
     if not has_authority_syntax:
         return findings
 
+    # has_authority_syntax is exactly the condition split was computed
+    # under above, so it is never None here -- spelled out for mypy, which
+    # can't correlate that across the two variables on its own.
+    assert split is not None
     host, path = extract_host_and_path(normalized_url)
-    split = urlsplit(normalized_url)
     query = split.query
     try:
         port = split.port
@@ -114,6 +118,16 @@ def collect_security_findings(
         if effective_policy.enforce_mixed_scripts and not is_ascii and has_mixed_scripts(host):
             findings.append(
                 _finding("major", ErrorCode.MIXED_SCRIPTS, "URL host contains mixed Unicode scripts.", "host")
+            )
+        if effective_policy.enforce_suspicious_punycode and has_suspicious_punycode(host):
+            findings.append(
+                _finding(
+                    "major",
+                    ErrorCode.SUSPICIOUS_PUNYCODE,
+                    "URL host is a suspicious Punycode/IDN domain (confusable characters, "
+                    "excessive hyphens, or a brand-like name combined with non-ASCII).",
+                    "host",
+                )
             )
 
     # --- Path-related checks ---
