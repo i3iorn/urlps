@@ -74,11 +74,11 @@ try:
             from urllib.parse import quote
 
             encoded = quote(value, safe="")
-            url = parse_url(f"{BASE}?q={encoded}")
+            url = parse_url(f"{BASE}?q={encoded}", policy="balanced")
             assert len(url.query_params) == 1
             assert url.query_params[0] == ("q", value)
             # And it must survive a full string round trip.
-            assert parse_url(str(url)).query_params == [("q", value)]
+            assert parse_url(str(url), policy="balanced").query_params == [("q", value)]
 
         @given(
             value=st.text(
@@ -92,9 +92,9 @@ try:
             """Re-serialization on the mutation path must also stay injective."""
             from urllib.parse import quote
 
-            url = parse_url(f"{BASE}?q={quote(value, safe='')}")
+            url = parse_url(f"{BASE}?q={quote(value, safe='')}", policy="balanced")
             mutated = url.with_query_param("extra", "1")
-            assert parse_url(str(mutated)).query_params == [("q", value), ("extra", "1")]
+            assert parse_url(str(mutated), policy="balanced").query_params == [("q", value), ("extra", "1")]
 
 except ImportError:
     pass
