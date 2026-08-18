@@ -10,6 +10,7 @@ Covers the 0.7.0 hardening work:
 
 import socket
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
@@ -354,3 +355,61 @@ class TestConcurrency:
             list(pool.map(worker, urls * 4))
 
         assert errors == []
+
+    @pytest.mark.slow
+    def test_rate_limiter_holds_its_budget_under_sustained_load(self):
+        """The other rate-limiter tests above run one short burst. A token
+        bucket can drift once multiple refill windows and cleanup passes
+        actually happen back to back under contention -- that only shows up
+        over a longer soak, not a single burst, so it needs its own test
+        rather than just cranking up the numbers in the existing ones."""
+        budget = 20
+        limiter = DNSRateLimiter(
+            DNSRateLimiterConfig(
+                max_lookups_per_second=budget,
+                max_lookups_per_host=10_000,
+                cleanup_interval_seconds=0.05,
+                time_window_seconds=1.0,
+            )
+        )
+        duration_seconds = 3.0
+        start = time.monotonic()
+        deadline = start + duration_seconds
+        errors = []
+        allowed_timestamps = []
+        timestamps_lock = threading.Lock()
+
+        def worker():
+            try:
+                while time.monotonic() < deadline:
+                    if limiter.is_allowed("sustained.example.com"):
+                        now = time.monotonic()
+                        with timestamps_lock:
+                            allowed_timestamps.append(now)
+            except Exception as exc:
+                errors.append(exc)
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = [pool.submit(worker) for _ in range(8)]
+            for future in futures:
+                future.result()
+
+        assert errors == []
+
+        # This is a continuous token bucket (starts with `budget` tokens,
+        # refills at `budget`/second), not a fixed-window counter -- so the
+        # invariant isn't "<= budget per calendar second", it's "cumulative
+        # allowed count by time t never exceeds the initial burst plus what
+        # refilled by then". A small tolerance absorbs scheduling jitter
+        # between "is_allowed returned True" and "we recorded the
+        # timestamp"; the point of this soak is to catch drift across many
+        # refill/cleanup cycles, not to nail sub-millisecond timing.
+        allowed_timestamps.sort()
+        tolerance = 2
+        for index, timestamp in enumerate(allowed_timestamps, start=1):
+            elapsed = timestamp - start
+            capacity_by_now = budget + budget * elapsed
+            assert index <= capacity_by_now + tolerance, (
+                f"{index} lookups allowed by t={elapsed:.3f}s, but capacity was only "
+                f"~{capacity_by_now:.1f} (budget={budget})"
+            )
