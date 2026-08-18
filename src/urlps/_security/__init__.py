@@ -89,6 +89,10 @@ def collect_security_findings(
     if not has_authority_syntax:
         return findings
 
+    # has_authority_syntax is exactly the condition split was computed
+    # under above, so it is never None here -- spelled out for mypy, which
+    # can't correlate that across the two variables on its own.
+    assert split is not None
     host, path = extract_host_and_path(normalized_url)
     query = split.query
     try:

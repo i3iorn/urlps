@@ -65,6 +65,8 @@ from typing import Any
 
 __version__ = "0.8.0"
 
+from . import _parser
+from . import url as _url
 from ._audit import AuditCallback, AuditConfig, AuditEventCallback, AuditManager
 from ._components import SecurityFinding
 from ._security.dns_guard import DNSRateLimiter, DNSRateLimiterConfig
@@ -80,8 +82,6 @@ from .exceptions import (
     URLParseError,
     URLpError,
 )
-from . import _parser
-from . import url as _url
 from .url import URL
 
 
