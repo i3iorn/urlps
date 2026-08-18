@@ -6,7 +6,34 @@ from urlps._relative import (
     parse_relative_reference,
     round_trip_relative,
 )
-from urlps.exceptions import InvalidURLError
+from urlps.exceptions import InvalidURLError, RelativeReferenceError
+
+
+class TestParseRelativeReferenceExceptionType:
+    """`_relative.py` raises the typed RelativeReferenceError, not a generic
+    InvalidURLError -- it used to raise the generic type, making it
+    impossible for a caller to distinguish this failure from any other."""
+
+    def test_absolute_reference_raises_relative_reference_error(self):
+        with pytest.raises(RelativeReferenceError):
+            parse_relative_reference("http://example.com/path")
+
+    def test_authority_only_reference_raises_relative_reference_error(self):
+        with pytest.raises(RelativeReferenceError):
+            parse_relative_reference("//example.com/path")
+
+    def test_empty_reference_raises_relative_reference_error(self):
+        with pytest.raises(RelativeReferenceError):
+            parse_relative_reference("")
+
+    def test_non_string_path_raises_relative_reference_error(self):
+        with pytest.raises(RelativeReferenceError):
+            build_relative_reference(123)  # type: ignore[arg-type]
+
+    def test_relative_reference_error_is_still_an_invalid_url_error(self):
+        """Existing `except InvalidURLError` callers must be unaffected."""
+        with pytest.raises(InvalidURLError):
+            parse_relative_reference("http://example.com/path")
 
 
 class TestParseRelativeReference:

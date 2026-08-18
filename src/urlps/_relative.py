@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 from ._resolve import split_uri_reference
-from .exceptions import InvalidURLError
+from .exceptions import RelativeReferenceError
 
 
 def parse_relative_reference(reference: str) -> Dict[str, Optional[str]]:
@@ -22,17 +22,17 @@ def parse_relative_reference(reference: str) -> Dict[str, Optional[str]]:
     parser for 0.6.1, which had not been applied here.
     """
     if not isinstance(reference, str) or reference == "":
-        raise InvalidURLError("Relative references must be non-empty strings.")
+        raise RelativeReferenceError("Relative references must be non-empty strings.")
 
     parts = split_uri_reference(reference)
     if parts.scheme is not None:
-        raise InvalidURLError(
+        raise RelativeReferenceError(
             "Relative references cannot contain a scheme separator.",
             value=reference,
             component="scheme",
         )
     if parts.authority is not None:
-        raise InvalidURLError(
+        raise RelativeReferenceError(
             "Relative references cannot contain an authority component.",
             value=reference,
             component="authority",
@@ -49,7 +49,7 @@ def build_relative_reference(
 ) -> str:
     """Compose a relative reference from raw path, query, and fragment."""
     if not isinstance(path, str):
-        raise InvalidURLError("Relative path must be a string.")
+        raise RelativeReferenceError("Relative path must be a string.")
 
     reference = path
     if query is not None:

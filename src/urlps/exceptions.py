@@ -119,10 +119,6 @@ class RelativeReferenceError(InvalidURLError):
     """Raised when a relative reference is invalid."""
 
 
-class QuerySerializationError(InvalidURLError):
-    """Raised when serializing query parameters fails."""
-
-
 class QueryParsingError(InvalidURLError):
     """Raised when parsing a query string fails."""
 
@@ -135,16 +131,8 @@ class PortValidationError(InvalidURLError):
     """Raised when a port is missing or invalid."""
 
 
-class PathNormalizationError(InvalidURLError):
-    """Raised when a path cannot be normalized."""
-
-
 class FragmentEncodingError(InvalidURLError):
     """Raised when a fragment is invalid or cannot be encoded."""
-
-
-class NetlocBuildingError(InvalidURLError):
-    """Raised when constructing userinfo@host:port fails."""
 
 
 class UserInfoParsingError(InvalidURLError):
@@ -153,10 +141,6 @@ class UserInfoParsingError(InvalidURLError):
 
 class MissingHostError(InvalidURLError):
     """Raised when a required host is missing."""
-
-
-class MissingPortError(InvalidURLError):
-    """Raised when a required port is missing."""
 
 
 # ---------------------------------------------------------------------------
@@ -192,13 +176,9 @@ __all__ = [
     "HostValidationError",
     "InvalidURLError",
     "MissingHostError",
-    "MissingPortError",
-    "NetlocBuildingError",
-    "PathNormalizationError",
     "PhishingDatabaseError",
     "PortValidationError",
     "QueryParsingError",
-    "QuerySerializationError",
     "RelativeReferenceError",
     "SecurityPolicyError",
     "URLBuildError",

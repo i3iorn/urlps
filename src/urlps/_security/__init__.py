@@ -5,7 +5,14 @@ from typing import Any, List, Optional
 from urllib.parse import urlsplit
 
 from .._components import SecurityFinding
-from ..exceptions import ErrorCode, InvalidURLError, SecurityPolicyError
+from ..exceptions import (
+    DNSConnectionError,
+    DNSRateLimitError,
+    DNSResolutionError,
+    ErrorCode,
+    InvalidURLError,
+    SecurityPolicyError,
+)
 from .dns_guard import (
     DNSRateLimiter,
     DNSRateLimiterConfig,
@@ -173,6 +180,17 @@ def collect_security_findings(
 # URL, because a degraded check is not the same as a failed one.
 BLOCKING_SEVERITIES = frozenset({"critical", "major"})
 
+# DNS-specific findings raise their matching DNSRebindingError subclass so a
+# caller can distinguish "rate limited" from "resolution failed" from
+# "connection check failed" without inspecting .code -- all three remain
+# InvalidURLError subclasses, so existing `except InvalidURLError` callers are
+# unaffected. Every other finding still raises the generic InvalidURLError.
+_EXCEPTION_TYPES_BY_CODE = {
+    ErrorCode.DNS_RATE_LIMITED: DNSRateLimitError,
+    ErrorCode.DNS_RESOLUTION_FAILED: DNSResolutionError,
+    ErrorCode.DNS_CONNECTION_FAILED: DNSConnectionError,
+}
+
 
 def validate_url_security(
     url: str,
@@ -194,7 +212,8 @@ def validate_url_security(
         for finding in findings:
             if finding.severity in BLOCKING_SEVERITIES:
                 code = ErrorCode(finding.code)
-                raise InvalidURLError(
+                exception_type = _EXCEPTION_TYPES_BY_CODE.get(code, InvalidURLError)
+                raise exception_type(
                     finding.message, component=finding.component, value=url, code=code
                 )
     return findings

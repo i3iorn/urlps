@@ -201,6 +201,48 @@ class TestDNSResolutionTimeout:
             assert _resolve_addr_info("example.com", None) == expected
 
 
+class TestDNSExceptionTypes:
+    """DNS rebinding findings raise their matching typed subclass.
+
+    validate_url_security previously wrapped every finding in a flat
+    InvalidURLError regardless of which ErrorCode it carried, so a caller
+    could not distinguish "rate limited" from "resolution failed" from
+    "connection check failed" without inspecting .code by hand.
+    """
+
+    @pytest.mark.parametrize(
+        ("error_code_name", "exception_cls_name"),
+        [
+            ("DNS_RATE_LIMITED", "DNSRateLimitError"),
+            ("DNS_RESOLUTION_FAILED", "DNSResolutionError"),
+            ("DNS_CONNECTION_FAILED", "DNSConnectionError"),
+        ],
+    )
+    def test_dns_finding_raises_matching_subclass(self, error_code_name, exception_cls_name):
+        from urlps import exceptions as exc_module
+
+        error_code = getattr(exc_module.ErrorCode, error_code_name)
+        expected_cls = getattr(exc_module, exception_cls_name)
+
+        with patch(
+            "urlps._security.check_dns_rebinding_detailed",
+            return_value=(False, error_code),
+        ):
+            with pytest.raises(expected_cls):
+                parse_url("https://example.com/", check_dns=True)
+
+    def test_dns_exception_subclasses_remain_invalid_url_error(self):
+        """Existing `except InvalidURLError` callers must be unaffected."""
+        from urlps.exceptions import ErrorCode
+
+        with patch(
+            "urlps._security.check_dns_rebinding_detailed",
+            return_value=(False, ErrorCode.DNS_RESOLUTION_FAILED),
+        ):
+            with pytest.raises(InvalidURLError):
+                parse_url("https://example.com/", check_dns=True)
+
+
 class TestConcurrency:
     """First concurrency coverage; shared mutable state must be synchronised.
 
