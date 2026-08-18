@@ -18,11 +18,12 @@ Performance:
 
 All public methods and arguments are type-annotated and documented.
 """
+
 from __future__ import annotations
 
 import ipaddress
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any
 
 from ._patterns import PATTERNS
 from .constants import (
@@ -39,11 +40,12 @@ if TYPE_CHECKING:
 
 compiled_regex = PATTERNS
 
-_idna_module: Optional[ModuleType] = None
+_idna_module: ModuleType | None = None
 _HAS_IDNA: bool = False
 
 try:
     import idna as _idna_import
+
     _idna_module = _idna_import
     _HAS_IDNA = True
 except ImportError:
@@ -52,14 +54,20 @@ except ImportError:
 
 class Validator:
     """URL component validation methods.
-    
+
     This class provides pure validation for URL components.
     For security-related checks, use the _security module directly.
     """
+
     _CACHED_METHODS: list[str] = [
-        '_to_ascii_host', 'is_valid_scheme', 'is_valid_host',
-        'is_valid_ipv4', 'is_valid_ipv6', 'is_url_safe_string',
-        'is_valid_fragment', 'is_ip_address',
+        "_to_ascii_host",
+        "is_valid_scheme",
+        "is_valid_host",
+        "is_valid_ipv4",
+        "is_valid_ipv6",
+        "is_url_safe_string",
+        "is_valid_fragment",
+        "is_ip_address",
     ]
 
     @staticmethod
@@ -73,7 +81,7 @@ class Validator:
             The ASCII-compatible encoding (ACE) of the host.
         """
         if _HAS_IDNA and _idna_module is not None:
-            return _idna_module.encode(host).decode("ascii") # type: ignore
+            return _idna_module.encode(host).decode("ascii")  # type: ignore
         return host.encode("idna").decode("ascii")
 
     @staticmethod
@@ -139,7 +147,7 @@ class Validator:
         if len(octets) != 4:
             return False
         for part in octets:
-            if len(part) > 1 and part[0] == '0':
+            if len(part) > 1 and part[0] == "0":
                 return False
             try:
                 if not 0 <= int(part) <= 255:
@@ -283,38 +291,40 @@ class Validator:
         return Validator.is_valid_ipv4(host) or Validator.is_valid_ipv6(host)
 
     @classmethod
-    def get_cache_info(cls) -> Dict[str, Optional[Any]]:
+    def get_cache_info(cls) -> dict[str, Any | None]:
         """Get statistics about validation caches.
 
         Returns:
             A dictionary mapping method names to cache info dicts.
         """
-        stats: Dict[str, Optional[Any]] = {}
+        stats: dict[str, Any | None] = {}
         for name in cls._CACHED_METHODS:
             method = getattr(cls, name, None)
-            if method and hasattr(method, 'cache_info'):
+            if method and hasattr(method, "cache_info"):
                 info = method.cache_info()
                 stats[name] = {
-                    'hits': info.hits, 'misses': info.misses,
-                    'maxsize': info.maxsize, 'currsize': info.currsize,
+                    "hits": info.hits,
+                    "misses": info.misses,
+                    "maxsize": info.maxsize,
+                    "currsize": info.currsize,
                 }
             else:
                 stats[name] = None
         return stats
 
     @classmethod
-    def clear_caches(cls) -> Dict[str, int]:
+    def clear_caches(cls) -> dict[str, int]:
         """Clear all validation caches and return previous sizes.
 
         Returns:
             A dictionary mapping method names to previous cache sizes.
         """
-        previous_sizes: Dict[str, int] = {}
+        previous_sizes: dict[str, int] = {}
         for name in cls._CACHED_METHODS:
             method = getattr(cls, name, None)
-            if method and hasattr(method, 'cache_info'):
+            if method and hasattr(method, "cache_info"):
                 previous_sizes[name] = method.cache_info().currsize
-                if hasattr(method, 'cache_clear'):
+                if hasattr(method, "cache_clear"):
                     method.cache_clear()
             else:
                 previous_sizes[name] = 0
@@ -323,17 +333,17 @@ class Validator:
 
 def is_valid_userinfo(value: str, max_length: int = MAX_USERINFO_LENGTH) -> bool:
     """Validate userinfo format safely without ReDoS risk.
-    
+
     Args:
         value: The userinfo string to validate.
         max_length: Maximum allowed length.
     Returns:
         True if valid userinfo format, False otherwise.
     """
-    if not value or len(value) > max_length or '@' in value:
+    if not value or len(value) > max_length or "@" in value:
         return False
-    if ':' in value:
-        username, _, _ = value.partition(':')
+    if ":" in value:
+        username, _, _ = value.partition(":")
         return bool(username)
     return True
 

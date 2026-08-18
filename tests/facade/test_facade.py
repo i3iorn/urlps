@@ -20,7 +20,6 @@ def test_parse_url_unsafe_allows_credentials_for_internal_policy() -> None:
     assert u.userinfo == "user:pw"
 
 
-
 def test_compose_url_matches_builder_compose() -> None:
     u = parse_url("https://example.com:8443/a/b?c=1#z")
     components = {
@@ -39,4 +38,3 @@ def test_compose_url_matches_builder_compose() -> None:
 def test_URL_direct_construction() -> None:
     u = URL("https://example.com/foo")
     assert u.as_string() == "https://example.com/foo"
-

@@ -1,4 +1,5 @@
 """Tests for dangerous URL scheme blocking."""
+
 import pytest
 
 from urlps import InvalidURLError, parse_url, parse_url_unsafe
@@ -11,10 +12,16 @@ class TestDangerousSchemes:
     def test_unsafe_schemes_defined(self):
         """Verify all expected unsafe schemes are defined."""
         expected_schemes = {
-            "javascript", "data", "vbscript",  # Script execution
-            "jar", "file",  # Local file access
-            "gopher", "dict", "tftp",  # Protocol exploitation
-            "ldap", "ldaps",  # Information disclosure
+            "javascript",
+            "data",
+            "vbscript",  # Script execution
+            "jar",
+            "file",  # Local file access
+            "gopher",
+            "dict",
+            "tftp",  # Protocol exploitation
+            "ldap",
+            "ldaps",  # Information disclosure
         }
         assert expected_schemes.issubset(UNSAFE_SCHEMES)
 

@@ -1,4 +1,5 @@
 """Tests for relative URL reference parsing and building."""
+
 import pytest
 
 from urlps._relative import (

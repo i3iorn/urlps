@@ -11,7 +11,7 @@ All exceptions inherit from URLpError and provide:
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Final, Optional
+from typing import Any, Final
 
 _MAX_VALUE_LENGTH: Final[int] = 200
 
@@ -65,14 +65,14 @@ class URLpError(Exception):
         message: str,
         *,
         value: Any = None,
-        component: Optional[str] = None,
-        code: Optional[ErrorCode] = None,
+        component: str | None = None,
+        code: ErrorCode | None = None,
     ) -> None:
         super().__init__(message)
         self.message: str = message
         self.value: Any = value
-        self.component: Optional[str] = component
-        self.code: Optional[ErrorCode] = code
+        self.component: str | None = component
+        self.code: ErrorCode | None = code
 
     def __str__(self) -> str:
         base = self.message
@@ -94,14 +94,18 @@ class URLpError(Exception):
 # Specific Exception Types
 # ---------------------------------------------------------------------------
 
+
 class SecurityPolicyError(URLpError):
     """Raised when an invalid or unsupported security policy is requested."""
+
 
 class InvalidURLError(URLpError):
     """Raised for invalid URLs or invalid URL components."""
 
+
 class PhishingDatabaseError(URLpError):
     """Raised when phishing database retrieval fails."""
+
 
 class URLParseError(InvalidURLError):
     """Raised when parsing a URL fails."""
@@ -147,8 +151,10 @@ class MissingHostError(InvalidURLError):
 # DNS‑related Exceptions
 # ---------------------------------------------------------------------------
 
+
 class DNSRateLimiterError(URLpError):
     """Raised when DNS rate limiting encounters an invalid state or input."""
+
 
 class DNSRebindingError(InvalidURLError):
     """Base class for DNS rebinding validation failures."""
@@ -185,5 +191,5 @@ __all__ = [
     "URLParseError",
     "URLpError",
     "UnsupportedSchemeError",
-    "UserInfoParsingError"
+    "UserInfoParsingError",
 ]

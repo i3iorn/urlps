@@ -3,15 +3,14 @@
 For resolving a reference *against a base URI* (RFC 3986 Section 5), use
 :func:`urlps.join`. These helpers only split and recompose a reference.
 """
-from __future__ import annotations
 
-from typing import Dict, Optional
+from __future__ import annotations
 
 from ._resolve import split_uri_reference
 from .exceptions import RelativeReferenceError
 
 
-def parse_relative_reference(reference: str) -> Dict[str, Optional[str]]:
+def parse_relative_reference(reference: str) -> dict[str, str | None]:
     """Split a relative URL reference into path, query, and fragment.
 
     A reference is rejected only if it is genuinely absolute, i.e. it carries
@@ -41,12 +40,7 @@ def parse_relative_reference(reference: str) -> Dict[str, Optional[str]]:
     return {"path": parts.path, "query": parts.query, "fragment": parts.fragment}
 
 
-def build_relative_reference(
-    path: str,
-    *,
-    query: Optional[str] = None,
-    fragment: Optional[str] = None
-) -> str:
+def build_relative_reference(path: str, *, query: str | None = None, fragment: str | None = None) -> str:
     """Compose a relative reference from raw path, query, and fragment."""
     if not isinstance(path, str):
         raise RelativeReferenceError("Relative path must be a string.")

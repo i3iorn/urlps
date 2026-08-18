@@ -8,4 +8,3 @@ def test_public_import_path_urlps() -> None:
 
     assert hasattr(urlps, "parse_url")
     assert callable(urlps.parse_url)
-

@@ -11,6 +11,7 @@ Tests for:
 - #9: Semantic URL comparison
 - #10: Audit logging
 """
+
 from unittest.mock import patch
 
 import pytest
@@ -94,7 +95,6 @@ class TestURLCanonicalization:
         assert canonical.query == "a=2&m=3&z=1"
 
 
-
 class TestPasswordMasking:
     """Tests for password masking (improvement #3 round 2)."""
 
@@ -145,20 +145,20 @@ class TestDNSRebindingProtection:
         url2 = parse_url_unsafe("http://google.com/", check_dns=False)
         assert url2.host == "google.com"
 
-    @patch('urlps._security.dns_guard.socket.getaddrinfo')
+    @patch("urlps._security.dns_guard.socket.getaddrinfo")
     def test_dns_resolves_to_private_blocked(self, mock_getaddrinfo):
         """DNS that resolves to private IP should be blocked with check_dns."""
         mock_getaddrinfo.return_value = [
-            (2, 1, 6, '', ('127.0.0.1', 0))  # Returns loopback
+            (2, 1, 6, "", ("127.0.0.1", 0))  # Returns loopback
         ]
 
         assert not check_dns_rebinding("evil.example.com")
 
-    @patch('urlps._security.dns_guard.socket.getaddrinfo')
+    @patch("urlps._security.dns_guard.socket.getaddrinfo")
     def test_dns_resolves_to_public_allowed(self, mock_getaddrinfo):
         """DNS that resolves to public IP should be allowed."""
         mock_getaddrinfo.return_value = [
-            (2, 1, 6, '', ('93.184.216.34', 0))  # example.com IP
+            (2, 1, 6, "", ("93.184.216.34", 0))  # example.com IP
         ]
 
         assert check_dns_rebinding("example.com", enforce_rate_limit=False)
@@ -179,11 +179,11 @@ class TestCacheManagement:
 
         info = Validator.get_cache_info()
 
-        assert 'is_valid_host' in info
-        assert 'is_valid_scheme' in info
-        assert isinstance(info['is_valid_host'], dict)
-        assert 'hits' in info['is_valid_host']
-        assert 'misses' in info['is_valid_host']
+        assert "is_valid_host" in info
+        assert "is_valid_scheme" in info
+        assert isinstance(info["is_valid_host"], dict)
+        assert "hits" in info["is_valid_host"]
+        assert "misses" in info["is_valid_host"]
 
     def test_clear_caches(self):
         """Should clear all caches and return previous sizes."""
@@ -194,11 +194,11 @@ class TestCacheManagement:
         previous = Validator.clear_caches()
 
         assert isinstance(previous, dict)
-        assert 'is_valid_host' in previous
+        assert "is_valid_host" in previous
 
         # Verify caches are cleared
         info = Validator.get_cache_info()
-        assert info['is_valid_host']['currsize'] == 0
+        assert info["is_valid_host"]["currsize"] == 0
 
 
 class TestDoubleEncodingDetection:
@@ -258,7 +258,7 @@ class TestSecureDefaults:
     def test_rejects_mixed_scripts(self):
         """Should reject mixed scripts in host."""
         # Test the validator directly first
-        cyrillic_a = '\u0430'  # Cyrillic small letter a
+        cyrillic_a = "\u0430"  # Cyrillic small letter a
         mixed_host = f"ex{cyrillic_a}mple"
         assert has_mixed_scripts(mixed_host), "Validator should detect mixed scripts"
 

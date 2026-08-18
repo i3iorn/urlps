@@ -56,9 +56,11 @@ Performance:
     - get_cache_info(): View cache statistics for optimization
     - clear_all_caches(): Clear internal caches (useful for long-running apps)
 """
+
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 __version__ = "0.7.0"
 
@@ -81,15 +83,16 @@ from .url import URL
 
 
 def parse_url(
-    url: str, *,
+    url: str,
+    *,
     allow_custom_scheme: bool = False,
     check_dns: bool = False,
     check_phishing: bool = False,
-    dns_rate_limiter: Optional["DNSRateLimiter"] = None,
+    dns_rate_limiter: DNSRateLimiter | None = None,
     policy: PolicyInput = None,
-    correlation_id: Optional[str] = None,
-    audit: Optional[AuditConfig] = None,
-) -> "URL":
+    correlation_id: str | None = None,
+    audit: AuditConfig | None = None,
+) -> URL:
     """Parse a URL with security checks applied (recommended entry point).
 
     Use this for URLs from untrusted sources. Which checks run is determined
@@ -176,15 +179,16 @@ def parse_url(
 
 
 def parse_url_unsafe(
-    url: str, *,
+    url: str,
+    *,
     allow_custom_scheme: bool = False,
     debug: bool = False,
     check_dns: bool = False,
-    dns_rate_limiter: Optional["DNSRateLimiter"] = None,
+    dns_rate_limiter: DNSRateLimiter | None = None,
     policy: PolicyInput = None,
-    correlation_id: Optional[str] = None,
-    audit: Optional[AuditConfig] = None,
-) -> "URL":
+    correlation_id: str | None = None,
+    audit: AuditConfig | None = None,
+) -> URL:
     """Parse a URL string WITHOUT security checks (for trusted sources only).
 
     WARNING: This function DISABLES security validations. Use ONLY for:
@@ -258,14 +262,13 @@ def parse_url_unsafe(
     )
 
 
-
 def build(
     *scheme_and_host: str,
-    port: Optional[int] = None,
+    port: int | None = None,
     path: str = "/",
-    query: Optional[str] = None,
-    fragment: Optional[str] = None,
-    userinfo: Optional[str] = None,
+    query: str | None = None,
+    fragment: str | None = None,
+    userinfo: str | None = None,
 ) -> str:
     """Build a URL string from individual components with automatic encoding.
 
@@ -324,32 +327,35 @@ def build(
         scheme, host, *_ = scheme_and_host
     else:
         from .exceptions import URLBuildError
+
         raise URLBuildError("At least host must be provided to build a URL.")
 
-    return _builder.Builder().compose({
-        "scheme": scheme,
-        "host": host,
-        "port": port,
-        "path": path,
-        "query": query,
-        "fragment": fragment,
-        "userinfo": userinfo,
-    })
+    return _builder.Builder().compose(
+        {
+            "scheme": scheme,
+            "host": host,
+            "port": port,
+            "path": path,
+            "query": query,
+            "fragment": fragment,
+            "userinfo": userinfo,
+        }
+    )
 
 
 def join(
-    base: "str | URL",
-    reference: "str | URL",
+    base: str | URL,
+    reference: str | URL,
     *,
     allow_custom_scheme: bool = False,
     check_dns: bool = False,
     check_phishing: bool = False,
-    dns_rate_limiter: Optional["DNSRateLimiter"] = None,
+    dns_rate_limiter: DNSRateLimiter | None = None,
     policy: PolicyInput = None,
-    correlation_id: Optional[str] = None,
-    audit: Optional[AuditConfig] = None,
+    correlation_id: str | None = None,
+    audit: AuditConfig | None = None,
     strict_resolution: bool = True,
-) -> "URL":
+) -> URL:
     """Resolve a URI reference against a base URI (RFC 3986 Section 5).
 
     This is the security-preserving equivalent of ``urllib.parse.urljoin``.
@@ -428,6 +434,7 @@ def compose_url(components: Mapping[str, Any]) -> str:
         The composed URL string.
     """
     from . import _builder as _builder
+
     return _builder.Builder().compose(components)
 
 
@@ -436,14 +443,14 @@ def build_secure(
     policy: PolicyInput = None,
     check_dns: bool = False,
     check_phishing: bool = False,
-    dns_rate_limiter: Optional["DNSRateLimiter"] = None,
-    correlation_id: Optional[str] = None,
-    audit: Optional[AuditConfig] = None,
-    port: Optional[int] = None,
+    dns_rate_limiter: DNSRateLimiter | None = None,
+    correlation_id: str | None = None,
+    audit: AuditConfig | None = None,
+    port: int | None = None,
     path: str = "/",
-    query: Optional[str] = None,
-    fragment: Optional[str] = None,
-    userinfo: Optional[str] = None,
+    query: str | None = None,
+    fragment: str | None = None,
+    userinfo: str | None = None,
 ) -> str:
     """Build then validate a URL under a security policy, raising on policy violations.
 
@@ -473,7 +480,6 @@ def build_secure(
     return parsed.as_string()
 
 
-
 def get_cache_info() -> dict:
     """Get statistics about all internal caches.
 
@@ -494,15 +500,17 @@ def get_cache_info() -> dict:
     from . import _builder, _parser, _security, _validation
 
     return {
-        'parser': _parser.get_cache_info(),
-        'validation': _validation.Validator.get_cache_info(),
-        'security': _security.get_cache_info(),
-        'builder': {
-            'percent_encode': _builder.Builder._percent_encode_cached.cache_info()._asdict()
-                if hasattr(_builder.Builder._percent_encode_cached, 'cache_info') else None,
-            'encode_for_query': _builder._encode_for_query.cache_info()._asdict()
-                if hasattr(_builder._encode_for_query, 'cache_info') else None,
-        }
+        "parser": _parser.get_cache_info(),
+        "validation": _validation.Validator.get_cache_info(),
+        "security": _security.get_cache_info(),
+        "builder": {
+            "percent_encode": _builder.Builder._percent_encode_cached.cache_info()._asdict()
+            if hasattr(_builder.Builder._percent_encode_cached, "cache_info")
+            else None,
+            "encode_for_query": _builder._encode_for_query.cache_info()._asdict()
+            if hasattr(_builder._encode_for_query, "cache_info")
+            else None,
+        },
     }
 
 
@@ -525,18 +533,18 @@ def clear_all_caches() -> dict:
     from . import _builder, _parser, _security, _validation
 
     previous = {
-        'parser': _parser.clear_caches(),
-        'validation': _validation.Validator.clear_caches(),
-        'security': _security.clear_caches(),
-        'builder': {}
+        "parser": _parser.clear_caches(),
+        "validation": _validation.Validator.clear_caches(),
+        "security": _security.clear_caches(),
+        "builder": {},
     }
 
-    if hasattr(_builder.Builder._percent_encode_cached, 'cache_clear'):
-        previous['builder']['percent_encode'] = _builder.Builder._percent_encode_cached.cache_info().currsize
+    if hasattr(_builder.Builder._percent_encode_cached, "cache_clear"):
+        previous["builder"]["percent_encode"] = _builder.Builder._percent_encode_cached.cache_info().currsize
         _builder.Builder._percent_encode_cached.cache_clear()
 
-    if hasattr(_builder._encode_for_query, 'cache_clear'):
-        previous['builder']['encode_for_query'] = _builder._encode_for_query.cache_info().currsize
+    if hasattr(_builder._encode_for_query, "cache_clear"):
+        previous["builder"]["encode_for_query"] = _builder._encode_for_query.cache_info().currsize
         _builder._encode_for_query.cache_clear()
 
     return previous
@@ -575,5 +583,5 @@ __all__ = [
     "get_cache_info",
     "join",
     "parse_url",
-    "parse_url_unsafe"
+    "parse_url_unsafe",
 ]

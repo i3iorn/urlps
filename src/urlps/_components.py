@@ -7,14 +7,15 @@ Immutable, auditable, security‑first structures for URL parsing and manipulati
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-QueryPairs = List[Tuple[str, Optional[str]]]
+QueryPairs = list[tuple[str, str | None]]
 
 
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
+
 
 class URLComponentError(Exception):
     """Raised when invalid URL component data is provided."""
@@ -23,6 +24,7 @@ class URLComponentError(Exception):
 # ---------------------------------------------------------------------------
 # Data Models
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True, slots=True)
 class SecurityFinding:
@@ -34,10 +36,11 @@ class SecurityFinding:
         message: Human‑readable description of the issue.
         component: Optional URL component associated with the finding.
     """
+
     severity: str
     code: str
     message: str
-    component: Optional[str] = None
+    component: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,18 +60,18 @@ class ParseResult:
         security_findings: List of security findings discovered during parsing.
     """
 
-    scheme: Optional[str] = None
-    userinfo: Optional[str] = None
-    host: Optional[str] = None
-    port: Optional[int] = None
+    scheme: str | None = None
+    userinfo: str | None = None
+    host: str | None = None
+    port: int | None = None
     path: str = ""
-    query: Optional[str] = None
-    fragment: Optional[str] = None
+    query: str | None = None
+    fragment: str | None = None
     query_pairs: QueryPairs = field(default_factory=list)
-    recognized_scheme: Optional[bool] = None
-    security_findings: List[SecurityFinding] = field(default_factory=list)
+    recognized_scheme: bool | None = None
+    security_findings: list[SecurityFinding] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Return a dictionary representation of the URL components."""
         return {
             "scheme": self.scheme,
@@ -89,20 +92,20 @@ class URLComponents:
     Attributes mirror ParseResult but are intended for building URLs.
     """
 
-    scheme: Optional[str] = None
-    userinfo: Optional[str] = None
-    host: Optional[str] = None
-    port: Optional[int] = None
+    scheme: str | None = None
+    userinfo: str | None = None
+    host: str | None = None
+    port: int | None = None
     path: str = ""
-    query: Optional[str] = None
-    fragment: Optional[str] = None
+    query: str | None = None
+    fragment: str | None = None
     query_pairs: QueryPairs = field(default_factory=list)
 
     # -----------------------------------------------------------------------
     # Public API
     # -----------------------------------------------------------------------
 
-    def with_updates(self, **updates: Any) -> "URLComponents":
+    def with_updates(self, **updates: Any) -> URLComponents:
         """Return a new URLComponents with validated updates applied.
 
         Raises:
@@ -118,9 +121,7 @@ class URLComponents:
             path=self._validated_str(updates.get("path", self.path), allow_empty=True) or "",
             query=self._validated_str(updates.get("query", self.query)),
             fragment=self._validated_str(updates.get("fragment", self.fragment)),
-            query_pairs=self._validated_query_pairs(
-                updates.get("query_pairs", self.query_pairs)
-            ),
+            query_pairs=self._validated_query_pairs(updates.get("query_pairs", self.query_pairs)),
         )
 
     # -----------------------------------------------------------------------
@@ -128,7 +129,7 @@ class URLComponents:
     # -----------------------------------------------------------------------
 
     @staticmethod
-    def _validated_str(value: Any, allow_empty: bool = False) -> Optional[str]:
+    def _validated_str(value: Any, allow_empty: bool = False) -> str | None:
         if value is None:
             return None
         if not isinstance(value, str):
@@ -138,7 +139,7 @@ class URLComponents:
         return value
 
     @staticmethod
-    def _validated_port(value: Any) -> Optional[int]:
+    def _validated_port(value: Any) -> int | None:
         if value is None:
             return None
         if isinstance(value, int) and 0 < value <= 65535:

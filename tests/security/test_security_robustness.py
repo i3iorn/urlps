@@ -7,6 +7,7 @@ Covers the 0.7.0 hardening work:
 * ``check_phishing=True`` no longer silently degrades to no protection.
 * Shared mutable state is synchronised (the project's first concurrency tests).
 """
+
 import socket
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -139,9 +140,7 @@ class TestPhishingDegradation:
             "urlps._security.check_against_phishing_db_detailed",
             return_value=(False, False),
         ):
-            findings = collect_security_findings(
-                "https://example.com/", policy="strict", check_phishing=True
-            )
+            findings = collect_security_findings("https://example.com/", policy="strict", check_phishing=True)
         codes = {f.code for f in findings}
         assert "phishing_db_unavailable" in codes
 
@@ -253,11 +252,7 @@ class TestConcurrency:
 
     def test_rate_limiter_never_exceeds_its_budget(self):
         budget = 5
-        limiter = DNSRateLimiter(
-            DNSRateLimiterConfig(
-                max_lookups_per_second=budget, max_lookups_per_host=10_000
-            )
-        )
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(max_lookups_per_second=budget, max_lookups_per_host=10_000))
         threads = 64
         barrier = threading.Barrier(threads)
         results = []
@@ -300,9 +295,7 @@ class TestConcurrency:
         assert errors == []
 
     def test_stats_snapshot_is_consistent_under_load(self):
-        limiter = DNSRateLimiter(
-            DNSRateLimiterConfig(max_lookups_per_second=1000, max_lookups_per_host=1000)
-        )
+        limiter = DNSRateLimiter(DNSRateLimiterConfig(max_lookups_per_second=1000, max_lookups_per_host=1000))
         errors = []
 
         def reader():

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import warnings
 from enum import Enum
-from typing import Dict, Final, FrozenSet, Set
+from typing import Final
 
 
 class OfficialSchemes(Enum):
@@ -19,7 +19,7 @@ class OfficialSchemes(Enum):
     WSS = "wss"
 
 
-DEFAULT_PORTS: Final[Dict[str, int]] = {
+DEFAULT_PORTS: Final[dict[str, int]] = {
     OfficialSchemes.HTTP.value: 80,
     OfficialSchemes.HTTPS.value: 443,
     OfficialSchemes.FTP.value: 21,
@@ -29,11 +29,11 @@ DEFAULT_PORTS: Final[Dict[str, int]] = {
     OfficialSchemes.WSS.value: 443,
 }
 
-SCHEMES_NO_PORT: Final[Set[str]] = {OfficialSchemes.FILE.value}
+SCHEMES_NO_PORT: Final[set[str]] = {OfficialSchemes.FILE.value}
 
-OFFICIAL_SCHEMES: Final[FrozenSet[str]] = frozenset(s.value for s in OfficialSchemes)
+OFFICIAL_SCHEMES: Final[frozenset[str]] = frozenset(s.value for s in OfficialSchemes)
 
-UNSAFE_SCHEMES: Final[FrozenSet[str]] = frozenset(
+UNSAFE_SCHEMES: Final[frozenset[str]] = frozenset(
     {
         "javascript",
         "data",
@@ -48,9 +48,9 @@ UNSAFE_SCHEMES: Final[FrozenSet[str]] = frozenset(
     }
 )
 
-STANDARD_PORTS: Final[FrozenSet[int]] = frozenset([80, 443, 21, 22, 25, 110, 143, 53])
+STANDARD_PORTS: Final[frozenset[int]] = frozenset([80, 443, 21, 22, 25, 110, 143, 53])
 
-DANGEROUS_PORTS: Final[FrozenSet[int]] = frozenset(
+DANGEROUS_PORTS: Final[frozenset[int]] = frozenset(
     {
         22,  # SSH
         23,  # Telnet
@@ -113,7 +113,7 @@ MAX_FRAGMENT_LENGTH: Final[int] = _get_positive_int_from_env("URLPS_MAX_FRAGMENT
 MAX_USERINFO_LENGTH: Final[int] = _get_positive_int_from_env("URLPS_MAX_USERINFO_LENGTH", 128)
 MAX_IPV6_STRING_LENGTH: Final[int] = _get_positive_int_from_env("URLPS_MAX_IPV6_STRING_LENGTH", 128)
 
-BLOCKED_HOSTNAMES: Final[FrozenSet[str]] = frozenset(
+BLOCKED_HOSTNAMES: Final[frozenset[str]] = frozenset(
     {
         # Localhost variations
         "localhost",

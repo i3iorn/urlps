@@ -99,11 +99,13 @@ class TestDnsConnectPolicyBehavior:
 
     def test_dns_connect_can_fail_open_when_configured(self) -> None:
         fake_addrinfo = [(2, 1, 6, "", ("93.184.216.34", 80))]
-        with patch("urlps._security.dns_guard._resolve_addr_info", return_value=fake_addrinfo), patch(
-            "urlps._security.dns_guard._check_resolved_ips_safe", return_value=True
-        ), patch(
-            "urlps._security.dns_guard._verify_connection_safe",
-            side_effect=lambda *args, **kwargs: kwargs.get("fail_open_on_error", False),
+        with (
+            patch("urlps._security.dns_guard._resolve_addr_info", return_value=fake_addrinfo),
+            patch("urlps._security.dns_guard._check_resolved_ips_safe", return_value=True),
+            patch(
+                "urlps._security.dns_guard._verify_connection_safe",
+                side_effect=lambda *args, **kwargs: kwargs.get("fail_open_on_error", False),
+            ),
         ):
             is_safe, error = check_dns_rebinding_detailed(
                 host="example.com",
@@ -116,11 +118,13 @@ class TestDnsConnectPolicyBehavior:
 
     def test_dns_connect_fails_closed_when_configured(self) -> None:
         fake_addrinfo = [(2, 1, 6, "", ("93.184.216.34", 80))]
-        with patch("urlps._security.dns_guard._resolve_addr_info", return_value=fake_addrinfo), patch(
-            "urlps._security.dns_guard._check_resolved_ips_safe", return_value=True
-        ), patch(
-            "urlps._security.dns_guard._verify_connection_safe",
-            side_effect=lambda *args, **kwargs: kwargs.get("fail_open_on_error", False),
+        with (
+            patch("urlps._security.dns_guard._resolve_addr_info", return_value=fake_addrinfo),
+            patch("urlps._security.dns_guard._check_resolved_ips_safe", return_value=True),
+            patch(
+                "urlps._security.dns_guard._verify_connection_safe",
+                side_effect=lambda *args, **kwargs: kwargs.get("fail_open_on_error", False),
+            ),
         ):
             is_safe, error = check_dns_rebinding_detailed(
                 host="example.com",
@@ -130,5 +134,3 @@ class TestDnsConnectPolicyBehavior:
 
         assert is_safe is False
         assert error == ErrorCode.DNS_CONNECTION_FAILED
-
-

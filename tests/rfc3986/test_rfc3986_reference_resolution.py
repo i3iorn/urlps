@@ -4,6 +4,7 @@ The Section 5.4 example tables are reproduced verbatim and driven as data.
 They are the canonical conformance suite for reference resolution, and the
 abnormal set in particular is where implementations usually diverge.
 """
+
 import pytest
 
 from urlps import InvalidURLError, join, parse_url
@@ -95,8 +96,8 @@ class TestRemoveDotSegments:
     @pytest.mark.parametrize(
         ("path", "expected"),
         [
-            ("/a/b/c/./../../g", "/a/g"),      # RFC 5.2.4 example 1
-            ("mid/content=5/../6", "mid/6"),   # RFC 5.2.4 example 2
+            ("/a/b/c/./../../g", "/a/g"),  # RFC 5.2.4 example 1
+            ("mid/content=5/../6", "mid/6"),  # RFC 5.2.4 example 2
             ("", ""),
             ("/", "/"),
             (".", ""),

@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from threading import Lock
 from time import time
-from typing import TYPE_CHECKING, Any, Dict, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ._security import redact_url_for_logs
 
@@ -24,17 +24,15 @@ class AuditCallback(Protocol):
     def __call__(
         self,
         logged_url: str,
-        parsed_url: Optional["URL"],
-        exception: Optional[Exception],
-    ) -> None:
-        ...
+        parsed_url: URL | None,
+        exception: Exception | None,
+    ) -> None: ...
 
 
 class AuditEventCallback(Protocol):
     """Protocol for structured audit event callbacks."""
 
-    def __call__(self, event: Dict[str, Any]) -> None:
-        ...
+    def __call__(self, event: dict[str, Any]) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -48,8 +46,8 @@ class AuditConfig:
         redact_urls: Whether URLs must be redacted before logging.
     """
 
-    callback: Optional[AuditCallback] = None
-    event_callback: Optional[AuditEventCallback] = None
+    callback: AuditCallback | None = None
+    event_callback: AuditEventCallback | None = None
     redact_urls: bool = True
 
 
@@ -64,7 +62,7 @@ class CallbackFailureMetrics:
     """
 
     failure_count: int
-    last_error: Optional[Exception]
+    last_error: Exception | None
 
 
 class AuditManager:
@@ -77,11 +75,11 @@ class AuditManager:
         - Track callback failure metrics
     """
 
-    def __init__(self, config: Optional[AuditConfig] = None) -> None:
+    def __init__(self, config: AuditConfig | None = None) -> None:
         self._config: AuditConfig = config or AuditConfig()
         self._lock: Lock = Lock()
         self._failure_count: int = 0
-        self._last_error: Optional[Exception] = None
+        self._last_error: Exception | None = None
 
     # ------------------------------------------------------------------
     # Configuration Management
@@ -140,10 +138,10 @@ class AuditManager:
     def invoke(
         self,
         raw_url: str,
-        parsed_url: Optional["URL"],
-        exception: Optional[Exception],
+        parsed_url: URL | None,
+        exception: Exception | None,
         *,
-        correlation_id: Optional[str] = None,
+        correlation_id: str | None = None,
     ) -> None:
         """
         Invoke configured callbacks safely.
@@ -159,9 +157,7 @@ class AuditManager:
         if config.callback is None and config.event_callback is None:
             return
 
-        logged_url = (
-            redact_url_for_logs(raw_url) if config.redact_urls else raw_url
-        )
+        logged_url = redact_url_for_logs(raw_url) if config.redact_urls else raw_url
 
         # Simple callback
         if config.callback is not None:
@@ -191,13 +187,13 @@ class AuditManager:
     def _build_event(
         *,
         logged_url: str,
-        parsed_url: Optional["URL"],
-        exception: Optional[Exception],
-        correlation_id: Optional[str],
-    ) -> Dict[str, Any]:
+        parsed_url: URL | None,
+        exception: Exception | None,
+        correlation_id: str | None,
+    ) -> dict[str, Any]:
         """Build a structured audit event dictionary."""
-        error_type: Optional[str] = None
-        error_code: Optional[str] = None
+        error_type: str | None = None
+        error_code: str | None = None
 
         if exception is not None:
             error_type = type(exception).__name__

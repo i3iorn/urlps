@@ -10,12 +10,14 @@ class TestURL:
         """Line 220: effective_port returns scheme default when no explicit port."""
         from urlps._security.policy import SecurityPolicy
         from urlps.url import URL
+
         url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
         assert url.effective_port == 443
 
     def test_effective_port_returns_none_without_scheme(self):
         """effective_port returns None when no scheme and no port."""
         from urlps.url import URL
+
         # Relative URL
         url = object.__new__(URL)
         url._scheme = None
@@ -27,6 +29,7 @@ class TestURL:
         from urlps._security.policy import SecurityPolicy
         from urlps.exceptions import InvalidURLError
         from urlps.url import URL
+
         # Create URL then strip scheme via copy
         url = URL("https://example.com/path", security_policy=SecurityPolicy.balanced())
         url_no_scheme = url.copy(scheme=None, host=None, port=None)
@@ -37,6 +40,7 @@ class TestURL:
         """Line 452: non-numeric string port raises InvalidURLError."""
         from urlps.exceptions import InvalidURLError
         from urlps.url import _normalize_port
+
         with pytest.raises(InvalidURLError, match="numeric"):
             _normalize_port("abc")
 
@@ -44,6 +48,7 @@ class TestURL:
         """Line 456: non-int/non-string type raises InvalidURLError."""
         from urlps.exceptions import InvalidURLError
         from urlps.url import _normalize_port
+
         with pytest.raises(InvalidURLError, match="integer"):
             _normalize_port([8080])
 
@@ -51,6 +56,7 @@ class TestURL:
         """Line 468: port > 65535 raises InvalidURLError."""
         from urlps.exceptions import InvalidURLError
         from urlps.url import _normalize_port
+
         with pytest.raises(InvalidURLError, match="65535"):
             _normalize_port(99999)
 
@@ -58,6 +64,7 @@ class TestURL:
         """Line 468: port 0 raises InvalidURLError."""
         from urlps.exceptions import InvalidURLError
         from urlps.url import _normalize_port
+
         with pytest.raises(InvalidURLError, match="1 and 65535"):
             _normalize_port(0)
 
@@ -65,6 +72,7 @@ class TestURL:
         """Line 472: invalid override key raises InvalidURLError."""
         from urlps.exceptions import InvalidURLError
         from urlps.url import _validate_copy_overrides
+
         with pytest.raises(InvalidURLError, match="Invalid override"):
             _validate_copy_overrides({"invalid_key": "value"})
 
@@ -72,6 +80,7 @@ class TestURL:
         """Line 475: non-string value for string component raises InvalidURLError."""
         from urlps.exceptions import InvalidURLError
         from urlps.url import _validate_copy_overrides
+
         with pytest.raises(InvalidURLError, match="must be a string"):
             _validate_copy_overrides({"scheme": 123})
 
@@ -79,6 +88,7 @@ class TestURL:
         """Line 399: mask_password masks the password part of userinfo."""
         from urlps._security.policy import SecurityPolicy
         from urlps.url import URL
+
         url = URL(
             "https://admin:secret@example.com/path",
             security_policy=SecurityPolicy.internal(),
@@ -91,6 +101,7 @@ class TestURL:
         """__repr__ returns URL(...) string for valid URL."""
         from urlps._security.policy import SecurityPolicy
         from urlps.url import URL
+
         url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
         r = repr(url)
         assert r.startswith("URL(")
@@ -100,6 +111,7 @@ class TestURL:
         """Line 135: _security_checks() calls validate."""
         from urlps._security.policy import SecurityPolicy
         from urlps.url import URL
+
         url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
         # _security_checks() returns None; findings are stored on the instance.
         assert url._security_checks() is None
@@ -109,6 +121,7 @@ class TestURL:
         """Line 347: validate() with an explicit policy parameter."""
         from urlps._security.policy import SecurityPolicy
         from urlps.url import URL
+
         url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
         findings = url.validate(policy=SecurityPolicy.balanced(), raise_on_error=False)
         assert isinstance(findings, list)
@@ -117,6 +130,7 @@ class TestURL:
         """Lines 313-316: with_netloc injects default port for known scheme."""
         from urlps._security.policy import SecurityPolicy
         from urlps.url import URL
+
         url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
         updated = url.with_netloc("other.example.com")
         assert updated.host == "other.example.com"
@@ -125,6 +139,7 @@ class TestURL:
         """with_netloc on https URL applies default port 443 when not specified."""
         from urlps._security.policy import SecurityPolicy
         from urlps.url import URL
+
         url = URL("https://old.example.com/path", security_policy=SecurityPolicy.balanced())
         new_url = url.with_netloc("new.example.com")
         assert new_url.host == "new.example.com"
@@ -147,6 +162,7 @@ class TestURL:
         """Line 286: compose() with scheme but empty netloc (non-file) raises."""
         from urlps._builder import Builder
         from urlps.exceptions import URLBuildError
+
         builder = Builder()
         with pytest.raises(URLBuildError):
             builder.compose({"scheme": "https", "host": None})
@@ -156,14 +172,15 @@ class TestURL:
         from urlps._security.policy import SecurityPolicy
         from urlps.exceptions import InvalidURLError
         from urlps.url import URL
+
         # Build URL that passes initial parse but fails validation
         url = URL(
             "https://example.com/",
             security_policy=SecurityPolicy.balanced(),
         )
         with pytest.raises(InvalidURLError):
-            url.validate(policy=SecurityPolicy.strict(), raise_on_error=True,
-                          raw_url="http://127.0.0.1/")
+            url.validate(policy=SecurityPolicy.strict(), raise_on_error=True, raw_url="http://127.0.0.1/")
+
 
 class TestURLAdditional:
     """Cover remaining url.py lines that need simple tests."""
@@ -171,6 +188,7 @@ class TestURLAdditional:
     def _make_url(self, url_str: str = "https://example.com/path?k=v"):
         from urlps._security.policy import SecurityPolicy
         from urlps.url import URL
+
         return URL(url_str, security_policy=SecurityPolicy.balanced())
 
     def test_is_absolute_true(self):
@@ -182,6 +200,7 @@ class TestURLAdditional:
         """is_absolute returns False when no host (and no scheme)."""
         from urlps._security.policy import SecurityPolicy
         from urlps.url import URL
+
         url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
         url_bare = url.copy(scheme=None, host=None, port=None)
         assert url_bare.is_absolute is False
@@ -202,6 +221,7 @@ class TestURLAdditional:
         """with_userinfo() sets the userinfo component."""
         from urlps._security.policy import SecurityPolicy
         from urlps.url import URL
+
         url = URL("https://example.com/", security_policy=SecurityPolicy.internal())
         new_url = url.with_userinfo("user:pass")
         assert new_url.userinfo == "user:pass"
@@ -210,6 +230,7 @@ class TestURLAdditional:
         """with_userinfo(None) removes userinfo."""
         from urlps._security.policy import SecurityPolicy
         from urlps.url import URL
+
         url = URL("https://user:pass@example.com/", security_policy=SecurityPolicy.internal())
         new_url = url.with_userinfo(None)
         assert new_url.userinfo is None
@@ -247,6 +268,7 @@ class TestURLAdditional:
     def test_normalize_port_valid_digit_string(self):
         """_normalize_port with valid numeric string returns int."""
         from urlps.url import _normalize_port
+
         assert _normalize_port("8080") == 8080
         assert _normalize_port("443") == 443
         assert _normalize_port("1") == 1
@@ -255,6 +277,7 @@ class TestURLAdditional:
         """Line 475: non-string userinfo raises InvalidURLError."""
         from urlps.exceptions import InvalidURLError
         from urlps.url import _validate_copy_overrides
+
         with pytest.raises(InvalidURLError, match="userinfo must be"):
             _validate_copy_overrides({"userinfo": 999})
 
@@ -262,6 +285,7 @@ class TestURLAdditional:
         """effective_port returns scheme default when _port is None."""
         from urlps._security.policy import SecurityPolicy
         from urlps.url import URL
+
         url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
         # Force explicit port=None via copy
         url_no_port = url.copy(port=None)
@@ -271,6 +295,7 @@ class TestURLAdditional:
         """as_string with mask_password=True and no ':' in userinfo is unchanged."""
         from urlps._security.policy import SecurityPolicy
         from urlps.url import URL
+
         url = URL("https://user@example.com/", security_policy=SecurityPolicy.internal())
         masked = url.as_string(mask_password=True)
         assert "user" in masked

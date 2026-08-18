@@ -7,38 +7,46 @@ or exploit the URL parser. Install hypothesis for these tests:
 Run with:
     pytest tests/test_security_fuzzing.py -v
 """
+
 import pytest
 
 try:
     from hypothesis import assume, given, settings
     from hypothesis import strategies as st
+
     HAS_HYPOTHESIS = True
 except ImportError:
     HAS_HYPOTHESIS = False
+
     # Create no-op decorators for when hypothesis is not installed
     def given(*args, **kwargs):
         def decorator(func):
             return pytest.mark.skip(reason="hypothesis not installed")(func)
+
         return decorator
 
     def settings(*args, **kwargs):
         def decorator(func):
             return func
+
         return decorator
 
     class st:
         @staticmethod
         def text(*args, **kwargs):
             return None
+
         @staticmethod
         def characters(*args, **kwargs):
             return None
+
         @staticmethod
         def integers(*args, **kwargs):
             return None
 
     def assume(condition):
         pass
+
 
 from urlps import InvalidURLError, URLParseError, _security, parse_url, parse_url_unsafe
 from urlps._validation import Validator as ValidatorClass
@@ -62,32 +70,32 @@ class TestParserFuzzing:
     @settings(max_examples=300)
     def test_parser_with_scheme_prefix(self, url_input):
         """Test parser with various scheme prefixes."""
-        for scheme in ['http://', 'https://', 'ftp://', 'file://', 'ws://']:
+        for scheme in ["http://", "https://", "ftp://", "file://", "ws://"]:
             try:
                 parse_url_unsafe(scheme + url_input)
             except (URLParseError, InvalidURLError, ValueError, TypeError):
                 pass  # Expected for invalid input
 
-    @given(st.text(alphabet='abcdefghijklmnopqrstuvwxyz0123456789.-', min_size=1, max_size=500))
+    @given(st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789.-", min_size=1, max_size=500))
     @settings(max_examples=300)
     def test_host_validation_completes(self, host_input):
         """Ensure host validation completes in reasonable time (ReDoS protection)."""
         # This should never hang due to catastrophic backtracking
         ValidatorClass.is_valid_host(host_input)
 
-    @given(st.text(alphabet='0123456789.', min_size=1, max_size=50))
+    @given(st.text(alphabet="0123456789.", min_size=1, max_size=50))
     @settings(max_examples=200)
     def test_ipv4_validation_completes(self, ip_input):
         """Ensure IPv4 validation completes quickly."""
         ValidatorClass.is_valid_ipv4(ip_input)
 
-    @given(st.text(alphabet='0123456789abcdefABCDEF:[]%', min_size=1, max_size=100))
+    @given(st.text(alphabet="0123456789abcdefABCDEF:[]%", min_size=1, max_size=100))
     @settings(max_examples=200)
     def test_ipv6_validation_completes(self, ip_input):
         """Ensure IPv6 validation completes quickly."""
         ValidatorClass.is_valid_ipv6(ip_input)
 
-    @given(st.text(alphabet='abcdefghijklmnopqrstuvwxyz0123456789:@', min_size=1, max_size=500))
+    @given(st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789:@", min_size=1, max_size=500))
     @settings(max_examples=300)
     def test_userinfo_validation_completes(self, userinfo_input):
         """Ensure userinfo validation completes in reasonable time (ReDoS protection).

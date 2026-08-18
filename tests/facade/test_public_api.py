@@ -7,6 +7,7 @@ Covers the 0.7.0 API-honesty work:
 * ``copy()`` validates components as strictly as ``parse_url`` does.
 * The redundant ``strict`` parameter is gone.
 """
+
 import pytest
 
 import urlps

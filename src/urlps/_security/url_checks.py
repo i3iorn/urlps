@@ -1,11 +1,11 @@
 """URL string-level security checks and redaction helpers."""
+
 from __future__ import annotations
 
 import ipaddress
 import re
 import unicodedata
 from functools import lru_cache
-from typing import Optional, Set, Tuple
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlsplit, urlunparse, urlunsplit
 
 from .._patterns import PATTERNS
@@ -86,7 +86,7 @@ def has_mixed_scripts(host: str) -> bool:
     except (UnicodeEncodeError, UnicodeDecodeError):
         pass
 
-    scripts: Set[str] = set()
+    scripts: set[str] = set()
     try:
         for char in host:
             if char.isalpha():
@@ -139,7 +139,7 @@ def _has_slash_before_domain_dot(after_scheme: str) -> bool:
     return slash_pos != -1 and dot_pos != -1 and slash_pos < dot_pos
 
 
-def _extract_authority_and_rest(after_scheme: str) -> Tuple[str, str]:
+def _extract_authority_and_rest(after_scheme: str) -> tuple[str, str]:
     end = len(after_scheme)
     for terminator in ("/", "?", "#"):
         idx = after_scheme.find(terminator)
@@ -188,7 +188,7 @@ def has_parser_confusion(url: str) -> bool:
     if marker == -1:
         return False
 
-    after_scheme = url[marker + 3:]
+    after_scheme = url[marker + 3 :]
 
     if _has_mixed_path_separators(after_scheme):
         return True
@@ -217,9 +217,7 @@ def has_query_injection(query_string: str) -> bool:
         return False
 
     query_lower = query_string.lower()
-    normalized_spaces = (
-        query_lower.replace("%20", " ").replace("%09", " ").replace("%0a", " ")
-    )
+    normalized_spaces = query_lower.replace("%20", " ").replace("%09", " ").replace("%0a", " ")
     query_normalized = " ".join(normalized_spaces.split())
 
     xss_patterns = [
@@ -302,13 +300,13 @@ def has_query_injection(query_string: str) -> bool:
         if pattern in ["%3c", "%3e"]:
             idx = query_lower.find(pattern)
             if idx != -1 and idx + len(pattern) < len(query_lower):
-                following = query_lower[idx + len(pattern):idx + len(pattern) + 10]
+                following = query_lower[idx + len(pattern) : idx + len(pattern) + 10]
                 if any(kw in following for kw in ["script", "iframe", "object", "svg", "body", "img"]):
                     return True
         elif pattern in ["%27", "%22"]:
             idx = query_lower.find(pattern)
             if idx != -1:
-                context = query_lower[max(0, idx - 10): min(len(query_lower), idx + 20)]
+                context = query_lower[max(0, idx - 10) : min(len(query_lower), idx + 20)]
                 if any(kw in context for kw in ["or", "and", "union", "select", "1=1"]):
                     return True
         else:
@@ -333,11 +331,11 @@ def has_credentials(url: str) -> bool:
     return "@" in parsed.netloc
 
 
-def extract_host_and_path(url: str) -> Tuple[str, str]:
+def extract_host_and_path(url: str) -> tuple[str, str]:
     """Extract host and path portions from URL for security checks."""
     marker = find_authority_marker(url)
     if marker != -1:
-        after_scheme = url[marker + 3:]
+        after_scheme = url[marker + 3 :]
     elif url.startswith("//"):
         after_scheme = url[2:]
     else:
@@ -345,7 +343,7 @@ def extract_host_and_path(url: str) -> Tuple[str, str]:
 
     if "/" in after_scheme:
         host_portion = after_scheme.split("/", 1)[0]
-        path_portion = after_scheme[after_scheme.find("/"):]
+        path_portion = after_scheme[after_scheme.find("/") :]
     else:
         host_portion, path_portion = after_scheme, ""
 
@@ -363,7 +361,7 @@ def extract_host_and_path(url: str) -> Tuple[str, str]:
     return host_portion, path_portion
 
 
-def is_dangerous_port(port: Optional[int], block_dangerous_ports: bool = False) -> bool:
+def is_dangerous_port(port: int | None, block_dangerous_ports: bool = False) -> bool:
     """Check if port is commonly exploited."""
     if not block_dangerous_ports or port is None:
         return False
@@ -530,7 +528,7 @@ def is_non_canonical_url(url: str) -> bool:
 
         parsed = urlparse(url)
 
-        after_scheme = url[marker + 3:]
+        after_scheme = url[marker + 3 :]
         netloc_end = len(after_scheme)
         for char in ["/", "?", "#"]:
             pos = after_scheme.find(char)
@@ -610,7 +608,7 @@ def is_non_canonical_url(url: str) -> bool:
     return False
 
 
-def get_canonical_url(url: str) -> Optional[str]:
+def get_canonical_url(url: str) -> str | None:
     """Convert URL to canonical form."""
     if not isinstance(url, str) or not url or find_authority_marker(url) == -1:
         return None
@@ -690,4 +688,3 @@ def get_canonical_url(url: str) -> Optional[str]:
         return urlunparse((scheme, netloc, path, parsed.params, query, fragment))
     except (ValueError, AttributeError):
         return None
-

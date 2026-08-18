@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import logging
-import socket
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Optional, Set, Tuple
 from urllib import request
 from urllib.error import URLError
 
@@ -25,18 +23,21 @@ logger = logging.getLogger(__name__)
 # Data Models
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class PhishingDatabase:
     """Immutable phishing database container."""
-    hostnames: Set[str] = field(default_factory=set)
-    last_refresh_epoch: Optional[float] = None
-    last_error: Optional[str] = None
+
+    hostnames: set[str] = field(default_factory=set)
+    last_refresh_epoch: float | None = None
+    last_error: str | None = None
     error_count: int = 0
 
 
 # ---------------------------------------------------------------------------
 # Core Manager
 # ---------------------------------------------------------------------------
+
 
 class PhishingDatabaseManager:
     """Manages secure retrieval and caching of phishing hostnames."""
@@ -118,7 +119,6 @@ class PhishingDatabaseManager:
             error_count=0,
         )
 
-
     # ---------------------------- Internal ----------------------------- #
 
     def _download(self) -> PhishingDatabase:
@@ -130,7 +130,6 @@ class PhishingDatabaseManager:
                 PHISHING_DATABASE_URL,
                 timeout=DEFAULT_DNS_TIMEOUT,
             ) as response:
-
                 if response.status != 200:
                     return PhishingDatabase(
                         hostnames=set(),
@@ -149,7 +148,7 @@ class PhishingDatabaseManager:
                     )
                 content = raw_bytes.decode("utf-8", errors="ignore")
 
-        except (URLError, socket.timeout, OSError, ValueError) as exc:
+        except (TimeoutError, URLError, OSError, ValueError) as exc:
             return PhishingDatabase(
                 hostnames=set(),
                 last_refresh_epoch=time.time(),
@@ -167,9 +166,9 @@ class PhishingDatabaseManager:
         )
 
     @staticmethod
-    def _parse_hostnames(content: str) -> Set[str]:
+    def _parse_hostnames(content: str) -> set[str]:
         """Parse and validate hostnames from downloaded content."""
-        valid: Set[str] = set()
+        valid: set[str] = set()
 
         for line in content.splitlines():
             candidate = line.strip().lower()
@@ -199,7 +198,7 @@ def check_against_phishing_db(host: str) -> bool:
     return _GLOBAL_MANAGER.check(host)
 
 
-def check_against_phishing_db_detailed(host: str) -> Tuple[bool, bool]:
+def check_against_phishing_db_detailed(host: str) -> tuple[bool, bool]:
     """Return ``(is_phishing, database_available)``.
 
     ``check_against_phishing_db`` alone cannot distinguish "this host is not a
@@ -221,6 +220,7 @@ def get_phishing_db_info() -> dict:
     """Return phishing database metadata."""
     return _GLOBAL_MANAGER.info()
 
+
 def clear_phishing_db() -> None:
     """Clear phishing database."""
     _GLOBAL_MANAGER.clear()
@@ -233,6 +233,5 @@ __all__ = [
     "check_against_phishing_db_detailed",
     "clear_phishing_db",
     "get_phishing_db_info",
-    "refresh_phishing_db"
+    "refresh_phishing_db",
 ]
-
