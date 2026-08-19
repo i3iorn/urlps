@@ -22,8 +22,10 @@ actual `from .` import statements, not inferred):
 constants.py, exceptions.py, _patterns.py, _components.py, _resolve.py
         |  (no dependencies on the rest of the package)
         v
-_validation.py, _builder.py, _relative.py
+_validation.py, _builder.py, _relative.py, _normalize.py
 _security/ip_utils.py, _security/policy.py, _security/url_checks.py
+_security/_unicode/ (scripts.py, confusables.py, uts46.py)
+_security/host_analysis.py
         |
         v
 _security/dns_guard.py, _security/phishing_db.py
@@ -32,8 +34,8 @@ _security/dns_guard.py, _security/phishing_db.py
 _security/__init__.py            (aggregates every _security/* submodule)
         |
         v
-_parser.py                       (pure syntax; does NOT import _security)
-        |
+_parser.py                       (syntax + IDNA encoding; imports one thing
+        |                          from _security -- see below)
         v
 _audit.py                        (imports _security, for redact_url_for_logs)
         |
@@ -41,17 +43,21 @@ _audit.py                        (imports _security, for redact_url_for_logs)
 url.py                           (the URL class; ties parser + security + audit together)
         |
         v
-__init__.py                      (public API: parse_url, parse_url_unsafe, join, build, ...)
+__init__.py                      (public API: parse_url, parse_url_local, join, build, ...)
 ```
 
 ## The parse/validate split (the important part)
 
-**`_parser.py` knows nothing about security.** It resolves the grammar of a
-URL — scheme, authority, path, query, fragment, percent-encoding,
-`.`/`..` normalization — and rejects only what's structurally invalid
-(malformed IPv6 literals, control characters, oversized components). It does
-not know what SSRF is, does not check for private IP ranges, and does not
-import anything from `_security/`.
+**`_parser.py` resolves grammar, not policy.** It handles scheme, authority,
+path, query, fragment, percent-encoding, `.`/`..` normalization, and
+IDNA/UTS-46 host encoding — and rejects only what's structurally invalid
+(malformed IPv6 literals, control characters, oversized components, a host
+that IDNA itself refuses). The one import from `_security` is
+`_security._unicode.uts46.to_ascii`: IDNA encoding has to happen somewhere in
+the parse path so `URL.host` is always ASCII, and `_unicode/` is that logic's
+home regardless of caller. It runs unconditionally and is not policy-gated —
+it does not decide anything is *unsafe*, only what a host's canonical ASCII
+form is.
 
 **`url.py` runs security validation as a separate pass after parsing
 succeeds.** `URL.__init__` calls `self._parser.parse(url)` first, then
@@ -59,12 +65,12 @@ succeeds.** `URL.__init__` calls `self._parser.parse(url)` first, then
 A syntactically valid URL can still be rejected at that second step (e.g.
 `http://127.0.0.1/` parses fine and is rejected only by the SSRF check).
 
-This split is why `parse_url_unsafe()` and `parse_url()` can share the exact
+This split is why `parse_url_local()` and `parse_url()` can share the exact
 same parser: the difference between them is entirely which `SecurityPolicy`
 gets applied in the second pass, not a different parsing codepath. If you're
-adding a new check, it belongs in `_security/`, not `_parser.py` — a check
-added to the parser runs unconditionally for both functions and can't be
-gated by policy the way everything else is.
+adding a new *policy-gated* check, it belongs in `_security/`, not
+`_parser.py` — a check added to the parser runs unconditionally for every
+caller and can't be gated by policy the way everything else is.
 
 ## Where "relative URL" logic lives
 
@@ -100,12 +106,20 @@ injection). The submodules:
   validation. Every predicate here is expected to **fail closed**: an
   address that can't be parsed or verified is treated as unsafe, never as
   safe-by-default. If you add a new check here, preserve that invariant.
-- **`url_checks.py`** — the largest submodule (~700 lines) and doing the
-  most unrelated things: canonicalization, credential detection,
-  homograph/mixed-script detection, parser-confusion detection, and the
-  query-injection heuristic. See `docs/design/heuristics.md` for why two of
-  these checks (`has_query_injection`, `has_suspicious_punycode`) are
-  known-weak and left deliberately undecided rather than trusted.
+- **`url_checks.py`** — credential detection, parser-confusion detection,
+  path traversal, open redirect, double encoding. Canonicalization moved to
+  `_normalize.py` (applied unconditionally, not policy-gated) and homograph
+  detection moved to `_unicode/` + `host_analysis.py` in 1.0 — both were
+  originally here and grew large enough to want their own home.
+- **`_unicode/` + `host_analysis.py`** — Unicode host analysis: real
+  Script-property resolution and UTS-39 per-label mixed-script/confusable
+  detection (`_unicode/scripts.py`, `_unicode/confusables.py`), and the
+  single IDNA/UTS-46 entry point (`_unicode/uts46.py`) that both `_parser.py`
+  and `_validation.py` delegate to, so host encoding can't disagree between
+  them. `host_analysis.py` is the policy-facing layer: it decodes Punycode
+  before analysing, because an A-label host is ASCII and a script check that
+  skips ASCII input would miss exactly the homograph attacks that travel
+  encoded.
 - **`dns_guard.py`** — DNS rebinding checks and the `DNSRateLimiter`.
   Performs real network I/O (resolution + a verification connect) when
   `check_dns=True`; see its module docstring for the timeout/thread-pool
@@ -113,9 +127,8 @@ injection). The submodules:
 - **`phishing_db.py`** — the phishing-domain database: lazy download,
   cooldown-gated retry, thread-safe refresh.
 - **`policy.py`** — `SecurityPolicy` and the `"strict"`/`"balanced"`/
-  `"internal"` presets. This is the single place that decides which checks
-  in `url_checks.py`/`ip_utils.py`/`dns_guard.py`/`phishing_db.py` actually
-  run for a given parse.
+  `"internal"`/`"local"` presets. This is the single place that decides
+  which checks across the other submodules actually run for a given parse.
 
 ## Public API surface
 

@@ -9,7 +9,7 @@ description = "Secure, RFC 3986-compliant URL parsing with SSRF, homograph and t
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
 authors = [
-  { name = "urlps maintainers" },
+  { name = "Björn Schrammel", email = "github@schrammel.dev" },
 ]
 license = "MIT"
 license-files = ["LICENSE"]
