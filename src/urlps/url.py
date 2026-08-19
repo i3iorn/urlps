@@ -17,12 +17,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from _helpers import _check_type, _normalize_port
-
 from ._audit import NO_OP_AUDIT_MANAGER, AuditConfig, AuditManager
 from ._builder import Builder, QueryPairs
+from ._comparison import _URLComparison
 from ._components import SecurityFinding
-from ._parser import Parser, normalize_host
+from ._helpers import _check_type, _normalize_port
+from ._mutations import _URLMutations
+from ._parser import Parser
 from ._relative import build_relative_reference, parse_relative_reference, round_trip_relative
 from ._security import (
     SecurityPolicy,
@@ -30,11 +31,10 @@ from ._security import (
     has_parser_confusion,
     has_path_traversal,
     is_open_redirect_risk,
-    redact_url_for_logs,
-    validate_url_security,
 )
-from ._validation import Validator, is_valid_userinfo
-from .constants import DEFAULT_PORTS, MAX_URL_LENGTH, PASSWORD_MASK
+from ._serialization import _URLSerialization
+from ._validation import Validator, _URLValidation
+from .constants import DEFAULT_PORTS, MAX_URL_LENGTH
 from .exceptions import InvalidURLError, URLParseError
 
 
@@ -291,37 +291,7 @@ class URL:
         Raises:
             InvalidURLError: If overrides are invalid.
         """
-        self._validate_copy_overrides(overrides)
-        components = self._to_dict()
-        components.update(overrides)
-        components["port"] = _normalize_port(components.get("port"))
-        # copy() does not go through the parser, so the RFC 3986 §6.2.2
-        # host normalization applied there has to be re-applied here --
-        # otherwise with_host("EXAMPLE.COM.") would hand back a URL whose
-        # .host defeats the caller's allowlist, reintroducing exactly the
-        # bypass that normalization exists to close.
-        host_override = components.get("host")
-        if isinstance(host_override, str):
-            components["host"] = normalize_host(host_override)
-        self._reconcile_query_components(components, overrides)
-
-        new_url = object.__new__(URL)
-        # Same reason as in __init__: __setattr__ reads this on every write.
-        object.__setattr__(new_url, "_frozen", False)
-        new_url.recognized_scheme = self.recognized_scheme
-        new_url._parser = self._parser
-        new_url._builder = self._builder
-        new_url._audit_manager = self._audit_manager
-        new_url._debug = self._debug
-        new_url._check_dns = self._check_dns
-        new_url._check_phishing = self._check_phishing
-        new_url._security_policy = self._security_policy
-        new_url._correlation_id = self._correlation_id
-        new_url._apply_parsed(components)
-        new_url._security_findings = []
-        new_url._security_findings = new_url.validate(raise_on_error=True)
-        object.__setattr__(new_url, "_frozen", True)
-        return new_url
+        return _URLMutations.copy(self, **overrides)
 
     def _reconcile_query_components(
         self,
@@ -335,18 +305,7 @@ class URL:
         other, so the stale one has to be re-derived from whichever the caller
         actually supplied.
         """
-        overrode_query = "query" in overrides
-        overrode_pairs = "query_pairs" in overrides
-        if overrode_query == overrode_pairs:
-            # Neither (already consistent) or both (caller owns both).
-            return
-
-        if overrode_query:
-            query = components.get("query")
-            components["query_pairs"] = self._builder.parse_query(query) if query else []
-        else:
-            pairs = components.get("query_pairs") or []
-            components["query"] = self._builder.serialize_query(pairs) if pairs else None
+        _URLMutations._reconcile_query_components(components, overrides)
 
     def with_scheme(self, scheme: str | None) -> URL:
         """Return new URL with different scheme.
@@ -357,87 +316,55 @@ class URL:
         still rejected -- `copy()`/`_validate_copy_overrides` already enforces
         that and validates the scheme format itself.
         """
-        if scheme is not None and not isinstance(scheme, str):
-            raise InvalidURLError(f"Invalid scheme: {scheme!r}")
-        return self.copy(scheme=scheme)
+        return _URLMutations.with_scheme(self, scheme)
 
     def with_host(self, host: str | None) -> URL:
         """Return new URL with different host."""
-        return self.copy(host=host)
+        return _URLMutations.with_host(self, host)
 
     def with_port(self, port: int | None) -> URL:
         """Return new URL with different port."""
-        return self.copy(port=port)
+        return _URLMutations.with_port(self, port)
 
     def with_path(self, path: str) -> URL:
         """Return new URL with different path."""
-        return self.copy(path=path)
+        return _URLMutations.with_path(self, path)
 
     def with_query(self, query: str | None) -> URL:
         """Return new URL with different query string."""
-        return self.copy(query=query)
+        return _URLMutations.with_query(self, query)
 
     def with_fragment(self, fragment: str | None) -> URL:
         """Return new URL with different fragment."""
-        return self.copy(fragment=fragment)
+        return _URLMutations.with_fragment(self, fragment)
 
     def with_userinfo(self, userinfo: str | None) -> URL:
         """Return new URL with different userinfo."""
-        return self.copy(userinfo=userinfo)
+        return _URLMutations.with_userinfo(self, userinfo)
 
     def with_netloc(self, netloc: str) -> URL:
         """Return new URL with different netloc (userinfo@host:port)."""
-        parser = Parser()
-        userinfo, host, port = parser.parse_netloc(netloc, require_host=bool(netloc))
-        if port is None and self._scheme and host:
-            port = DEFAULT_PORTS.get(self._scheme.lower())
-        return self.copy(userinfo=userinfo, host=host, port=port)
+        return _URLMutations.with_netloc(self, netloc)
 
     def with_query_param(self, key: str, value: str | None = None) -> URL:
         """Return new URL with added query parameter."""
-        _check_type(key, str, "key")
-        normalized_key = str(key)
-        new_query = self._builder.add_param(self._query, normalized_key, value)
-        return self.copy(query=new_query)
+        return _URLMutations.with_query_param(self, key, value)
 
     def without_query_param(self, key: str) -> URL:
         """Return new URL with query parameter removed."""
-        _check_type(key, str, "key")
-        normalized_key = str(key)
-        new_query = self._builder.remove_param(self._query, normalized_key)
-        return self.copy(query=new_query)
+        return _URLMutations.without_query_param(self, key)
 
     def without_query(self) -> URL:
         """Return new URL without query string or fragment."""
-        return self.copy(query=None, query_pairs=[], fragment=None)
+        return _URLMutations.without_query(self)
 
     def same_origin(self, other: URL) -> bool:
         """Check if this URL has the same origin as another URL."""
-        return self.origin == other.origin
+        return _URLMutations.same_origin(self, other)
 
     def canonicalize(self) -> URL:
         """Return a canonicalized copy of this URL (lowercase scheme/host, sorted query, normalized path)."""
-        canonical_scheme = self._scheme.lower() if self._scheme else None
-        canonical_host = str(self._host).lower() if self._host else None
-        canonical_port = self._port
-        if canonical_scheme and canonical_port == DEFAULT_PORTS.get(canonical_scheme):
-            canonical_port = None
-        canonical_path = self._builder.normalize_path(self._path) if self._path else ""
-        sorted_pairs = sorted(self._query_pairs, key=lambda x: (x[0], x[1] or ""))
-        canonical_query = self._builder.serialize_query(sorted_pairs) if sorted_pairs else None
-
-        # Pass query and query_pairs together rather than writing _query_pairs
-        # afterwards: _reconcile_query_components treats "both supplied" as
-        # "caller owns both" and keeps the sort order, which a post-hoc write
-        # would otherwise have to smuggle past the immutability guard.
-        return self.copy(
-            scheme=canonical_scheme,
-            host=canonical_host,
-            port=canonical_port,
-            path=canonical_path,
-            query=canonical_query,
-            query_pairs=sorted_pairs,
-        )
+        return _URLSerialization.canonicalize(self)
 
     def __copy__(self) -> URL:
         """Immutable, so a shallow copy can safely be the object itself."""
@@ -473,19 +400,11 @@ class URL:
 
     def is_semantically_equal(self, other: URL) -> bool:
         """Check semantic equality after normalization."""
-        if not isinstance(other, URL):
-            return False
-        return self.canonicalize().as_string() == other.canonicalize().as_string()
+        return _URLComparison.is_semantically_equal(self, other)
 
     def as_string(self, *, mask_password: bool = False) -> str:
         """Return URL as string, optionally masking password in userinfo."""
-        components = self._to_dict()
-        if mask_password and components.get("userinfo"):
-            userinfo = components["userinfo"]
-            if ":" in userinfo:
-                username, _, _ = userinfo.partition(":")
-                components["userinfo"] = f"{username}:{PASSWORD_MASK}"
-        return self._builder.compose(components)
+        return _URLSerialization.as_string(self, mask_password=mask_password)
 
     @property
     def security_findings(self) -> list[SecurityFinding]:
@@ -506,35 +425,15 @@ class URL:
         ``validate(policy=stricter)`` can be used to ask a hypothetical
         question without rewriting the URL's own recorded verdict.
         """
-        effective_policy = policy if policy is not None else self._security_policy
-        candidate_url = raw_url if raw_url is not None else self.as_string()
-        check_dns = None if policy is not None else self._check_dns
-        check_phishing = None if policy is not None else self._check_phishing
-        findings = validate_url_security(
-            candidate_url,
-            policy=effective_policy,
-            check_dns=check_dns,
-            check_phishing=check_phishing,
-            raise_on_error=raise_on_error,
-        )
-        return list(findings)
+        return _URLValidation.validate_security(self, policy=policy, raise_on_error=raise_on_error, raw_url=raw_url)
 
     def redacted(self) -> str:
         """Return a log-safe representation with sensitive values redacted."""
-        return redact_url_for_logs(self.as_string())
+        return _URLSerialization.redacted(self)
 
     def _to_dict(self) -> dict[str, Any]:
         """Convert URL to dictionary of components."""
-        return {
-            "scheme": self._scheme,
-            "userinfo": self._userinfo,
-            "host": self._host,
-            "port": self._port,
-            "path": self._path,
-            "query": self._query,
-            "fragment": self._fragment,
-            "query_pairs": list(self._query_pairs),
-        }
+        return _URLSerialization.to_dict(self)
 
     def __str__(self) -> str:
         """Return the URL as a string."""
@@ -550,45 +449,27 @@ class URL:
 
     def __hash__(self) -> int:
         """Return a hash of the URL object (for use in sets/dicts)."""
-        return hash((self._scheme, self._userinfo, self._host, self._port, self._path, self._query, self._fragment))
+        return _URLComparison.hash_url(self)
 
-    def __eq__(self, other: object) -> bool:
+    def __eq__(self, other: object) -> Any:
         """Check equality with another URL object."""
-        if not isinstance(other, URL):
-            return NotImplemented
-        return self.as_string() == other.as_string()
+        return _URLComparison.equals(self, other)
 
-    def __lt__(self, other: object) -> bool:
+    def __lt__(self, other: object) -> Any:
         """Compare URLs lexicographically for sorting."""
-        if isinstance(other, URL):
-            return self.as_string() < other.as_string()
-        elif isinstance(other, str):
-            return self.as_string() < other
-        raise NotImplementedError
+        return _URLComparison.compare_lt(self, other)
 
-    def __le__(self, other: object) -> bool:
+    def __le__(self, other: object) -> Any:
         """Compare URLs lexicographically for sorting."""
-        if isinstance(other, URL):
-            return self.as_string() <= other.as_string()
-        elif isinstance(other, str):
-            return self.as_string() <= other
-        raise NotImplementedError
+        return _URLComparison.compare_le(self, other)
 
-    def __gt__(self, other: object) -> bool:
+    def __gt__(self, other: object) -> Any:
         """Compare URLs lexicographically for sorting."""
-        if isinstance(other, URL):
-            return self.as_string() > other.as_string()
-        elif isinstance(other, str):
-            return self.as_string() > other
-        raise NotImplementedError
+        return _URLComparison.compare_gt(self, other)
 
-    def __ge__(self, other: object) -> bool:
+    def __ge__(self, other: object) -> Any:
         """Compare URLs lexicographically for sorting."""
-        if isinstance(other, URL):
-            return self.as_string() >= other.as_string()
-        elif isinstance(other, str):
-            return self.as_string() >= other
-        raise NotImplementedError
+        return _URLComparison.compare_ge(self, other)
 
     @classmethod
     def _validate_copy_overrides(cls, overrides: dict[str, Any]) -> None:
@@ -600,50 +481,16 @@ class URL:
         that ``parse_url`` would have rejected -- component validation on the
         mutation path was strictly weaker than on the parse path.
         """
-        valid_keys = {"scheme", "host", "port", "path", "query", "fragment", "userinfo", "query_pairs"}
-        invalid_keys = set(overrides.keys()) - valid_keys
-        if invalid_keys:
-            raise InvalidURLError(f"Invalid override(s): {', '.join(sorted(invalid_keys))}")
-
-        for key in ("scheme", "host", "path", "query", "fragment"):
-            if key in overrides and overrides[key] is not None:
-                if not isinstance(overrides[key], str):
-                    raise InvalidURLError(f"{key} must be a string")
-
-        if "userinfo" in overrides and overrides["userinfo"] is not None:
-            if not isinstance(overrides["userinfo"], str):
-                raise InvalidURLError("userinfo must be a string")
-            if not is_valid_userinfo(overrides["userinfo"]):
-                raise InvalidURLError("Invalid userinfo format.")
-
-        scheme = overrides.get("scheme")
-        if scheme is not None and not Validator.is_valid_scheme(scheme.lower()):
-            raise InvalidURLError(f"Invalid scheme: {scheme!r}", value=scheme, component="scheme")
-
-        host = overrides.get("host")
-        if host is not None and not cls._is_valid_host_override(host):
-            raise InvalidURLError(f"Invalid host: {host!r}", value=host, component="host")
-
-        fragment = overrides.get("fragment")
-        if fragment is not None and not Validator.is_valid_fragment(fragment):
-            raise InvalidURLError(f"Invalid fragment: {fragment!r}", value=fragment, component="fragment")
-
-        for key in ("path", "query"):
-            value = overrides.get(key)
-            if value is not None and not Validator.is_url_safe_string(value):
-                raise InvalidURLError(f"{key} contains invalid control characters.", value=value, component=key)
+        _URLValidation.validate_copy_overrides(overrides)
 
     @staticmethod
     def _is_valid_host_override(host: str) -> bool:
         """Return True if host is a valid hostname, IPv4 literal, or IPv6 literal."""
-        if host == "":
-            return True  # Clearing the host is allowed; compose() enforces the rest.
-        if host.startswith("["):
-            return Validator.is_valid_ipv6(host)
-        if Validator.is_valid_ipv4(host):
-            return True
-        return Validator.is_valid_host(host)
+        return _URLValidation._is_valid_host_override(host)
 
+
+# For backward compatibility with tests that import this private function
+_validate_copy_overrides = _URLValidation.validate_copy_overrides
 
 __all__ = [
     "URL",
