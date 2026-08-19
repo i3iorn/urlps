@@ -43,14 +43,21 @@ class SecurityPolicy:
     # collect_security_findings) and the phishing shape that actually matters
     # ("https://apple.com@evil.com/") is caught by enforce_parser_confusion.
     reject_credentials: bool = False
-    # has_suspicious_punycode() deliberately trades false positives for false
-    # negatives -- its own test suite documents plain ASCII domains like
-    # "carnival.com" or "click.com" as intended flags (confusable-letter and
-    # excessive-hyphen heuristics apply regardless of whether the host is
-    # actually Punycode-encoded). That is too aggressive to widen beyond
-    # strict; it is replaced wholesale by the UTS-39 confusables engine, after
-    # which it becomes precise enough to default on everywhere.
-    enforce_suspicious_punycode: bool = True
+    # Superseded by enforce_mixed_scripts + enforce_confusable_host, which
+    # decode Punycode first and work per label. Retained as an accepted
+    # keyword so existing SecurityPolicy(...) calls keep constructing; it no
+    # longer gates anything. Removed in 2.0.
+    enforce_suspicious_punycode: bool = False
+    # Whole-script confusables: a label written entirely in a non-Latin script
+    # whose characters are all Latin lookalikes ("раураӏ.com"). Distinct from
+    # the mixed-script check, which by definition cannot see it -- nothing is
+    # mixed. On by default: the detection is precise (a label keeps any
+    # character without a Latin lookalike, so ordinary non-Latin domains are
+    # untouched), unlike the ASCII heuristics it replaces.
+    enforce_confusable_host: bool = True
+    # Bidi controls, zero-width characters and malformed Punycode in the host.
+    # These have no legitimate use in a hostname.
+    enforce_host_unicode_safety: bool = True
     check_dns: bool = False
     check_phishing: bool = False
     enforce_dns_rate_limit: bool = True
@@ -123,6 +130,8 @@ class SecurityPolicy:
             block_dangerous_ports=False,
             reject_credentials=False,
             enforce_suspicious_punycode=False,
+            enforce_confusable_host=False,
+            enforce_host_unicode_safety=False,
             check_dns=check_dns,
             check_phishing=False,
             enforce_dns_rate_limit=True,
@@ -158,6 +167,8 @@ class SecurityPolicy:
             block_dangerous_ports=False,
             reject_credentials=False,
             enforce_suspicious_punycode=False,
+            enforce_confusable_host=False,
+            enforce_host_unicode_safety=False,
             check_dns=check_dns,
             check_phishing=False,
             enforce_dns_rate_limit=True,

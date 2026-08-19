@@ -14,6 +14,14 @@ from ..exceptions import (
     InvalidURLError,
     SecurityPolicyError,
 )
+from ._unicode import (
+    is_single_script_label,
+    is_whole_script_confusable,
+    scripts_of,
+    skeleton,
+    to_ascii,
+    to_unicode,
+)
 from .dns_guard import (
     DNSRateLimiter,
     DNSRateLimiterConfig,
@@ -23,6 +31,7 @@ from .dns_guard import (
     get_dns_rate_limiter,
     reset_dns_rate_limiter,
 )
+from .host_analysis import analyze_host
 from .ip_utils import is_malicious_ipv6_zone_id, is_private_ip, is_ssrf_risk
 from .phishing_db import (
     check_against_phishing_db,
@@ -30,7 +39,12 @@ from .phishing_db import (
     get_phishing_db_info,
     refresh_phishing_db,
 )
-from .policy import PolicyInput, SecurityPolicy, resolve_security_policy
+from .policy import (
+    PolicyInput,
+    SecurityPolicy,
+    _resolve_named_policy,
+    resolve_security_policy,
+)
 from .url_checks import (
     extract_host_and_path,
     find_authority_marker,
@@ -68,13 +82,12 @@ _REMEDIATION_BY_CODE: dict[ErrorCode, str] = {
         'policy="balanced" to allow them, and URL.redacted() or '
         "URL.as_string(mask_password=True) when logging."
     ),
-    ErrorCode.SUSPICIOUS_PUNYCODE: (
-        "The Punycode heuristic is deliberately aggressive and flags some plain "
-        'ASCII domains too. Use policy="balanced" if this domain is known-good.'
+    ErrorCode.SUSPICIOUS_PUNYCODE: ('Use policy="balanced" if this domain is known-good.'),
+    ErrorCode.MIXED_SCRIPT_LABEL: (
+        'If this domain is legitimate, use policy="internal" or set enforce_mixed_scripts=False.'
     ),
-    ErrorCode.MIXED_SCRIPTS: (
-        "The host mixes Unicode scripts, the signature of a homograph attack. If "
-        'this domain is legitimately multi-script, use policy="balanced".'
+    ErrorCode.CONFUSABLE_HOST: (
+        'If this domain is legitimate, use policy="internal" or set enforce_confusable_host=False.'
     ),
 }
 
@@ -148,20 +161,18 @@ def collect_security_findings(
             findings.append(
                 _finding("critical", ErrorCode.SSRF_RISK, "Host poses SSRF risk and is disallowed.", "host")
             )
-        if effective_policy.enforce_mixed_scripts and not is_ascii and has_mixed_scripts(host):
-            findings.append(
-                _finding("major", ErrorCode.MIXED_SCRIPTS, "URL host contains mixed Unicode scripts.", "host")
-            )
-        if effective_policy.enforce_suspicious_punycode and has_suspicious_punycode(host):
-            findings.append(
-                _finding(
-                    "major",
-                    ErrorCode.SUSPICIOUS_PUNYCODE,
-                    "URL host is a suspicious Punycode/IDN domain (confusable characters, "
-                    "excessive hyphens, or a brand-like name combined with non-ASCII).",
-                    "host",
-                )
-            )
+        # Unicode host analysis. Deliberately NOT gated on `not is_ascii`:
+        # Punycode is ASCII, and an A-label is exactly how a homograph attack
+        # arrives on the wire. analyze_host() decodes first, then works per
+        # label -- see host_analysis for the bypass this closes.
+        _CODE_TO_FLAG = {
+            ErrorCode.MIXED_SCRIPT_LABEL: effective_policy.enforce_mixed_scripts,
+            ErrorCode.CONFUSABLE_HOST: effective_policy.enforce_confusable_host,
+        }
+        for code, severity, message in analyze_host(host):
+            enabled = _CODE_TO_FLAG.get(code, effective_policy.enforce_host_unicode_safety)
+            if enabled:
+                findings.append(_finding(severity, code, message, "host"))
 
     # --- Path-related checks ---
     if path:
@@ -311,6 +322,18 @@ _CACHED_FUNCTIONS: list[Any] = [
     has_mixed_scripts,
     has_parser_confusion,
     find_authority_marker,
+    # Unicode host analysis (added 1.0). Registered here so the caches are
+    # visible to get_cache_info()/clear_all_caches() -- test_cache_registry.py
+    # asserts that every lru_cache in the package appears, so a new cache
+    # cannot silently escape reporting the way _resolve_named_policy did.
+    analyze_host,
+    scripts_of,
+    is_single_script_label,
+    skeleton,
+    is_whole_script_confusable,
+    to_ascii,
+    to_unicode,
+    _resolve_named_policy,
 ]
 
 

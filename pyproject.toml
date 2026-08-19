@@ -47,6 +47,10 @@ dev = [
     "bandit>=1.9",
     "ruff>=0.7",
     "idna>=3.11",
+    # Generator-only: tools/gen_unicode_tables.py reads UCD Script data from
+    # regex to produce src/urlps/_security/_unicode/_tables.py, which is checked
+    # in. urlps itself never imports regex at runtime.
+    "regex>=2024.0.0",
 ]
 
 [project.urls]

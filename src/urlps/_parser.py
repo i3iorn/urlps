@@ -10,6 +10,7 @@ from ._builder import Builder, QueryPairs
 from ._cache_config import PARSER_CACHE_SIZE
 from ._components import ParseResult
 from ._normalize import normalize_host, normalize_percent_encoding
+from ._security._unicode.uts46 import IdnaError, to_ascii
 from ._validation import Validator, is_valid_userinfo
 from .constants import (
     DEFAULT_PORTS,
@@ -170,10 +171,16 @@ def parse_regular_host(host_candidate: str) -> tuple[str, int | None]:
     if not Validator.is_valid_host(host_part):
         raise HostValidationError("Host contains invalid characters.", value=host_part, component="host")
     if not host_part.isascii():
+        # One IDNA entry point for the whole package. This used to call stdlib
+        # encode("idna") (IDNA 2003) directly while Validator._to_ascii_host
+        # preferred the idna package (IDNA 2008/UTS-46), so the host actually
+        # stored on a URL disagreed with the one validation had checked --
+        # "straße.de" became "strasse.de" here but "xn--strae-oqa.de" there,
+        # which is what browsers resolve. See _unicode/uts46.py.
         try:
-            ascii_host = host_part.encode("idna").decode("ascii")
-        except UnicodeError as exc:
-            raise HostValidationError("Unable to IDNA-encode host.", value=host_part, component="host") from exc
+            ascii_host = to_ascii(host_part)
+        except IdnaError as exc:
+            raise HostValidationError(f"Unable to IDNA-encode host: {exc}", value=host_part, component="host") from exc
     else:
         ascii_host = host_part
     return normalize_host(ascii_host), parse_port(port_part) if sep else None
@@ -420,6 +427,12 @@ class Parser:
         return userinfo, host, apply_port_defaults(None, port, host)
 
 
+#: Caches reported under the "parser" group. normalize_host and
+#: normalize_percent_encoding live in _normalize but run on every parse, so
+#: they are reported here rather than in a group of their own.
+_CACHED_FUNCTIONS = [normalize_path, normalize_host, normalize_percent_encoding]
+
+
 def get_cache_info() -> dict:
     """Get statistics about parser caches.
 
@@ -427,9 +440,11 @@ def get_cache_info() -> dict:
         Dictionary with cache statistics for cached functions.
     """
     stats = {}
-    if hasattr(normalize_path, "cache_info"):
-        info = normalize_path.cache_info()
-        stats["normalize_path"] = {
+    for cached in _CACHED_FUNCTIONS:
+        if not hasattr(cached, "cache_info"):
+            continue
+        info = cached.cache_info()
+        stats[cached.__wrapped__.__name__] = {
             "hits": info.hits,
             "misses": info.misses,
             "maxsize": info.maxsize,
@@ -445,10 +460,12 @@ def clear_caches() -> dict:
         Dictionary mapping function names to previous cache sizes.
     """
     previous = {}
-    if hasattr(normalize_path, "cache_info"):
-        previous["normalize_path"] = normalize_path.cache_info().currsize
-        if hasattr(normalize_path, "cache_clear"):
-            normalize_path.cache_clear()
+    for cached in _CACHED_FUNCTIONS:
+        if not hasattr(cached, "cache_info"):
+            continue
+        previous[cached.__wrapped__.__name__] = cached.cache_info().currsize
+        if hasattr(cached, "cache_clear"):
+            cached.cache_clear()
     return previous
 
 
