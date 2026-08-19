@@ -1,5 +1,46 @@
 # Migration Guide
 
+## 0.8.x → 1.0.0
+
+1.0 makes the library behave the way its documentation always claimed:
+cosmetic differences are normalized instead of rejected, every entry point
+enforces the same policy, and `URL` is genuinely immutable.
+
+Most code needs no changes. Read the first table if you parse URLs; read the
+second only if you touched internals.
+
+### You will notice these
+
+| Change | Who it affects | What to do |
+|---|---|---|
+| URLs that used to be rejected now parse: `HTTP://EXAMPLE.COM/`, `https://example.com:443/`, `https://example.com/%7Euser`, `http://example.com/a/./b`, `?q=WAITFOR` | Anyone relying on those raising | Nothing. If you depended on rejection, add your own check — none of these were security failures. |
+| `url.host` is now always lowercase with any trailing root dot stripped | Anyone comparing `.host` to a raw string | Nothing; comparisons get *more* correct. This closes a real bypass — `parse_url('http://EVIL.COM./', policy='balanced').host` used to return `'EVIL.COM.'` and slip past a `host in BLOCKLIST` check. |
+| `URL(...)` now defaults to `strict`, matching `parse_url()` | Anyone constructing `URL` directly | Pass `security_policy=SecurityPolicy.local()` for development URLs, or use `parse_url_local()`. Previously the class silently applied a near-no-op policy. |
+| `SecurityPolicy.internal()` now enforces SSRF | Anyone using `policy="internal"` with private hosts | Use `policy="local"` (permits loopback/RFC1918, still blocks metadata endpoints) or `SecurityPolicy.internal(enforce_ssrf=False)` to opt out explicitly. |
+| Punycode homographs are now caught: `xn--pypal-4ve.com` and friends are rejected under `strict` *and* `balanced` | Anyone parsing IDN hosts | Nothing, unless you were relying on them being accepted. Legitimate IDNs (`例え.com`, `한국.com`, `münchen.de`, `онлайн.com`) still parse. |
+| Internationalized hosts now encode per UTS-46/IDNA 2008 | Anyone parsing non-ASCII hosts | Nothing, but note `https://straße.de/` now yields `xn--strae-oqa.de` (what browsers resolve) rather than `strasse.de`. The old answer was a parser differential. |
+| `URL` rejects attribute assignment | Anyone doing `u._host = ...` | Use `with_host()` / `copy()`. `copy.copy`, `copy.deepcopy` and `pickle` all still work. |
+| `validate()` no longer stores its result on the instance | Anyone calling `validate(policy=other)` and then reading `security_findings` | Use the returned list. `security_findings` now consistently reports the construction-time verdict. |
+
+### Renamed and deprecated
+
+| Old | New | Status |
+|---|---|---|
+| `parse_url_unsafe()` | `parse_url_local()` | Alias retained, still works. "Unsafe" was the wrong signal for parsing your own dev URL — and under the `local` policy it is not even unsafe. |
+| `enforce_query_injection` | *(removed)* | Passing it is accepted and ignored; removed in 2.0. |
+| `require_canonical` | *(removed)* | Superseded by normalization. |
+| `enforce_suspicious_punycode` | `enforce_confusable_host` + `enforce_mixed_scripts` | Old flag accepted as a no-op; removed in 2.0. |
+| `ErrorCode.QUERY_INJECTION`, `.NON_CANONICAL_URL`, `.MIXED_SCRIPTS`, `.SUSPICIOUS_PUNYCODE` | `.MIXED_SCRIPT_LABEL`, `.CONFUSABLE_HOST` | Old members remain importable but are never emitted; removed in 2.0. |
+
+### Why the query-injection check was removed
+
+It was a substring blocklist over the raw query string. Whether `?q=DROP TABLE`
+is an attack depends entirely on what the consuming application does with the
+decoded value — which a URL parser cannot see. It produced false positives on
+ordinary input (`?q=WAITFOR`, `?filter=a--b`) while being trivially bypassed by
+re-encoding, so it provided no security floor, only noise. Escaping belongs at
+the SQL/HTML boundary, not the URL boundary.
+
 ## 0.7.x → 0.8.0
 
 `parse_url()` without an explicit `policy=` argument now uses `"strict"`

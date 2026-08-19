@@ -1,10 +1,11 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+# setuptools>=77 is required for PEP 639 `license`/`license-files`
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "urlps"
-description = "Lightweight URL parsing and building helpers (RFC 3986-like)."
+description = "Secure, RFC 3986-compliant URL parsing with SSRF, homograph and traversal detection."
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
 authors = [
@@ -12,9 +13,12 @@ authors = [
 ]
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["url", "parser", "builder", "rfc3986", "validation", "idna", "ipv6", "punycode", "ipv4"]
+keywords = [
+  "url", "parser", "builder", "rfc3986", "validation", "idna", "ipv6",
+  "punycode", "ipv4", "security", "ssrf", "homograph", "unicode", "uts39",
+]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "Natural Language :: English",
   "Operating System :: OS Independent",
@@ -27,6 +31,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: Implementation :: CPython",
   "Topic :: Internet :: WWW/HTTP",
+  "Topic :: Security",
   "Topic :: Software Development :: Libraries",
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Typing :: Typed",
@@ -57,9 +62,12 @@ dev = [
 Homepage = "https://github.com/i3iorn/urlps"
 Repository = "https://github.com/i3iorn/urlps"
 Documentation = "https://github.com/i3iorn/urlps#readme"
-Changelog = "https://github.com/i3iorn/urlps/blob/master/changelogs/0.8.0.md"
+# Points at the aggregate changelog, not a per-version file -- the old
+# per-version link went stale on every release.
+Changelog = "https://github.com/i3iorn/urlps/blob/master/CHANGELOG.md"
 Issues = "https://github.com/i3iorn/urlps/issues"
 "Bug Tracker" = "https://github.com/i3iorn/urlps/issues"
+Security = "https://github.com/i3iorn/urlps/blob/master/SECURITY.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -146,7 +154,7 @@ source = ["src/urlps", "*/site-packages/urlps"]
 
 [tool.coverage.report]
 # Ratchet upward over time; never lower this to make a red build go green.
-fail_under = 90
+fail_under = 92
 show_missing = true
 skip_covered = true
 exclude_lines = [

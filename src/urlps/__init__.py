@@ -11,31 +11,36 @@ Quick Start:
 Main Entry Points:
     parse_url(url, **options) -> URL
         Parsing with security checks, governed by a policy (default:
-        "strict"). Enabled under every built-in policy:
-        - SSRF protection (blocks private IPs, localhost, metadata endpoints)
+        "strict"). Enabled under both "strict" and "balanced":
+        - SSRF protection (private IPs, localhost, cloud metadata endpoints)
         - Path traversal detection (.., null bytes, encoded variants)
-        - Homograph attack detection (mixed Unicode scripts)
+        - Open redirect detection (backslashes, leading //)
+        - Homograph detection (mixed scripts and whole-script confusables,
+          evaluated per label on the Punycode-decoded host)
         - Parser confusion detection (ambiguous URL structures)
         - Double-encoding detection
 
-        Query-injection heuristics, dangerous-port blocking, credential
-        rejection, canonical-form enforcement, and aggressive Punycode/
-        confusable-character heuristics require policy="strict".
+        Cosmetic differences are normalized rather than rejected: host case,
+        a trailing root dot, default ports, dot segments and percent-encoding
+        spelling all resolve to one canonical form, so `url.host` is directly
+        comparable against an allowlist.
 
-        Use this for parsing URLs from untrusted sources (user input, external APIs).
+        Use this for URLs from untrusted sources (user input, external APIs).
 
     join(base, reference, **options) -> URL
         RFC 3986 Section 5 reference resolution. The security-preserving
         equivalent of urllib.parse.urljoin -- the resolved target is
         validated, so resolution cannot bypass the checks above.
 
-    parse_url_unsafe(url, **options) -> URL
-        Parsing WITHOUT security validations. Use ONLY for:
-        - Internal/development URLs (localhost, 192.168.x.x)
-        - Trusted configuration files
-        - URLs from verified sources
+    parse_url_local(url, **options) -> URL
+        Development and internal URLs: the heuristic checks are off and
+        loopback/RFC1918 hosts are permitted, so "http://localhost:3000"
+        parses. SSRF enforcement is narrowed, NOT disabled -- cloud metadata
+        endpoints, the link-local range, .internal and kubernetes service
+        names stay blocked.
 
         WARNING: Never use with user input or external data.
+        (parse_url_unsafe is the former name and still works.)
 
     build(scheme_and_host, **components) -> str
         Construct URLs from components with proper encoding.
@@ -50,7 +55,7 @@ Main Entry Points:
 
     URL
         Immutable URL object with rich manipulation API.
-        Created by parse_url() or parse_url_unsafe().
+        Created by parse_url() or parse_url_local().
         Methods: with_host(), with_port(), with_query_param(), etc.
 
 Performance:
@@ -63,7 +68,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-__version__ = "0.8.0"
+__version__ = "1.0.0"
 
 from . import _parser
 from . import url as _url
@@ -72,15 +77,26 @@ from ._components import SecurityFinding
 from ._security.dns_guard import DNSRateLimiter, DNSRateLimiterConfig
 from ._security.policy import PolicyInput, SecurityPolicy, resolve_security_policy
 from .exceptions import (
+    DNSConnectionError,
+    DNSRateLimiterError,
+    DNSRateLimitError,
+    DNSRebindingError,
+    DNSResolutionError,
     ErrorCode,
+    FragmentEncodingError,
     HostValidationError,
     InvalidURLError,
+    MissingHostError,
+    PhishingDatabaseError,
     PortValidationError,
     QueryParsingError,
+    RelativeReferenceError,
+    SecurityPolicyError,
     UnsupportedSchemeError,
     URLBuildError,
     URLParseError,
     URLpError,
+    UserInfoParsingError,
 )
 from .url import URL
 
@@ -99,32 +115,34 @@ def parse_url(
     """Parse a URL with security checks applied (recommended entry point).
 
     Use this for URLs from untrusted sources. Which checks run is determined
-    entirely by the security policy; the default is ``strict`` -- the
-    strongest built-in preset, maximizing protection at the cost of more
-    false positives on unusual-but-legitimate input. Pass ``policy="balanced"``
-    for fewer false positives (query injection, dangerous ports, credentials
-    in userinfo, non-canonical form, and the aggressive Punycode heuristics
-    are relaxed), or ``policy="internal"`` for trusted/internal traffic.
+    entirely by the security policy; the default is ``strict``.
 
-    Enabled under every built-in policy:
-        - SSRF protection: blocks private IPs (10.x, 192.168.x, 172.16-31.x)
-        - Localhost blocking: rejects localhost, 127.0.0.1, ::1, *.local domains
-        - Cloud metadata blocking: 169.254.169.254, metadata.google.internal
+    Cosmetic differences are *normalized*, not rejected. ``HTTP://EXAMPLE.COM./``,
+    ``https://example.com:443/``, ``/a/./b`` and ``%7E`` all parse fine and
+    resolve to one canonical form, so ``url.host`` can be compared against an
+    allowlist directly. Rejection is reserved for input that is genuinely
+    malformed or genuinely dangerous.
+
+    Enabled under both ``strict`` and ``balanced``:
+        - SSRF protection: private IPs (10.x, 192.168.x, 172.16-31.x),
+          localhost, ::1, *.local, and cloud metadata endpoints
+          (169.254.169.254, metadata.google.internal)
         - Path traversal detection: ``../``, null bytes, encoded variants
         - Double-encoding detection: ``%25`` patterns used to bypass filters
         - Open redirect detection: backslashes, leading ``//`` (raw or
           percent-encoded)
-        - Homograph detection: mixed Unicode scripts (Cyrillic 'а' vs Latin 'a')
+        - Homograph detection: mixed scripts *and* whole-script confusables,
+          evaluated per label on the Punycode-decoded host, so
+          ``xn--pypal-4ve.com`` (Cyrillic а) is caught while ``例え.com`` and
+          ``münchen.de`` are not
         - Parser confusion: ambiguous URLs parsed differently across parsers
+        - Bidi controls, zero-width characters and malformed Punycode in the host
 
-    Enabled by default (``strict``), relaxed under ``policy="balanced"``:
-        - Query injection heuristics
-        - Dangerous port blocking
-        - Rejection of credentials in userinfo
-        - Canonical form enforcement
-        - Aggressive Punycode/confusable-character heuristics (flags plain
-          ASCII lookalike patterns too, e.g. "rn" for "m" -- more false
-          positives than the always-on mixed-script check above)
+    Off by default, opt in via SecurityPolicy:
+        - ``block_dangerous_ports``: SSRF already covers the internal-service
+          case, and blocking port 22 on a public host prevents nothing
+        - ``reject_credentials``: ``user:pass@host`` is legal RFC 3986; a
+          non-blocking advisory finding is emitted either way
 
     Optional, off by default under every policy:
         - DNS rebinding (``check_dns=True``): verifies the host resolves to a
@@ -145,9 +163,9 @@ def parse_url(
         dns_rate_limiter: Optional DNSRateLimiter instance to enforce DNS lookup
             rate limits with dependency injection (recommended for isolation).
             If omitted, DNS checks use the process-global compatibility limiter.
-        policy: Security policy -- "strict", "balanced", "internal", or a
-            SecurityPolicy instance. This is the single control for which
-            checks are enforced.
+        policy: Security policy -- "strict", "balanced", "internal", "local",
+            or a SecurityPolicy instance. This is the single control for
+            which checks are enforced.
         correlation_id: Optional identifier propagated to audit events.
         audit: Optional AuditConfig supplying audit callbacks for this parse.
 
@@ -166,7 +184,7 @@ def parse_url(
         >>> parse_url("http://localhost/admin")  # Raises InvalidURLError
         >>> parse_url("http://192.168.1.1/")     # Raises InvalidURLError
 
-    For internal/development URLs, use parse_url_unsafe() instead.
+    For internal/development URLs, use parse_url_local() instead.
     """
     resolved_policy = resolve_security_policy(
         policy,
@@ -582,25 +600,36 @@ __all__ = [
     "AuditConfig",
     "AuditEventCallback",
     "AuditManager",
+    # Typed error codes and the finding type returned by URL.security_findings
+    # and URL.validate(); both were previously only reachable privately.
+    "DNSConnectionError",
+    "DNSRateLimitError",
     # Injectable DNS rate limiting. The README used to tell users to import
     # these from urlps._security.dns_guard -- a private module.
     "DNSRateLimiter",
     "DNSRateLimiterConfig",
-    # Typed error codes and the finding type returned by URL.security_findings
-    # and URL.validate(); both were previously only reachable privately.
+    "DNSRateLimiterError",
+    "DNSRebindingError",
+    "DNSResolutionError",
     "ErrorCode",
+    "FragmentEncodingError",
     # Exception hierarchy.
     "HostValidationError",
     "InvalidURLError",
+    "MissingHostError",
+    "PhishingDatabaseError",
     "PolicyInput",
     "PortValidationError",
     "QueryParsingError",
+    "RelativeReferenceError",
     "SecurityFinding",
     "SecurityPolicy",
+    "SecurityPolicyError",
     "URLBuildError",
     "URLParseError",
     "URLpError",
     "UnsupportedSchemeError",
+    "UserInfoParsingError",
     "__version__",
     "build",
     "build_secure",

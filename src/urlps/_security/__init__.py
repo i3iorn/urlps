@@ -82,7 +82,6 @@ _REMEDIATION_BY_CODE: dict[ErrorCode, str] = {
         'policy="balanced" to allow them, and URL.redacted() or '
         "URL.as_string(mask_password=True) when logging."
     ),
-    ErrorCode.SUSPICIOUS_PUNYCODE: ('Use policy="balanced" if this domain is known-good.'),
     ErrorCode.MIXED_SCRIPT_LABEL: (
         'If this domain is legitimate, use policy="internal" or set enforce_mixed_scripts=False.'
     ),
