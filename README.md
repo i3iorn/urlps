@@ -143,6 +143,15 @@ url2 = url.with_netloc("admin@example.com")
 url3 = url.with_host("other.com").with_port(443).with_path("/api")
 url4 = url.with_query_param("new", "value")
 url5 = url.without_query_param("token")
+
+# Genuinely immutable, not immutable by convention -- a URL that passed
+# validation cannot be re-pointed afterwards.
+try:
+    url._host = "evil.com"
+except AttributeError as exc:
+    print(exc)  # URL is immutable; use with_*() or copy() to derive a new URL ...
+
+assert url.host == "example.com"
 ```
 
 ### Query strings round-trip exactly
