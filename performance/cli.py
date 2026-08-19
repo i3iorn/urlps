@@ -15,37 +15,73 @@ Usage:
     python -m performance all
 
 Run `python -m performance <command> --help` for command-specific options.
+
+This module owns argument parsing and wiring only -- all console output goes
+through performance.output, and all benchmarking logic lives in
+performance.benchmark_suite.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import urlps
 
-from .adapters import get_adapter, get_adapters
+from .adapters import available_categories, get_adapter, get_adapters, get_adapters_by_tags
+from .adapters._models import ParserAdapter
 from .benchmark_suite import (
     benchmark_concurrency,
-    print_concurrency_summary,
-    print_summary,
+    build_tunable_datasets,
+    count_planned_steps,
     profile_parser,
     run_suite,
+)
+from .output import (
+    CompareRow,
+    LiveProgress,
+    error,
+    named_list,
+    print_categories,
+    print_compare_exclusive,
+    print_compare_footer,
+    print_compare_header,
+    print_compare_table,
+    print_complete,
+    print_concurrency_header,
+    print_concurrency_summary,
+    print_dataset_list,
+    print_parser_availability,
+    print_profile_complete,
+    print_profile_start,
+    print_report_generated,
+    print_results_written,
+    print_suite_header,
+    print_summary,
     save_concurrency_results,
     save_results,
 )
 from .performance_report import generate_html, load_results
-from .url_cases import build_datasets
+from .tuner import TunableDataset
+from .url_cases import (
+    MALICIOUS_EXPECTATIONS,
+    MALICIOUS_URLS,
+    MODIFY_OPERATIONS,
+    PATHOLOGICAL_EXPECTATIONS,
+    PATHOLOGICAL_URLS,
+    URLDataset,
+    build_datasets,
+)
 
 PERFORMANCE_DIR = Path(__file__).resolve().parent
+DATA_DIR = PERFORMANCE_DIR / "data"
 
-DEFAULT_RESULTS_JSON = PERFORMANCE_DIR / "benchmark_results.json"
-DEFAULT_REPORT_HTML = PERFORMANCE_DIR / "performance_report.html"
-DEFAULT_PROFILE_PROF = PERFORMANCE_DIR / "profile_results.prof"
-DEFAULT_PROFILE_TXT = PERFORMANCE_DIR / "profile_results.txt"
-DEFAULT_CONCURRENCY_JSON = PERFORMANCE_DIR / "concurrency_results.json"
+DEFAULT_RESULTS_JSON = DATA_DIR / "benchmark_results.json"
+DEFAULT_REPORT_HTML = DATA_DIR / "performance_report.html"
+DEFAULT_PROFILE_PROF = DATA_DIR / "profile_results.prof"
+DEFAULT_PROFILE_TXT = DATA_DIR / "profile_results.txt"
+DEFAULT_CONCURRENCY_JSON = DATA_DIR / "concurrency_results.json"
 
 DATASET_CHOICES = [
     "simple",
@@ -65,6 +101,12 @@ OPERATION_CHOICES = [
     "components",
     "query",
     "reconstruct",
+    "modify_path",
+    "modify_query",
+    "modify_host",
+    "modify_fragment",
+    "validate",
+    "normalize",
 ]
 
 # Populated by build_parser() so that other commands (namely `all`) can pull
@@ -73,17 +115,140 @@ OPERATION_CHOICES = [
 # redefaulted.
 SUBPARSERS: dict[str, argparse.ArgumentParser] = {}
 
+DEFAULT_PARSER_NAMES = ["urllib3", "urlps"]
+
+#: Reserved --parser name meaning "every available adapter except the ones
+#: tagged network" (see _resolve_parser_names) -- never a real adapter name.
+ALL_PARSERS = "all"
+
+
+def _add_parser_selection_arguments(parser: argparse.ArgumentParser, *, default_names: list[str] | None) -> None:
+    """
+    Shared --parser/--categories flags for any command that benchmarks a
+    selectable set of adapters (`benchmark`, `concurrency`).
+    """
+    parser.add_argument(
+        "--parser",
+        nargs="+",
+        default=None,
+        help=(
+            "Parsers to benchmark by name (see `list-parsers`), or "
+            f"'{ALL_PARSERS}' for every available adapter except those "
+            "tagged 'network' (they do real per-call I/O -- name them "
+            "explicitly, e.g. `--parser all url-jail`, to include them "
+            "anyway). "
+            f"Default: {' '.join(default_names)}, or every adapter matching "
+            "--categories if that's given instead."
+        ),
+    )
+
+    parser.add_argument(
+        "--categories",
+        nargs="+",
+        default=None,
+        metavar="TAG",
+        help=(
+            "Only benchmark adapters tagged with any of these categories "
+            "(see `list-categories`), e.g. --categories parser validation. "
+            "Combined with --parser (if both given), narrows that named "
+            "selection down further instead of replacing it."
+        ),
+    )
+
+
+def _resolve_parser_names(names: list[str]) -> list[ParserAdapter]:
+    """
+    Resolve a --parser name list, expanding the `all` sentinel if present.
+
+    `all` means every available adapter *except* network-tagged ones (they
+    do real per-call DNS/HTTP I/O -- see _models.py's tag vocabulary -- so
+    silently sweeping them into "all" would make a routine benchmark run
+    both far slower and dependent on network access without the caller
+    asking for that). Any other names given alongside `all` are still
+    included explicitly -- `--parser all url-jail` is how you opt back in.
+    """
+    if ALL_PARSERS not in names:
+        return get_adapters(names)
+
+    explicit_names = [name for name in names if name != ALL_PARSERS]
+
+    adapters = [adapter for adapter in get_adapters() if "network" not in adapter.tags]
+
+    seen = {adapter.name for adapter in adapters}
+    for adapter in get_adapters(explicit_names):
+        if adapter.name not in seen:
+            seen.add(adapter.name)
+            adapters.append(adapter)
+
+    return adapters
+
+
+def _select_adapters(
+    parser_names: list[str] | None,
+    categories: list[str] | None,
+    *,
+    default_names: list[str],
+) -> list[ParserAdapter]:
+    """
+    Resolve --parser/--categories into a concrete adapter list.
+
+    - Neither given: the command's historical default (by name).
+    - --parser only: exactly those adapters (`all` expands per
+      _resolve_parser_names).
+    - --categories only: every available adapter carrying any of those tags
+      (e.g. --categories security pulls in every security-focused adapter
+      without having to name each one).
+    - Both: the (possibly `all`-expanded) named adapters, further filtered
+      down to those also carrying at least one of the given tags.
+    """
+    if parser_names is not None:
+        adapters = _resolve_parser_names(parser_names)
+
+        if categories:
+            wanted = set(categories)
+            adapters = [adapter for adapter in adapters if adapter.tags & wanted]
+
+        return adapters
+
+    if categories:
+        return get_adapters_by_tags(categories)
+
+    return get_adapters(default_names)
+
 
 # ============================================================================
 # list-parsers
 # ============================================================================
 
+def add_list_parsers_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--categories",
+        nargs="+",
+        default=None,
+        metavar="TAG",
+        help="Only list adapters tagged with any of these categories (see `list-categories`)",
+    )
+
+
 def run_list_parsers(args: argparse.Namespace) -> int:
-    for adapter in get_adapters():
-        print(f"  {adapter.name:<15} {adapter.available} {adapter.description}")
+    # available_only=False: this command's job is to show *which* adapters
+    # are unavailable (and why) alongside the available ones, so it must
+    # not filter them out before they ever reach the display.
+    if args.categories:
+        adapters = get_adapters_by_tags(args.categories, available_only=False)
+    else:
+        adapters = get_adapters(available_only=False)
+
+    print_parser_availability(adapters)
+    return 0
 
 
+# ============================================================================
+# list-categories
+# ============================================================================
 
+def run_list_categories(args: argparse.Namespace) -> int:
+    print_categories(available_categories(), get_adapters(available_only=False))
     return 0
 
 
@@ -92,12 +257,7 @@ def run_list_parsers(args: argparse.Namespace) -> int:
 # ============================================================================
 
 def add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--parser",
-        nargs="+",
-        default=["urllib3", "urlps"],
-        help="Parsers to benchmark",
-    )
+    _add_parser_selection_arguments(parser, default_names=DEFAULT_PARSER_NAMES)
 
     parser.add_argument("--repeats", type=int, default=5, help="Timing repetitions per benchmark")
     parser.add_argument("--warmups", type=int, default=1, help="Warmup repetitions")
@@ -109,10 +269,25 @@ def add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         help="Number of parses per URL for the repeated-parse benchmark",
     )
 
-    parser.add_argument("--simple", type=int, default=1000, help="Number of simple URLs")
-    parser.add_argument("--complex", type=int, default=1000, dest="complex_", help="Number of complex URLs")
-    parser.add_argument("--edge", type=int, default=1000, help="Number of generated edge-case URLs")
-    parser.add_argument("--mixed", type=int, default=5000, help="Number of mixed URLs")
+    parser.add_argument("--simple", type=int, default=None, help="Number of simple URLs (default: auto-tuned)")
+    parser.add_argument("--complex", type=int, default=None, dest="complex_", help="Number of complex URLs (default: auto-tuned)")
+    parser.add_argument("--edge", type=int, default=None, help="Number of generated edge-case URLs (default: auto-tuned)")
+    parser.add_argument("--mixed", type=int, default=None, help="Number of mixed URLs (default: auto-tuned)")
+    parser.add_argument("--rand", type=int, default=None, help="Number of random string (default: auto-tuned)")
+
+    parser.add_argument(
+        "--tune",
+        dest="tune",
+        action="store_true",
+        default=True,
+        help="Auto-tune dataset sizes on the fly so each parser/operation/dataset run takes ~50-500ms (default: on)",
+    )
+    parser.add_argument(
+        "--no-tune",
+        dest="tune",
+        action="store_false",
+        help="Disable auto-tuning; unset sizes fall back to fixed defaults (1000 URLs)",
+    )
 
     parser.add_argument(
         "--pathological",
@@ -135,41 +310,106 @@ def add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
+FALLBACK_DATASET_SIZES = {
+    "simple": 1000,
+    "complex_": 1000,
+    "edge": 1000,
+    "mixed": 1000,
+    "rand": 1000,
+}
+
+# Which tunable-dataset names share each coarse CLI knob's starting size.
+_KNOB_TO_TUNABLE_NAMES = {
+    "simple": ["simple"],
+    "complex_": ["complex"],
+    "edge": ["ipv6", "invalid-port", "long-query", "encoded", "relative"],
+    "mixed": ["mixed"],
+    "rand": ["random-strings"],
+}
+
+
+def _build_benchmark_datasets(args: argparse.Namespace) -> list[URLDataset | TunableDataset]:
+    """
+    Build the dataset list for `benchmark`: `pathological`/`malicious` are
+    always fixed, hand-written corpora; the rest either self-tune on the fly
+    (--tune, the default) or use fixed sizes (--no-tune).
+    """
+    static_datasets = [
+        URLDataset(
+            "pathological",
+            list(PATHOLOGICAL_URLS),
+            skip_repeated_parse=True,
+            per_url_expectations=PATHOLOGICAL_EXPECTATIONS,
+        ),
+        URLDataset(
+            "malicious",
+            list(MALICIOUS_URLS),
+            excluded_operations=frozenset(MODIFY_OPERATIONS),
+            skip_repeated_parse=True,
+            per_url_expectations=MALICIOUS_EXPECTATIONS,
+        ),
+    ]
+
+    if args.tune:
+        starting_sizes: dict[str, int] = {}
+
+        for knob, names in _KNOB_TO_TUNABLE_NAMES.items():
+            value = getattr(args, knob)
+            if value is not None:
+                for name in names:
+                    starting_sizes[name] = value
+
+        return [*static_datasets, *build_tunable_datasets(starting_sizes=starting_sizes)]
+
+    sizes = dict(FALLBACK_DATASET_SIZES)
+    for knob in ("simple", "complex_", "edge", "mixed", "rand"):
+        value = getattr(args, knob)
+        if value is not None:
+            sizes[knob] = value
+
+    tunable_off = build_datasets(
+        simple=sizes["simple"],
+        complex_=sizes["complex_"],
+        edge=sizes["edge"],
+        mixed=sizes["mixed"],
+        rand=sizes["rand"],
+    )
+
+    # build_datasets() also produces its own pathological/malicious entries;
+    # drop those in favor of the ones already built above so there's exactly
+    # one of each regardless of --tune.
+    return static_datasets + [d for d in tunable_off if d.name not in ("pathological", "malicious")]
+
+
 def run_benchmark(args: argparse.Namespace) -> int:
     try:
-        adapters = get_adapters(args.parser)
+        adapters = _select_adapters(args.parser, args.categories, default_names=DEFAULT_PARSER_NAMES)
     except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        error(str(exc))
         return 2
 
-    datasets = build_datasets(
-        simple=args.simple,
-        complex_=args.complex_,
-        edge=args.edge,
-        mixed=args.mixed,
-    )
+    if not adapters:
+        error("No adapters matched --parser/--categories. See `list-parsers` / `list-categories`.")
+        return 2
+
+    datasets = _build_benchmark_datasets(args)
 
     if args.pathological:
         datasets = [dataset for dataset in datasets if dataset.name == "pathological"]
 
-    print()
-    print("=" * 80)
-    print("URL PARSER PERFORMANCE SUITE")
-    print("=" * 80)
+    print_suite_header()
 
-    print("\nParsers:")
-    for adapter in adapters:
-        print(f"  - {adapter.name}")
+    named_list("Parsers", [adapter.name for adapter in adapters])
+    print_dataset_list(datasets)
+    named_list("Operations", args.operations)
 
-    print("\nDatasets:")
-    for dataset in datasets:
-        print(f"  - {dataset.name:<18} {dataset.size:,} URLs")
+    repeated_parse = max(1, args.repeated_parse)
 
-    print("\nOperations:")
-    for operation in args.operations:
-        print(f"  - {operation}")
-
-    print()
+    progress = LiveProgress(
+        total_parsers=len(adapters),
+        total_steps=count_planned_steps(adapters, datasets, args.operations, repeated_parse=repeated_parse),
+    )
+    progress.print_header()
 
     results = run_suite(
         adapters,
@@ -177,14 +417,21 @@ def run_benchmark(args: argparse.Namespace) -> int:
         operations=args.operations,
         repeats=max(1, args.repeats),
         warmups=max(0, args.warmups),
-        repeated_parse=max(1, args.repeated_parse),
+        repeated_parse=repeated_parse,
+        on_parser_start=lambda adapter: progress.parser_started(adapter.name),
+        on_dataset_start=lambda dataset: progress.dataset_started(
+            dataset.name,
+            dataset.size,
+            tunable=isinstance(dataset, TunableDataset),
+        ),
+        on_operation_start=progress.operation_started,
+        on_result=progress.result,
     )
 
     print_summary(results)
 
-    save_results(results, args.output)
-
-    print(f"\n[OK] Results written to:\n     {Path(args.output).resolve()}")
+    output_path = save_results(results, args.output)
+    print_results_written(output_path)
 
     return 0
 
@@ -206,17 +453,19 @@ def run_profile(args: argparse.Namespace) -> int:
     try:
         adapter = get_adapter(args.parser)
     except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        error(str(exc))
         return 2
 
     datasets = build_datasets()
     dataset = next((d for d in datasets if d.name == args.dataset), None)
 
     if dataset is None:
-        print(f"ERROR: Dataset not found: {args.dataset}", file=sys.stderr)
+        error(f"Dataset not found: {args.dataset}")
         return 2
 
-    profile_parser(
+    print_profile_start(adapter.name, dataset.name, args.operation)
+
+    profile_path, text_path = profile_parser(
         adapter,
         dataset,
         operation=args.operation,
@@ -224,6 +473,8 @@ def run_profile(args: argparse.Namespace) -> int:
         profile_path=args.profile,
         text_path=args.text,
     )
+
+    print_profile_complete(profile_path, text_path)
 
     return 0
 
@@ -241,11 +492,7 @@ def run_report(args: argparse.Namespace) -> int:
     input_path = Path(args.input)
 
     if not input_path.exists():
-        print(
-            f"ERROR: {input_path} does not exist.\n"
-            "Run `python -m performance benchmark` first.",
-            file=sys.stderr,
-        )
+        error(f"{input_path} does not exist.\nRun `python -m performance benchmark` first.")
         return 2
 
     results = load_results(input_path)
@@ -253,13 +500,12 @@ def run_report(args: argparse.Namespace) -> int:
     try:
         report = generate_html(results)
     except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        error(str(exc))
         return 2
 
     output_path = Path(args.output)
     output_path.write_text(report, encoding="utf-8")
-
-    print(f"[OK] Generated:\n     {output_path.resolve()}")
+    print_report_generated(output_path)
 
     return 0
 
@@ -269,7 +515,7 @@ def run_report(args: argparse.Namespace) -> int:
 # ============================================================================
 
 def add_concurrency_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--parser", nargs="+", default=["urlps"], help="Parsers to benchmark")
+    _add_parser_selection_arguments(parser, default_names=["urlps"])
     parser.add_argument("--dataset", default="mixed", choices=DATASET_CHOICES)
     parser.add_argument("--operation", default="parse", choices=OPERATION_CHOICES)
 
@@ -292,28 +538,23 @@ def add_concurrency_arguments(parser: argparse.ArgumentParser) -> None:
 
 def run_concurrency(args: argparse.Namespace) -> int:
     try:
-        adapters = get_adapters(args.parser)
+        adapters = _select_adapters(args.parser, args.categories, default_names=["urlps"])
     except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        error(str(exc))
+        return 2
+
+    if not adapters:
+        error("No adapters matched --parser/--categories. See `list-parsers` / `list-categories`.")
         return 2
 
     datasets = build_datasets()
     dataset = next((d for d in datasets if d.name == args.dataset), None)
 
     if dataset is None:
-        print(f"ERROR: Dataset not found: {args.dataset}", file=sys.stderr)
+        error(f"Dataset not found: {args.dataset}")
         return 2
 
-    print()
-    print("=" * 80)
-    print("CONCURRENCY BENCHMARK")
-    print("=" * 80)
-    print(
-        "\nNote: CPython's GIL means pure-Python parsing work will not scale\n"
-        "linearly with threads the way I/O-bound work would. This measures\n"
-        "whether shared state (lru_cache locks, etc.) becomes a contention\n"
-        "bottleneck under concurrent load -- not a parallel-speedup claim.\n"
-    )
+    print_concurrency_header()
 
     results = [
         benchmark_concurrency(
@@ -328,9 +569,8 @@ def run_concurrency(args: argparse.Namespace) -> int:
 
     print_concurrency_summary(results)
 
-    save_concurrency_results(results, args.output)
-
-    print(f"\n[OK] Results written to:\n     {Path(args.output).resolve()}")
+    output_path = save_concurrency_results(results, args.output)
+    print_results_written(output_path)
 
     return 0
 
@@ -381,7 +621,7 @@ def run_compare(args: argparse.Namespace) -> int:
         baseline = _load_rows(args.baseline)
         candidate = _load_rows(args.candidate)
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        error(str(exc))
         return 2
 
     higher_is_worse = args.metric != "parses_per_second"
@@ -405,17 +645,11 @@ def run_compare(args: argparse.Namespace) -> int:
     # Worst regressions first.
     deltas.sort(key=lambda row: row[0] if higher_is_worse else -row[0], reverse=True)
 
-    print()
-    print("=" * 100)
-    print(f"BENCHMARK COMPARISON  ({args.metric})")
-    print("=" * 100)
-
-    header = f"{'Parser':<10}{'Dataset':<16}{'Operation':<20}{'Baseline':>14}{'Candidate':>14}{'Change':>12}"
-    print(header)
-    print("-" * 100)
+    print_compare_header(args.metric)
 
     regressions = 0
     improvements = 0
+    compare_rows = []
 
     for pct, (parser, dataset, operation), before, after in deltas:
         is_regression = (pct >= args.threshold) if higher_is_worse else (pct <= -args.threshold)
@@ -430,24 +664,12 @@ def run_compare(args: argparse.Namespace) -> int:
         else:
             marker = "  "
 
-        print(
-            f"{parser:<10}{dataset:<16}{operation:<20}"
-            f"{before:>14.4f}{after:>14.4f}{pct:>+11.2f}% {marker}"
-        )
+        compare_rows.append(CompareRow(parser, dataset, operation, before, after, pct, marker))
 
-    print("-" * 100)
-    print(f"Regressions (>= {args.threshold:g}% worse): {regressions}")
-    print(f"Improvements (>= {args.threshold:g}% better): {improvements}")
-
-    if only_baseline:
-        print(f"\nOnly in baseline ({len(only_baseline)}):")
-        for key in only_baseline:
-            print(f"  - {' / '.join(key)}")
-
-    if only_candidate:
-        print(f"\nOnly in candidate ({len(only_candidate)}):")
-        for key in only_candidate:
-            print(f"  - {' / '.join(key)}")
+    print_compare_table(compare_rows)
+    print_compare_footer(regressions, improvements, args.threshold)
+    print_compare_exclusive("baseline", only_baseline)
+    print_compare_exclusive("candidate", only_candidate)
 
     if args.fail_on_regression and regressions:
         return 1
@@ -498,19 +720,12 @@ def run_all(args: argparse.Namespace) -> int:
         if code != 0:
             return code
 
-    print()
-    print("=" * 80)
-    print("COMPLETE")
-    print("=" * 80)
-
     generated = [Path(benchmark_args.output), Path(report_args.output)]
 
     if not args.skip_profile:
         generated += [Path(profile_args.profile), Path(profile_args.text)]
 
-    print("\nGenerated:")
-    for path in generated:
-        print(f"  {path}")
+    print_complete(generated)
 
     return 0
 
@@ -539,7 +754,8 @@ def build_parser() -> argparse.ArgumentParser:
         ("report", "Generate an HTML dashboard from a benchmark results JSON file", add_report_arguments, run_report),
         ("concurrency", "Measure throughput at increasing thread counts", add_concurrency_arguments, run_concurrency),
         ("compare", "Diff two benchmark JSON files and flag regressions", add_compare_arguments, run_compare),
-        ("list-parsers", "List available parser adapters", None, run_list_parsers),
+        ("list-parsers", "List available parser adapters", add_list_parsers_arguments, run_list_parsers),
+        ("list-categories", "List adapter category tags and which adapters carry each", None, run_list_categories),
         ("all", "Run benchmark, then report, then profile, using default settings", add_all_arguments, run_all),
     ]
 

@@ -3,8 +3,18 @@ from __future__ import annotations
 from typing import Any
 
 from performance.adapters._core import FURL_AVAILABLE, FURL_IMPORT_ERROR, Furl
+from performance.adapters._models import (
+    MODIFIED_FRAGMENT,
+    MODIFIED_HOST,
+    MODIFIED_PATH,
+    MODIFIED_QUERY,
+    ComponentResult,
+    ParserAdapter,
+    QueryResult,
+    capture_error,
+    safe_call,
+)
 from performance.adapters._registry import register_adapter
-from performance.adapters._models import ComponentResult, safe_call, QueryResult, capture_error, ParserAdapter
 from performance.adapters._utils import add_component, safe_getattr
 
 
@@ -155,6 +165,7 @@ def _create_furl_adapter() -> ParserAdapter:
 
         return ParserAdapter(
             name="furl",
+            tags=frozenset({"parser", "rfc3986"}),
             parse=lambda _: None,
             description="furl.furl",
             available=False,
@@ -163,10 +174,17 @@ def _create_furl_adapter() -> ParserAdapter:
 
     return ParserAdapter(
         name="furl",
+        tags=frozenset({"parser", "rfc3986"}),
         parse=Furl,
         component_extractor=furl_components,
         query_extractor=furl_query,
         reconstructor=furl_reconstruct,
+        # furl mutates in place, so copy() first to avoid corrupting the
+        # object other operations in the same benchmark run still use.
+        path_modifier=lambda parsed: parsed.copy().set(path=MODIFIED_PATH),
+        query_modifier=lambda parsed: parsed.copy().set(query=MODIFIED_QUERY),
+        host_modifier=lambda parsed: parsed.copy().set(host=MODIFIED_HOST),
+        fragment_modifier=lambda parsed: parsed.copy().set(fragment=MODIFIED_FRAGMENT),
         description="furl.furl",
     )
 

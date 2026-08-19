@@ -3,10 +3,26 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import parse_qs
 
-from performance.adapters._models import QueryResult, safe_call, ComponentResult, capture_error, ParserAdapter
-from performance.adapters._core import RFC3986_AVAILABLE, RFC3986_IMPORT_ERROR, rfc3986_api
-from performance.adapters._utils import add_component
+from performance.adapters._core import (
+    RFC3986_AVAILABLE,
+    RFC3986_IMPORT_ERROR,
+    rfc3986_api,
+    rfc3986_exceptions,
+    rfc3986_validators,
+)
+from performance.adapters._models import (
+    MODIFIED_FRAGMENT,
+    MODIFIED_HOST,
+    MODIFIED_PATH,
+    MODIFIED_QUERY,
+    ComponentResult,
+    ParserAdapter,
+    QueryResult,
+    capture_error,
+    safe_call,
+)
 from performance.adapters._registry import register_adapter
+from performance.adapters._utils import add_component
 
 
 def rfc3986_components(parsed: Any) -> ComponentResult:
@@ -118,6 +134,53 @@ def rfc3986_reconstruct(parsed: Any) -> str:
     return parsed.unsplit()
 
 
+def rfc3986_validate(url: str) -> bool:
+    """
+    Plain `uri_reference()` (used as `parse`) never raises -- it's a lenient
+    split, not a validator, so it always "succeeds" even on garbage input.
+    rfc3986's own `Validator` is the library's actual is-this-valid check:
+    it requires a scheme and host and confirms every component matches its
+    RFC 3986 grammar, raising `ValidationError` if not.
+    """
+    validator = (
+        rfc3986_validators.Validator()
+        .require_presence_of("scheme", "host")
+        .check_validity_of("scheme", "host", "path", "query", "fragment")
+    )
+
+    try:
+        validator.validate(rfc3986_api.uri_reference(url))
+        return True
+    except rfc3986_exceptions.ValidationError:
+        return False
+
+
+def rfc3986_normalize(url: str) -> str:
+    """rfc3986's own RFC 3986 §6 syntax-based normalization (case folding, percent-encoding, dot-segment removal)."""
+    return rfc3986_api.uri_reference(url).normalize().unsplit()
+
+
+def rfc3986_modify_host(parsed: Any) -> Any:
+    """
+    rfc3986 has no direct host component -- host is a substring of
+    `authority`. Rebuild the authority around MODIFIED_HOST, preserving
+    whatever userinfo/port were already present.
+    """
+
+    authority_info = parsed.authority_info() or {}
+
+    userinfo = authority_info.get("userinfo")
+    port = authority_info.get("port")
+
+    new_authority = MODIFIED_HOST
+    if port:
+        new_authority = f"{new_authority}:{port}"
+    if userinfo:
+        new_authority = f"{userinfo}@{new_authority}"
+
+    return parsed.copy_with(authority=new_authority)
+
+
 def _create_rfc3986_adapter() -> ParserAdapter:
     if not RFC3986_AVAILABLE:
         reason = (
@@ -128,6 +191,7 @@ def _create_rfc3986_adapter() -> ParserAdapter:
 
         return ParserAdapter(
             name="rfc3986",
+            tags=frozenset({"parser", "rfc3986", "validation", "normalization"}),
             parse=lambda _: None,
             description="rfc3986.api.uri_reference",
             available=False,
@@ -136,10 +200,17 @@ def _create_rfc3986_adapter() -> ParserAdapter:
 
     return ParserAdapter(
         name="rfc3986",
+        tags=frozenset({"parser", "rfc3986", "validation", "normalization"}),
         parse=rfc3986_api.uri_reference,
         component_extractor=rfc3986_components,
         query_extractor=rfc3986_query,
         reconstructor=rfc3986_reconstruct,
+        path_modifier=lambda parsed: parsed.copy_with(path=MODIFIED_PATH),
+        query_modifier=lambda parsed: parsed.copy_with(query=MODIFIED_QUERY),
+        host_modifier=rfc3986_modify_host,
+        fragment_modifier=lambda parsed: parsed.copy_with(fragment=MODIFIED_FRAGMENT),
+        validator=rfc3986_validate,
+        normalizer=rfc3986_normalize,
         description="rfc3986.api.uri_reference",
     )
 

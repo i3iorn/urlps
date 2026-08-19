@@ -3,10 +3,19 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import parse_qs
 
+from performance.adapters._core import URLLIB3_AVAILABLE, URLLIB3_IMPORT_ERROR, urllib3_parse_url
+from performance.adapters._models import (
+    MODIFIED_FRAGMENT,
+    MODIFIED_HOST,
+    MODIFIED_PATH,
+    MODIFIED_QUERY,
+    ComponentResult,
+    ParserAdapter,
+    QueryResult,
+    capture_error,
+)
 from performance.adapters._registry import register_adapter
 from performance.adapters._utils import add_component, split_userinfo
-from performance.adapters._models import QueryResult, ComponentResult, capture_error, ParserAdapter
-from performance.adapters._core import URLLIB3_AVAILABLE, URLLIB3_IMPORT_ERROR, urllib3_parse_url
 
 
 def urllib3_components(parsed: Any) -> ComponentResult:
@@ -104,6 +113,7 @@ def _create_urllib3_adapter() -> ParserAdapter:
 
         return ParserAdapter(
             name="urllib3",
+            tags=frozenset({"parser", "rfc3986"}),
             parse=lambda _: None,
             description="urllib3.util.parse_url",
             available=False,
@@ -112,10 +122,16 @@ def _create_urllib3_adapter() -> ParserAdapter:
 
     return ParserAdapter(
         name="urllib3",
+        tags=frozenset({"parser", "rfc3986"}),
         parse=urllib3_parse_url,
         component_extractor=urllib3_components,
         query_extractor=urllib3_query,
         reconstructor=urllib3_reconstruct,
+        # urllib3.util.url.Url is a NamedTuple; "modification" is `._replace()`.
+        path_modifier=lambda parsed: parsed._replace(path=MODIFIED_PATH),
+        query_modifier=lambda parsed: parsed._replace(query=MODIFIED_QUERY),
+        host_modifier=lambda parsed: parsed._replace(host=MODIFIED_HOST),
+        fragment_modifier=lambda parsed: parsed._replace(fragment=MODIFIED_FRAGMENT),
         description="urllib3.util.parse_url",
     )
 

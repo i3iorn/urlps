@@ -10,19 +10,36 @@ TypeError, AttributeError, etc. does not terminate the benchmark.
 from __future__ import annotations
 
 import cProfile
-import json
+import gc
 import pstats
 import statistics
 import time
-from collections import Counter
+import tracemalloc
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .tuner import TunableDataset
 from .adapters._models import OperationError, ParserAdapter
-from .url_cases import URLDataset
-
+from .url_cases import (
+    EXPECTATION_AMBIGUOUS,
+    EXPECTATION_INVALID,
+    EXPECTATION_UNKNOWN,
+    EXPECTATION_UNSAFE,
+    EXPECTATION_VALID,
+    MODIFY_OPERATIONS,
+    URLDataset,
+    generate_complex_urls,
+    generate_encoded_urls,
+    generate_invalid_port_urls,
+    generate_ipv6_urls,
+    generate_long_query_urls,
+    generate_mixed_urls,
+    generate_random_strings,
+    generate_relative_urls,
+    generate_simple_urls,
+)
 
 # ============================================================================
 # Result structures
@@ -84,6 +101,20 @@ class BenchmarkResult:
     # parser has no such introspection.
     cache_delta: dict[str, Any] | None = None
 
+    # Memory footprint of a single pass over the dataset -- see
+    # _measure_memory() below. peak_bytes/object_count are tracemalloc
+    # numbers, so they reflect Python-level allocations only (not e.g. C
+    # extension heap usage that tracemalloc doesn't instrument).
+    memory: dict[str, Any] | None = None
+
+    # Accuracy against each URL's known expected outcome (see
+    # _measure_expectation_accuracy() below and EXPECTATION_* in
+    # url_cases/_models.py) -- {expectation: {"total", "correct",
+    # "incorrect"}}, one entry per expectation bucket this dataset actually
+    # carries. None when the dataset has no expectation data at all (most
+    # generated corpora) or nothing was scoreable for this adapter.
+    expectation_accuracy: dict[str, dict[str, int]] | None = None
+
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -107,6 +138,18 @@ def _safe_parse(
     adapter: ParserAdapter,
     url: str,
 ) -> tuple[Any | None, OperationError | None]:
+    if adapter.parse is None:
+        # Validation-only/normalization-only adapters (validators,
+        # urlpolice, url_normalize, ...) have no parsed-object step at all;
+        # run_suite() only ever routes them to "validate"/"normalize",
+        # which don't call this. This guard is defence in depth for direct
+        # callers (tests, REPL use) rather than the normal path.
+        return None, OperationError(
+            stage="parse",
+            exception_type="NotSupportedError",
+            message="parse is not supported",
+        )
+
     try:
         return adapter.parse(url), None
     except Exception as exc:
@@ -129,6 +172,21 @@ def _execute_single(
     "components" (each failed component is recorded independently) and is
     otherwise 0 or 1 entries.
     """
+    # "validate"/"normalize" work directly on the URL string -- there's no
+    # parsed-object step to run first (see ParserAdapter.validator's
+    # docstring), unlike every operation below.
+    if operation == "validate":
+        result = adapter.validate(url)
+        if not result.ok:
+            return False, ([result.error] if result.error is not None else [])
+        return True, []
+
+    if operation == "normalize":
+        normalize_result = adapter.normalize(url)
+        if not normalize_result.ok:
+            return False, ([normalize_result.error] if normalize_result.error is not None else [])
+        return True, []
+
     parsed, parse_error = _safe_parse(adapter, url)
 
     if parse_error is not None:
@@ -152,6 +210,13 @@ def _execute_single(
 
         elif operation == "reconstruct":
             _, error = adapter.reconstruct(parsed)
+            if error is not None:
+                return False, [error]
+            return True, []
+
+        elif operation in MODIFY_OPERATIONS:
+            component = operation[len("modify_"):]
+            _, error = adapter.modify(parsed, component)
             if error is not None:
                 return False, [error]
             return True, []
@@ -228,6 +293,8 @@ def benchmark_operation(
     repeats: int = 5,
     warmups: int = 1,
     measure_distribution: bool = True,
+    measure_memory: bool = True,
+    measure_expectations: bool = True,
 ) -> BenchmarkResult:
     """
     Benchmark an operation.
@@ -284,6 +351,18 @@ def benchmark_operation(
             cache_after = adapter.cache_info()
             cache_delta = _cache_delta(cache_before, cache_after)
 
+    memory: dict[str, Any] | None = None
+
+    if measure_memory:
+        memory = _measure_memory(adapter, urls, operation)
+
+    expectation_accuracy: dict[str, dict[str, int]] | None = None
+
+    if measure_expectations:
+        expectation_accuracy = _measure_expectation_accuracy(
+            adapter, urls, dataset.expectations, operation
+        )
+
     return BenchmarkResult(
         parser=adapter.name,
         dataset=dataset.name,
@@ -297,6 +376,8 @@ def benchmark_operation(
         errors=final_errors,
         distribution=distribution,
         cache_delta=cache_delta,
+        memory=memory,
+        expectation_accuracy=expectation_accuracy,
         extra={
             "all_timings_seconds": timings,
             "min_seconds": min(timings),
@@ -376,6 +457,118 @@ def _measure_latency_distribution(
         "mean_url_bytes": (total_bytes / len(urls)) if urls else 0.0,
         "microseconds_per_byte": (total_us / total_bytes) if total_bytes else None,
     }
+
+
+# ============================================================================
+# Memory: peak allocated, bytes/URL, object count
+# ============================================================================
+
+def _measure_memory(
+    adapter: ParserAdapter,
+    urls: list[str],
+    operation: str,
+) -> dict[str, Any]:
+    """
+    Measure the memory footprint of a single pass over `urls`, via
+    tracemalloc.
+
+    A dedicated pass, like _measure_latency_distribution() -- tracemalloc's
+    per-allocation bookkeeping has real overhead, so this never feeds into
+    the headline elapsed_seconds/microseconds_per_url numbers.
+
+    - peak_bytes: the high-water mark of traced Python allocations during
+      the pass (tracemalloc.get_traced_memory()'s peak).
+    - object_count: number of distinct traced allocations still live at the
+      end of the pass -- i.e. what's actually retained (results, caches),
+      not the full churn of every temporary created along the way.
+    - bytes_per_url: peak_bytes / len(urls), the closest single number to
+      "memory cost per URL" without assuming allocations are independent
+      across URLs.
+
+    gc.collect() runs first so the baseline doesn't include garbage left
+    over from prior benchmarks/warmups.
+    """
+
+    gc.collect()
+
+    tracemalloc.start()
+
+    try:
+        _run_operation(adapter, urls, operation)
+
+        snapshot = tracemalloc.take_snapshot()
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    object_count = sum(stat.count for stat in snapshot.statistics("filename"))
+
+    urls_count = len(urls)
+
+    return {
+        "peak_bytes": peak,
+        "bytes_per_url": (peak / urls_count) if urls_count else 0.0,
+        "object_count": object_count,
+    }
+
+
+# ============================================================================
+# Expectation accuracy: does accept/reject match the URL's known-correct
+# outcome (see EXPECTATION_* in url_cases/_models.py)?
+# ============================================================================
+
+def _measure_expectation_accuracy(
+    adapter: ParserAdapter,
+    urls: list[str],
+    expectations: tuple[str, ...],
+    operation: str,
+) -> dict[str, dict[str, int]] | None:
+    """
+    A dedicated pass, like _measure_latency_distribution()/_measure_memory()
+    -- re-running each URL here rather than piggybacking on the timed batch
+    in _run_operation() keeps this measurement's cost off the headline
+    elapsed_seconds/microseconds_per_url numbers.
+
+    For each URL with a known expectation:
+
+        EXPECTATION_VALID   -- correct if the operation succeeded
+        EXPECTATION_INVALID -- correct if the operation failed (rejected)
+        EXPECTATION_UNSAFE  -- syntactically valid, semantically dangerous.
+                                Only scored for adapters tagged "security" --
+                                accepting it is not a bug for a plain parser
+                                that was never asked to judge safety.
+        EXPECTATION_AMBIGUOUS / EXPECTATION_UNKNOWN -- never scored (no
+                                single right answer, or no data at all).
+
+    Returns None if nothing was scoreable for this adapter/dataset pair
+    (e.g. every URL is EXPECTATION_UNKNOWN, or every scoreable one is
+    EXPECTATION_UNSAFE and this adapter isn't tagged "security").
+    """
+    is_security_adapter = "security" in adapter.tags
+
+    buckets: dict[str, dict[str, int]] = {}
+
+    for url, expectation in zip(urls, expectations):
+        if expectation in (EXPECTATION_UNKNOWN, EXPECTATION_AMBIGUOUS):
+            continue
+
+        if expectation == EXPECTATION_UNSAFE and not is_security_adapter:
+            continue
+
+        ok, _errors = _execute_single(adapter, url, operation)
+
+        bucket = buckets.setdefault(expectation, {"total": 0, "correct": 0, "incorrect": 0})
+        bucket["total"] += 1
+
+        # VALID expects acceptance; INVALID/UNSAFE both expect rejection.
+        expected_ok = expectation == EXPECTATION_VALID
+
+        if ok == expected_ok:
+            bucket["correct"] += 1
+        else:
+            bucket["incorrect"] += 1
+
+    return buckets or None
 
 
 # ============================================================================
@@ -561,42 +754,39 @@ def benchmark_concurrency(
     )
 
 
-def save_concurrency_results(
-    results: list[ConcurrencyResult],
-    path: str | Path,
-) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+# name -> (generator, starting n, expectation). One entry per tunable
+# dataset -- unlike the old calibrator, each is sized independently rather
+# than five sharing one "edge" knob, since each now finds its own size
+# live. `mixed`/`random-strings` are left unannotated (None): both
+# deliberately blend valid/invalid/unparseable input, so there's no single
+# right answer to check the whole dataset against.
+TUNABLE_DATASET_SPECS: list[tuple[str, Callable[[int], list[str]], int, str | None]] = [
+    ("simple", lambda n: generate_simple_urls(n, seed=0), 1000, EXPECTATION_VALID),
+    ("complex", lambda n: generate_complex_urls(n, seed=1), 1000, EXPECTATION_VALID),
+    ("ipv6", lambda n: generate_ipv6_urls(n, seed=2), 1000, EXPECTATION_VALID),
+    ("invalid-port", lambda n: generate_invalid_port_urls(n, seed=3), 1000, EXPECTATION_INVALID),
+    ("long-query", lambda n: generate_long_query_urls(n, seed=4), 500, EXPECTATION_VALID),
+    ("encoded", lambda n: generate_encoded_urls(n, seed=5), 1000, EXPECTATION_VALID),
+    ("relative", lambda n: generate_relative_urls(n, seed=6), 1000, EXPECTATION_VALID),
+    ("mixed", lambda n: generate_mixed_urls(n, seed=42), 1000, None),
+    ("random-strings", lambda n: generate_random_strings(n, seed=7), 1000, None),
+]
 
-    payload = {
-        "results": [result.as_dict() for result in results],
-        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-    }
 
-    path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+def build_tunable_datasets(
+    *,
+    starting_sizes: dict[str, int] | None = None,
+) -> list[TunableDataset]:
+    """
+    Build the self-adjusting datasets, optionally overriding a starting n
+    (final sizes still drift from there as the suite runs).
+    """
+    starting_sizes = starting_sizes or {}
 
-
-def print_concurrency_summary(results: list[ConcurrencyResult]) -> None:
-    print()
-    print("=" * 90)
-    print("CONCURRENCY SUMMARY")
-    print("=" * 90)
-
-    header = f"{'Parser':<12}{'Dataset':<18}{'Operation':<14}{'Workers':>10}{'URLs/sec':>16}"
-    print(header)
-    print("-" * 90)
-
-    for result in results:
-        for workers, ups in zip(result.worker_counts, result.urls_per_second):
-            print(
-                f"{result.parser:<12}"
-                f"{result.dataset:<18}"
-                f"{result.operation:<14}"
-                f"{workers:>10}"
-                f"{ups:>16,.1f}"
-            )
-
-    print("=" * 90)
+    return [
+        TunableDataset(name, make_urls, starting_sizes.get(name, default_n), expectation=expectation)
+        for name, make_urls, default_n, expectation in TUNABLE_DATASET_SPECS
+    ]
 
 
 # ============================================================================
@@ -608,7 +798,50 @@ DEFAULT_OPERATIONS = [
     "components",
     "query",
     "reconstruct",
+    "modify_path",
+    "modify_query",
+    "modify_host",
+    "modify_fragment",
+    "validate",
+    "normalize",
 ]
+
+
+def count_planned_steps(
+    adapters: list[ParserAdapter],
+    datasets: list[URLDataset],
+    operations: list[str],
+    *,
+    repeated_parse: int = 1,
+) -> int:
+    """
+    How many (parser, dataset, operation) benchmark steps run_suite() will
+    actually execute for this adapter/dataset/operation selection.
+
+    Used by callers (the CLI's live-progress counter) that need the total
+    up front, before run_suite() itself applies the same per-adapter
+    "only operations this adapter actually supports" and per-dataset
+    "excluded_operations"/"skip_repeated_parse" filtering.
+    """
+    total = 0
+
+    for adapter in adapters:
+        supported = adapter.supported_operations
+        adapter_operations = [operation for operation in operations if operation in supported]
+
+        for dataset in datasets:
+            dataset_operations = [
+                operation for operation in adapter_operations
+                if operation not in dataset.excluded_operations
+            ]
+
+            steps = len(dataset_operations)
+            if repeated_parse > 1 and adapter.parse is not None and not dataset.skip_repeated_parse:
+                steps += 1
+
+            total += steps
+
+    return total
 
 
 def run_suite(
@@ -619,27 +852,57 @@ def run_suite(
     repeats: int = 5,
     warmups: int = 1,
     repeated_parse: int = 3,
+    on_parser_start: Callable[[ParserAdapter], None] | None = None,
+    on_dataset_start: Callable[[Any], None] | None = None,
+    on_operation_start: Callable[[str], None] | None = None,
+    on_result: Callable[[BenchmarkResult], None] | None = None,
+    on_dataset_adjusted: Callable[[TunableDataset], None] | None = None,
 ) -> list[BenchmarkResult]:
+    """
+    Run the complete benchmark suite.
+
+    The engine itself performs no console output. Optional callbacks allow
+    callers such as the CLI to provide progress reporting without coupling
+    the benchmark engine to presentation.
+    """
     if operations is None:
         operations = DEFAULT_OPERATIONS
 
     results: list[BenchmarkResult] = []
 
     for adapter in adapters:
-        print()
-        print("=" * 80)
-        print(f"PARSER: {adapter.name}")
-        print("=" * 80)
+        if on_parser_start is not None:
+            on_parser_start(adapter)
+
+        # Not every adapter supports every operation -- a pure validator
+        # has no "components" to extract, a normalizer has no "parse" at
+        # all. Run only the intersection instead of recording a wall of
+        # NotSupportedError entries for the rest (see
+        # ParserAdapter.supported_operations).
+        adapter_operations = [
+            operation
+            for operation in operations
+            if operation in adapter.supported_operations
+        ]
 
         for dataset in datasets:
-            print(f"\nDataset: {dataset.name} ({dataset.size} URLs)")
+            if on_dataset_start is not None:
+                on_dataset_start(dataset)
 
-            for operation in operations:
-                print(
-                    f"  {operation:<16}",
-                    end="",
-                    flush=True,
-                )
+            # Some operations are uninformative on some datasets -- e.g.
+            # modify_* on the malicious corpus tests nothing about *that*
+            # corpus's purpose (see URLDataset.excluded_operations).
+            dataset_operations = [
+                operation
+                for operation in adapter_operations
+                if operation not in dataset.excluded_operations
+            ]
+
+            for operation in dataset_operations:
+                wall_start = time.perf_counter()
+
+                if on_operation_start is not None:
+                    on_operation_start(operation)
 
                 result = benchmark_operation(
                     adapter,
@@ -651,24 +914,25 @@ def run_suite(
 
                 results.append(result)
 
-                overall = result.distribution.get("overall") if result.distribution else None
-                p95_text = f"  p95={overall['p95_us']:.3f}us" if overall else ""
+                if on_result is not None:
+                    on_result(result)
 
-                print(
-                    f"{result.elapsed_seconds * 1000:10.3f} ms  "
-                    f"{result.microseconds_per_url:8.3f} us/url"
-                    f"{p95_text}  "
-                    f"ok={result.successful:<6} "
-                    f"fail={result.failed:<6}"
+                wall_elapsed = (
+                    time.perf_counter() - wall_start
                 )
 
-                if result.errors.count:
-                    print(
-                        f"    errors: {result.errors.count} "
-                        f"{dict(result.errors.by_type)}"
+                if isinstance(dataset, TunableDataset):
+                    changed = dataset.adjust(
+                        wall_elapsed
                     )
 
-            if repeated_parse > 1:
+                    if (
+                        changed
+                        and on_dataset_adjusted is not None
+                    ):
+                        on_dataset_adjusted(dataset)
+
+            if repeated_parse > 1 and adapter.parse is not None and not dataset.skip_repeated_parse:
                 result = benchmark_repeated_parse(
                     adapter,
                     dataset,
@@ -679,135 +943,10 @@ def run_suite(
 
                 results.append(result)
 
-                print(
-                    f"  {'repeated parse':<16}"
-                    f"{result.elapsed_seconds * 1000:10.3f} ms  "
-                    f"{result.microseconds_per_url:8.3f} us/url  "
-                    f"ok={result.successful:<6} "
-                    f"fail={result.failed:<6}"
-                )
+                if on_result is not None:
+                    on_result(result)
 
     return results
-
-
-# ============================================================================
-# JSON output
-# ============================================================================
-
-def save_results(
-    results: list[BenchmarkResult],
-    path: str | Path,
-) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    payload = {
-        "results": [result.as_dict() for result in results],
-        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-    }
-
-    path.write_text(
-        json.dumps(
-            payload,
-            indent=2,
-            default=str,
-        ),
-        encoding="utf-8",
-    )
-
-
-# ============================================================================
-# Console summary
-# ============================================================================
-
-def print_summary(results: list[BenchmarkResult]) -> None:
-    print()
-    print("=" * 130)
-    print("BENCHMARK SUMMARY")
-    print("=" * 130)
-
-    header = (
-        f"{'Parser':<12}"
-        f"{'Dataset':<18}"
-        f"{'Operation':<22}"
-        f"{'ms':>12}"
-        f"{'us/url':>12}"
-        f"{'p95 us':>12}"
-        f"{'OK':>10}"
-        f"{'FAIL':>10}"
-    )
-
-    print(header)
-    print("-" * 130)
-
-    for result in results:
-        overall = result.distribution.get("overall") if result.distribution else None
-        p95_text = f"{overall['p95_us']:>12.3f}" if overall else f"{'n/a':>12}"
-
-        print(
-            f"{result.parser:<12}"
-            f"{result.dataset:<18}"
-            f"{result.operation:<22}"
-            f"{result.elapsed_seconds * 1000:>12.3f}"
-            f"{result.microseconds_per_url:>12.3f}"
-            f"{p95_text}"
-            f"{result.successful:>10}"
-            f"{result.failed:>10}"
-        )
-
-    print("=" * 130)
-
-    print("\nERROR SUMMARY")
-
-    error_counter: Counter[tuple[str, str, str]] = Counter()
-
-    for result in results:
-        for error_type, count in result.errors.by_type.items():
-            error_counter[
-                (
-                    result.parser,
-                    result.operation,
-                    error_type,
-                )
-            ] += count
-
-    if not error_counter:
-        print("No errors recorded.")
-    else:
-        for (parser, operation, error_type), count in sorted(
-            error_counter.items()
-        ):
-            print(
-                f"  {parser:<12} "
-                f"{operation:<20} "
-                f"{error_type:<30} "
-                f"{count}"
-            )
-
-    _print_cache_summary(results)
-
-
-def _print_cache_summary(results: list[BenchmarkResult]) -> None:
-    with_cache = [r for r in results if r.cache_delta]
-    if not with_cache:
-        return
-
-    print("\nCACHE HIT RATES (this run, by parser)")
-
-    totals: dict[str, dict[str, tuple[int, int]]] = {}
-
-    for result in with_cache:
-        for category, caches in result.cache_delta.items():
-            for cache_name, stats in caches.items():
-                key = f"{result.parser}:{category}.{cache_name}"
-                hits, misses = totals.get(key, (0, 0))
-                totals[key] = (hits + stats["hits"], misses + stats["misses"])
-
-    for key, (hits, misses) in sorted(totals.items()):
-        total = hits + misses
-        rate = f"{hits / total * 100:.1f}%" if total else "n/a"
-        print(f"  {key:<45} hits={hits:<10,} misses={misses:<10,} hit_rate={rate}")
-
 
 # ============================================================================
 # cProfile
@@ -821,23 +960,27 @@ def profile_parser(
     repeats: int = 10,
     profile_path: str | Path = "performance/profile_results.prof",
     text_path: str | Path = "performance/profile_results.txt",
-) -> None:
+) -> tuple[Path, Path]:
     """
     Profile a parser while retaining the same exception safety as the suite.
-    """
 
+    Returns:
+        (profile_path, text_path)
+    """
     profile_path = Path(profile_path)
     text_path = Path(text_path)
 
-    profile_path.parent.mkdir(parents=True, exist_ok=True)
-    text_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    text_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     profiler = cProfile.Profile()
-
-    print()
-    print("=" * 80)
-    print(f"cProfile: {adapter.name} / {dataset.name} / {operation}")
-    print("=" * 80)
 
     profiler.enable()
 
@@ -851,12 +994,17 @@ def profile_parser(
     finally:
         profiler.disable()
 
-    profiler.dump_stats(str(profile_path))
+    profiler.dump_stats(
+        str(profile_path)
+    )
 
     stats = pstats.Stats(profiler)
     stats.sort_stats("cumulative")
 
-    with text_path.open("w", encoding="utf-8") as fh:
+    with text_path.open(
+        "w",
+        encoding="utf-8",
+    ) as fh:
         fh.write(
             f"Parser: {adapter.name}\n"
             f"Dataset: {dataset.name}\n"
@@ -867,5 +1015,4 @@ def profile_parser(
         stats.stream = fh
         stats.print_stats(100)
 
-    print(f"Raw profile: {profile_path}")
-    print(f"Text profile: {text_path}")
+    return profile_path, text_path

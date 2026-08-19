@@ -10,15 +10,15 @@ Run:
 
 from __future__ import annotations
 
-from .adapters import urllib_adapter, urlps_adapter
+from .adapters.urllib import urllib_adapter
+from .adapters.urlps import urlps_adapter
 from .url_cases import (
     generate_complex_urls,
-    generate_simple_urls,
-    generate_mixed_urls,
     generate_invalid_port_urls,
     generate_long_query_urls,
+    generate_mixed_urls,
+    generate_simple_urls,
 )
-
 
 # ============================================================================
 # Datasets

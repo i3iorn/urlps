@@ -109,6 +109,53 @@ def get_adapters(
 
 
 # ============================================================================
+# Category/tag helpers
+# ============================================================================
+
+def get_adapters_by_tags(
+    tags: list[str],
+    *,
+    available_only: bool = True,
+) -> list[ParserAdapter]:
+    """
+    Return adapters carrying any of `tags` (union, not intersection --
+    "parser" or "validation" returns adapters tagged with either).
+
+    Example:
+
+        get_adapters_by_tags(["security"])
+
+        get_adapters_by_tags(["parser", "validation"])
+    """
+
+    wanted = set(tags)
+
+    adapters = [
+        adapter
+        for adapter in BUILTIN_ADAPTERS.values()
+        if adapter.tags & wanted
+    ]
+
+    if available_only:
+        adapters = [adapter for adapter in adapters if adapter.available]
+
+    return adapters
+
+
+def available_categories() -> list[str]:
+    """
+    Every tag currently in use across registered adapters, sorted.
+    """
+
+    tags: set[str] = set()
+
+    for adapter in BUILTIN_ADAPTERS.values():
+        tags.update(adapter.tags)
+
+    return sorted(tags)
+
+
+# ============================================================================
 # Availability helpers
 # ============================================================================
 
@@ -164,22 +211,3 @@ def parser_availability() -> dict[str, dict[str, Any]]:
         }
         for adapter in BUILTIN_ADAPTERS.values()
     }
-
-
-def print_parser_availability() -> None:
-    """
-    Print parser availability in a human-friendly format.
-    """
-
-    print("Parser availability")
-    print("=" * 72)
-
-    for adapter in BUILTIN_ADAPTERS.values():
-        status = "AVAILABLE" if adapter.available else "UNAVAILABLE"
-
-        print(f"{adapter.name:<12} {status:<12} {adapter.description}")
-
-        if not adapter.available and adapter.unavailable_reason:
-            print(f"             {adapter.unavailable_reason}")
-
-    print()

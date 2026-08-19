@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import parse_qs, urlunparse, urlparse
+from urllib.parse import parse_qs, urlparse, urlunparse
 
-from performance.adapters._models import QueryResult, ComponentResult, capture_error, ParserAdapter
-from performance.adapters._utils import add_component
-
+from performance.adapters._models import (
+    MODIFIED_FRAGMENT,
+    MODIFIED_HOST,
+    MODIFIED_PATH,
+    MODIFIED_QUERY,
+    ComponentResult,
+    ParserAdapter,
+    QueryResult,
+    capture_error,
+)
 from performance.adapters._registry import register_adapter
+from performance.adapters._utils import add_component
 
 
 def urllib_components(parsed: Any) -> ComponentResult:
@@ -74,12 +82,35 @@ def urllib_reconstruct(parsed: Any) -> str:
     return urlunparse(parsed)
 
 
+def urllib_modify_host(parsed: Any) -> Any:
+    """
+    urllib's ParseResult has no standalone host field to `._replace()` --
+    host lives inside `netloc`. Rebuild netloc around MODIFIED_HOST,
+    preserving whatever userinfo/port were already present.
+    """
+
+    new_netloc = MODIFIED_HOST
+    if parsed.port:
+        new_netloc = f"{new_netloc}:{parsed.port}"
+
+    userinfo = parsed.netloc.split("@", 1)[0] if "@" in parsed.netloc else None
+    if userinfo:
+        new_netloc = f"{userinfo}@{new_netloc}"
+
+    return parsed._replace(netloc=new_netloc)
+
+
 urllib_adapter = ParserAdapter(
     name="urllib",
+    tags=frozenset({"parser", "rfc3986", "stdlib"}),
     parse=urlparse,
     component_extractor=urllib_components,
     query_extractor=urllib_query,
     reconstructor=urllib_reconstruct,
+    path_modifier=lambda parsed: parsed._replace(path=MODIFIED_PATH),
+    query_modifier=lambda parsed: parsed._replace(query=MODIFIED_QUERY),
+    host_modifier=urllib_modify_host,
+    fragment_modifier=lambda parsed: parsed._replace(fragment=MODIFIED_FRAGMENT),
     description="Python standard library urllib.parse.urlparse",
 )
 

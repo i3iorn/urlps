@@ -2,11 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from performance.adapters._models import (
+    MODIFIED_FRAGMENT,
+    MODIFIED_HOST,
+    MODIFIED_PATH,
+    MODIFIED_QUERY,
+    ComponentResult,
+    ParserAdapter,
+    QueryResult,
+    capture_error,
+)
 from performance.adapters._registry import register_adapter
+from performance.adapters._utils import add_component, safe_getattr
 from src.urlps import get_cache_info, parse_url
-
-from performance.adapters._utils import safe_getattr, add_component
-from performance.adapters._models import QueryResult, ComponentResult, capture_error, ParserAdapter
 
 
 def urlps_components(parsed: Any) -> ComponentResult:
@@ -78,12 +86,28 @@ def urlps_reconstruct(parsed: Any) -> str:
     return str(parsed)
 
 
+def url_validate(parsed: Any) -> Any:
+    url = parse_url(parsed)
+    findings = url.validate()
+    return len(findings) == 0
+
+def url_normalize(parsed: Any) -> Any:
+    url = parse_url(parsed)
+    return url.canonicalize().as_string()
+
 urlps_adapter = ParserAdapter(
     name="urlps",
+    tags=frozenset({"parser", "rfc3986", "validation", "security", "normalization"}),
     parse=parse_url,
     component_extractor=urlps_components,
     query_extractor=urlps_query,
     reconstructor=urlps_reconstruct,
+    path_modifier=lambda parsed: parsed.with_path(MODIFIED_PATH),
+    query_modifier=lambda parsed: parsed.with_query(MODIFIED_QUERY),
+    host_modifier=lambda parsed: parsed.with_host(MODIFIED_HOST),
+    fragment_modifier=lambda parsed: parsed.with_fragment(MODIFIED_FRAGMENT),
+    validator=url_validate,
+    normalizer=url_normalize,
     description="urlps.parse_url",
     cache_info=get_cache_info,
 )

@@ -2,10 +2,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from performance.adapters._registry import register_adapter
-from performance.adapters._models import QueryResult, ComponentResult, capture_error, ParserAdapter
 from performance.adapters._core import YARL_AVAILABLE, YARL_IMPORT_ERROR
+from performance.adapters._models import (
+    MODIFIED_FRAGMENT,
+    MODIFIED_HOST,
+    MODIFIED_PATH,
+    MODIFIED_QUERY,
+    ComponentResult,
+    ParserAdapter,
+    QueryResult,
+    capture_error,
+)
+from performance.adapters._registry import register_adapter
 from performance.adapters._utils import add_component
+
+# yarl's with_query() takes a mapping rather than a query string, so
+# MODIFIED_QUERY is split into pairs here instead of duplicating its value.
+_MODIFIED_QUERY_PAIRS = dict(pair.split("=", 1) for pair in MODIFIED_QUERY.split("&"))
 
 
 def yarl_components(parsed: Any) -> ComponentResult:
@@ -93,6 +106,7 @@ def _create_yarl_adapter() -> ParserAdapter:
 
         return ParserAdapter(
             name="yarl",
+            tags=frozenset({"parser", "rfc3986"}),
             parse=lambda _: None,
             description="yarl.URL",
             available=False,
@@ -103,10 +117,15 @@ def _create_yarl_adapter() -> ParserAdapter:
 
     return ParserAdapter(
         name="yarl",
+        tags=frozenset({"parser", "rfc3986"}),
         parse=YarlURL,
         component_extractor=yarl_components,
         query_extractor=yarl_query,
         reconstructor=yarl_reconstruct,
+        path_modifier=lambda parsed: parsed.with_path(MODIFIED_PATH),
+        query_modifier=lambda parsed: parsed.with_query(_MODIFIED_QUERY_PAIRS),
+        host_modifier=lambda parsed: parsed.with_host(MODIFIED_HOST),
+        fragment_modifier=lambda parsed: parsed.with_fragment(MODIFIED_FRAGMENT),
         description="yarl.URL",
     )
 
