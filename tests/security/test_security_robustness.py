@@ -247,7 +247,7 @@ class TestPhishingDegradation:
 
 
 class TestDNSResolutionTimeout:
-    """`timeout_seconds` previously bounded only the socket connect."""
+    """`timeout_seconds` must bound the whole resolution, not just the socket connect."""
 
     def test_slow_resolution_is_abandoned(self):
         from urlps._security.dns_guard import _resolve_addr_info
@@ -276,13 +276,9 @@ class TestDNSResolutionTimeout:
 
 
 class TestDNSExceptionTypes:
-    """DNS rebinding findings raise their matching typed subclass.
-
-    validate_url_security previously wrapped every finding in a flat
-    InvalidURLError regardless of which ErrorCode it carried, so a caller
-    could not distinguish "rate limited" from "resolution failed" from
-    "connection check failed" without inspecting .code by hand.
-    """
+    """DNS rebinding findings raise their matching typed subclass, so a caller
+    can distinguish "rate limited" from "resolution failed" from "connection
+    check failed" without inspecting .code by hand."""
 
     @pytest.mark.parametrize(
         ("error_code_name", "exception_cls_name"),

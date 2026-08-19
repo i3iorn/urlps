@@ -6,6 +6,7 @@ from typing import Any
 from urllib.parse import quote, quote_plus, unquote_plus
 
 from ._cache_config import BUILDER_PATH_ENCODE_CACHE_SIZE, BUILDER_QUERY_ENCODE_CACHE_SIZE
+from ._normalize import normalize_host
 from ._patterns import PATTERNS
 from .constants import DEFAULT_PORTS, OfficialSchemes
 from .exceptions import (
@@ -101,13 +102,6 @@ class Builder:
 
         # `query` is authoritative when supplied; `query_pairs` is only a
         # fallback for callers that provide structured pairs instead.
-        #
-        # This precedence used to be reversed, which made every query override
-        # a silent no-op: URL.copy(query=...) merged the new string into a
-        # component dict that still carried the *old* query_pairs, and those
-        # pairs then won. That is what broke with_query(), with_query_param()
-        # and without_query_param() -- they all computed a correct new query
-        # and then had it discarded.
         if query is not None:
             serialized_query = query
         elif query_pairs:
@@ -185,7 +179,11 @@ class Builder:
         parts = []
         if userinfo:
             parts.append(f"{userinfo}@")
-        parts.append(host)
+        # build()/compose_url() never go through the parser, so the RFC 3986
+        # §6.2.2 host normalization has to be applied here too -- otherwise
+        # the same host would canonicalize differently depending on whether
+        # the caller parsed a string or assembled one from components.
+        parts.append(normalize_host(host))
         display_port = port
         if scheme and display_port is not None and DEFAULT_PORTS.get(scheme.lower()) == display_port:
             display_port = None

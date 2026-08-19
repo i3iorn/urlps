@@ -86,9 +86,14 @@ class TestPercentEncodingRFC3986:
 
     def test_ipv6_with_zone_id_percent_encoded(self):
         """RFC 6874: IPv6 zone IDs must be percent-encoded"""
-        # Use parse_url_unsafe for link-local IPv6 addresses
-        # Correct: zone ID is percent-encoded as %25eth0
-        url = parse_url_unsafe("http://[fe80::1%25eth0]/")
+        # Link-local IPv6 is blocked by every policy that enforces SSRF at
+        # all, so testing zone-ID syntax needs an explicit SSRF opt-out.
+        from urlps._security import SecurityPolicy
+
+        url = parse_url_unsafe(
+            "http://[fe80::1%25eth0]/",
+            policy=SecurityPolicy.internal(enforce_ssrf=False),
+        )
         assert "[fe80::1%25eth0]" in url.host or url.host == "[fe80::1%25eth0]"
 
     def test_ipv6_zone_id_raw_percent_invalid(self):
@@ -131,11 +136,7 @@ class TestQueryStringRFC3986:
         assert params[0][1] == "hello world"
 
     def test_query_percent_encoding_preservation(self):
-        """Percent-encoded characters in query should be preserved verbatim.
-
-        This previously asserted only `query is not None`, which was weak
-        enough to pass while the parser silently rewrote %20 as '+'.
-        """
+        """Percent-encoded characters in query should be preserved verbatim."""
         url = parse_url("http://example.com/?key=value%20with%20spaces")
         assert url.query == "key=value%20with%20spaces"
         assert url.query_params == [("key", "value with spaces")]

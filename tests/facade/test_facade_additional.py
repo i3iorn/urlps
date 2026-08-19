@@ -92,7 +92,7 @@ class TestInitBuild:
         from urlps import parse_url_unsafe
         from urlps._security import SecurityPolicy
 
-        policy = SecurityPolicy.internal()
+        policy = SecurityPolicy.local()
         url = parse_url_unsafe("http://localhost/test", policy=policy)
         assert url.host == "localhost"
 
@@ -105,7 +105,7 @@ class TestInitAdditional:
         from urlps import parse_url_unsafe
         from urlps._security.policy import SecurityPolicy
 
-        p = SecurityPolicy.internal()
+        p = SecurityPolicy.local()
         url = parse_url_unsafe("http://localhost/test", policy=p)
         assert url.host == "localhost"
 

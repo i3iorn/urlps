@@ -14,6 +14,14 @@ from ..exceptions import (
     InvalidURLError,
     SecurityPolicyError,
 )
+from ._unicode import (
+    is_single_script_label,
+    is_whole_script_confusable,
+    scripts_of,
+    skeleton,
+    to_ascii,
+    to_unicode,
+)
 from .dns_guard import (
     DNSRateLimiter,
     DNSRateLimiterConfig,
@@ -23,6 +31,7 @@ from .dns_guard import (
     get_dns_rate_limiter,
     reset_dns_rate_limiter,
 )
+from .host_analysis import analyze_host
 from .ip_utils import is_malicious_ipv6_zone_id, is_private_ip, is_ssrf_risk
 from .phishing_db import (
     check_against_phishing_db,
@@ -30,7 +39,12 @@ from .phishing_db import (
     get_phishing_db_info,
     refresh_phishing_db,
 )
-from .policy import PolicyInput, SecurityPolicy, resolve_security_policy
+from .policy import (
+    PolicyInput,
+    SecurityPolicy,
+    _resolve_named_policy,
+    resolve_security_policy,
+)
 from .url_checks import (
     extract_host_and_path,
     find_authority_marker,
@@ -40,20 +54,52 @@ from .url_checks import (
     has_mixed_scripts,
     has_parser_confusion,
     has_path_traversal,
-    has_query_injection,
     has_scheme_authority,
     has_suspicious_punycode,
     is_dangerous_port,
-    is_non_canonical_url,
     is_open_redirect_risk,
     normalize_url_unicode,
     redact_url_for_logs,
 )
 
+#: Per-code hint naming the way out, for the rejections a caller is most
+#: likely to hit on legitimate input. Kept as data next to the codes rather
+#: than inline at each call site so the wording stays consistent.
+_REMEDIATION_BY_CODE: dict[ErrorCode, str] = {
+    ErrorCode.SSRF_RISK: (
+        "If this is an intentional local or internal URL, use parse_url_local() "
+        'or policy="local", which still blocks cloud metadata endpoints. To turn '
+        "SSRF enforcement off entirely, pass "
+        "SecurityPolicy.internal(enforce_ssrf=False)."
+    ),
+    ErrorCode.DANGEROUS_PORT: (
+        "Port blocking is opt-in; it is enabled on this policy. Use "
+        'policy="balanced" or SecurityPolicy.strict(block_dangerous_ports=False) '
+        "if this port is expected."
+    ),
+    ErrorCode.CREDENTIALS_IN_URL: (
+        "Credentials in a URL are legal but discouraged. Use "
+        'policy="balanced" to allow them, and URL.redacted() or '
+        "URL.as_string(mask_password=True) when logging."
+    ),
+    ErrorCode.MIXED_SCRIPT_LABEL: (
+        'If this domain is legitimate, use policy="internal" or set enforce_mixed_scripts=False.'
+    ),
+    ErrorCode.CONFUSABLE_HOST: (
+        'If this domain is legitimate, use policy="internal" or set enforce_confusable_host=False.'
+    ),
+}
+
 
 def _finding(severity: str, code: ErrorCode, message: str, component: str | None) -> SecurityFinding:
     """Create a normalized security finding object."""
-    return SecurityFinding(severity=severity, code=code.value, message=message, component=component)
+    return SecurityFinding(
+        severity=severity,
+        code=code.value,
+        message=message,
+        component=component,
+        remediation=_REMEDIATION_BY_CODE.get(code),
+    )
 
 
 def collect_security_findings(
@@ -94,7 +140,6 @@ def collect_security_findings(
     # can't correlate that across the two variables on its own.
     assert split is not None
     host, path = extract_host_and_path(normalized_url)
-    query = split.query
     try:
         port = split.port
     except ValueError:
@@ -111,24 +156,21 @@ def collect_security_findings(
                     "host",
                 )
             )
-        if effective_policy.enforce_ssrf and is_ssrf_risk(host):
+        if effective_policy.enforce_ssrf and is_ssrf_risk(host, allow_private=effective_policy.allow_private_hosts):
             findings.append(
                 _finding("critical", ErrorCode.SSRF_RISK, "Host poses SSRF risk and is disallowed.", "host")
             )
-        if effective_policy.enforce_mixed_scripts and not is_ascii and has_mixed_scripts(host):
-            findings.append(
-                _finding("major", ErrorCode.MIXED_SCRIPTS, "URL host contains mixed Unicode scripts.", "host")
-            )
-        if effective_policy.enforce_suspicious_punycode and has_suspicious_punycode(host):
-            findings.append(
-                _finding(
-                    "major",
-                    ErrorCode.SUSPICIOUS_PUNYCODE,
-                    "URL host is a suspicious Punycode/IDN domain (confusable characters, "
-                    "excessive hyphens, or a brand-like name combined with non-ASCII).",
-                    "host",
-                )
-            )
+        # Unicode host analysis. Deliberately NOT gated on `not is_ascii`:
+        # Punycode is ASCII, and an A-label is exactly how a homograph attack
+        # arrives on the wire. analyze_host() decodes first, then works per label.
+        _CODE_TO_FLAG = {
+            ErrorCode.MIXED_SCRIPT_LABEL: effective_policy.enforce_mixed_scripts,
+            ErrorCode.CONFUSABLE_HOST: effective_policy.enforce_confusable_host,
+        }
+        for code, severity, message in analyze_host(host):
+            enabled = _CODE_TO_FLAG.get(code, effective_policy.enforce_host_unicode_safety)
+            if enabled:
+                findings.append(_finding(severity, code, message, "host"))
 
     # --- Path-related checks ---
     if path:
@@ -151,18 +193,34 @@ def collect_security_findings(
                 "url",
             )
         )
-    if effective_policy.enforce_query_injection and query and has_query_injection(query):
-        findings.append(
-            _finding("major", ErrorCode.QUERY_INJECTION, "URL query contains injection-like patterns.", "query")
-        )
-    if effective_policy.reject_credentials and has_credentials(normalized_url):
-        findings.append(
-            _finding("major", ErrorCode.CREDENTIALS_IN_URL, "URL credentials are disallowed by policy.", "userinfo")
-        )
+    # Credentials in the authority are legal RFC 3986 and common in internal
+    # tooling, so they are advisory by default: the phishing shape that
+    # actually matters ("https://apple.com@evil.com/") is caught structurally
+    # by enforce_parser_confusion, and .host already resolves to the real
+    # host either way. Callers who want them rejected opt in explicitly.
+    if has_credentials(normalized_url):
+        if effective_policy.reject_credentials:
+            findings.append(
+                _finding(
+                    "major",
+                    ErrorCode.CREDENTIALS_IN_URL,
+                    "URL credentials are disallowed by policy.",
+                    "userinfo",
+                )
+            )
+        else:
+            findings.append(
+                _finding(
+                    "warning",
+                    ErrorCode.CREDENTIALS_IN_URL,
+                    "URL contains credentials in the authority. The host resolves to the part "
+                    "after the last '@'; verify it is the host you expect. Use "
+                    "URL.redacted() or as_string(mask_password=True) before logging.",
+                    "userinfo",
+                )
+            )
     if effective_policy.block_dangerous_ports and is_dangerous_port(port, block_dangerous_ports=True):
         findings.append(_finding("major", ErrorCode.DANGEROUS_PORT, "URL uses a blocked dangerous port.", "port"))
-    if effective_policy.require_canonical and is_non_canonical_url(normalized_url):
-        findings.append(_finding("major", ErrorCode.NON_CANONICAL_URL, "URL is not in canonical form.", "url"))
 
     # --- DNS checks ---
     effective_check_dns = effective_policy.check_dns
@@ -247,7 +305,12 @@ def validate_url_security(
             if finding.severity in BLOCKING_SEVERITIES:
                 code = ErrorCode(finding.code)
                 exception_type = _EXCEPTION_TYPES_BY_CODE.get(code, InvalidURLError)
-                raise exception_type(finding.message, component=finding.component, value=url, code=code)
+                # Append the remediation so the traceback itself names the way
+                # out; the structured field stays available on the finding.
+                message = finding.message
+                if finding.remediation:
+                    message = f"{message} {finding.remediation}"
+                raise exception_type(message, component=finding.component, value=url, code=code)
     return findings
 
 
@@ -257,6 +320,18 @@ _CACHED_FUNCTIONS: list[Any] = [
     has_mixed_scripts,
     has_parser_confusion,
     find_authority_marker,
+    # Unicode host analysis (added 1.0). Registered here so the caches are
+    # visible to get_cache_info()/clear_all_caches() -- test_cache_registry.py
+    # asserts that every lru_cache in the package appears, so a new cache
+    # cannot silently escape reporting the way _resolve_named_policy did.
+    analyze_host,
+    scripts_of,
+    is_single_script_label,
+    skeleton,
+    is_whole_script_confusable,
+    to_ascii,
+    to_unicode,
+    _resolve_named_policy,
 ]
 
 
@@ -306,12 +381,10 @@ __all__ = [
     "has_mixed_scripts",
     "has_parser_confusion",
     "has_path_traversal",
-    "has_query_injection",
     "has_scheme_authority",
     "has_suspicious_punycode",
     "is_dangerous_port",
     "is_malicious_ipv6_zone_id",
-    "is_non_canonical_url",
     "is_open_redirect_risk",
     "is_private_ip",
     "is_ssrf_risk",

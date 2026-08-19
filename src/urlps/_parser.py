@@ -9,6 +9,8 @@ from urllib.parse import unquote_plus
 from ._builder import Builder, QueryPairs
 from ._cache_config import PARSER_CACHE_SIZE
 from ._components import ParseResult
+from ._normalize import normalize_host, normalize_percent_encoding
+from ._security._unicode.uts46 import IdnaError, to_ascii
 from ._validation import Validator, is_valid_userinfo
 from .constants import (
     DEFAULT_PORTS,
@@ -154,7 +156,7 @@ def parse_ipv6_host(host_candidate: str) -> tuple[str, int | None]:
         port = parse_port(remainder[1:])
     elif remainder:
         raise HostValidationError("Unexpected characters after IPv6 literal.", value=remainder, component="host")
-    return host_literal, port
+    return normalize_host(host_literal), port
 
 
 def parse_regular_host(host_candidate: str) -> tuple[str, int | None]:
@@ -165,17 +167,19 @@ def parse_regular_host(host_candidate: str) -> tuple[str, int | None]:
     if "." in host_part and host_part.replace(".", "").replace("-", "").isdigit():
         if not Validator.is_valid_ipv4(host_part):
             raise HostValidationError("Invalid IPv4 address format.", value=host_part, component="host")
-        return host_part, parse_port(port_part) if sep else None
+        return normalize_host(host_part), parse_port(port_part) if sep else None
     if not Validator.is_valid_host(host_part):
         raise HostValidationError("Host contains invalid characters.", value=host_part, component="host")
     if not host_part.isascii():
+        # Route through the one IDNA entry point (see _unicode/uts46.py) so
+        # the parser and Validator can never disagree on a host's ASCII form.
         try:
-            ascii_host = host_part.encode("idna").decode("ascii")
-        except UnicodeError as exc:
-            raise HostValidationError("Unable to IDNA-encode host.", value=host_part, component="host") from exc
+            ascii_host = to_ascii(host_part)
+        except IdnaError as exc:
+            raise HostValidationError(f"Unable to IDNA-encode host: {exc}", value=host_part, component="host") from exc
     else:
         ascii_host = host_part
-    return ascii_host, parse_port(port_part) if sep else None
+    return normalize_host(ascii_host), parse_port(port_part) if sep else None
 
 
 def parse_host(host_candidate: str, require_host: bool = False) -> tuple[str | None, int | None]:
@@ -250,16 +254,12 @@ def parse_query_string(query_candidate: str | None) -> tuple[str | None, QueryPa
     """Parse a query string into its original form plus decoded pairs.
 
     Returns ``(raw_query, pairs)``. The first element is the query string
-    **exactly as received** -- parsing is non-destructive.
-
-    This previously returned a re-serialized form built from the decoded
-    pairs, which silently corrupted data: ``quote_plus`` treats ``+``, ``&``
-    and ``=`` as safe, so a decoded literal ``+`` was re-emitted bare (and
-    would decode as a space on the next pass) and a decoded literal ``&`` was
-    re-emitted as a *delimiter*, splitting one parameter into two. Round
-    tripping ``?q=a+%26+b`` produced ``?q=a+&+b``, which re-parses as two
-    parameters -- a parameter-smuggling vector, and fatal for signature
-    verification or proxying.
+    **exactly as received** -- parsing is non-destructive. Re-serializing
+    from the decoded pairs instead would be lossy: ``quote_plus`` treats
+    ``+``, ``&`` and ``=`` as safe, so a decoded literal ``+`` would decode
+    as a space on the next pass and a decoded literal ``&`` would become a
+    delimiter, splitting one parameter into two -- a parameter-smuggling
+    vector, and fatal for signature verification or proxying.
 
     Re-encoding is now performed only where the caller explicitly asks for a
     different query (see ``URL.with_query_param`` / ``canonicalize``).
@@ -345,11 +345,19 @@ def parse_url(url: str, allow_custom_scheme: bool = False) -> ParseResult:
     require_host = scheme is not None and scheme.lower() != "file" and has_authority
     host, port = parse_host(host_candidate, require_host=require_host)
     port = apply_port_defaults(scheme, port, host)
-    path = normalize_path(path_candidate)
+    path = normalize_percent_encoding(normalize_path(path_candidate))
     if host and not path:
         path = "/"
     query, query_pairs = parse_query_string(query_str)
+    # RFC 3986 §6.2.2.1/.2 applied to the stored components, not just at
+    # serialization time -- otherwise `url.path` and `str(url)` disagree
+    # about the same escape, and a caller comparing components sees a
+    # different answer than one comparing strings.
+    if query is not None:
+        query = normalize_percent_encoding(query)
     fragment = parse_fragment_string(fragment_str)
+    if fragment is not None:
+        fragment = normalize_percent_encoding(fragment)
 
     return ParseResult(
         scheme=scheme,
@@ -411,6 +419,12 @@ class Parser:
         return userinfo, host, apply_port_defaults(None, port, host)
 
 
+#: Caches reported under the "parser" group. normalize_host and
+#: normalize_percent_encoding live in _normalize but run on every parse, so
+#: they are reported here rather than in a group of their own.
+_CACHED_FUNCTIONS = [normalize_path, normalize_host, normalize_percent_encoding]
+
+
 def get_cache_info() -> dict:
     """Get statistics about parser caches.
 
@@ -418,9 +432,11 @@ def get_cache_info() -> dict:
         Dictionary with cache statistics for cached functions.
     """
     stats = {}
-    if hasattr(normalize_path, "cache_info"):
-        info = normalize_path.cache_info()
-        stats["normalize_path"] = {
+    for cached in _CACHED_FUNCTIONS:
+        if not hasattr(cached, "cache_info"):
+            continue
+        info = cached.cache_info()
+        stats[cached.__wrapped__.__name__] = {
             "hits": info.hits,
             "misses": info.misses,
             "maxsize": info.maxsize,
@@ -436,10 +452,12 @@ def clear_caches() -> dict:
         Dictionary mapping function names to previous cache sizes.
     """
     previous = {}
-    if hasattr(normalize_path, "cache_info"):
-        previous["normalize_path"] = normalize_path.cache_info().currsize
-        if hasattr(normalize_path, "cache_clear"):
-            normalize_path.cache_clear()
+    for cached in _CACHED_FUNCTIONS:
+        if not hasattr(cached, "cache_info"):
+            continue
+        previous[cached.__wrapped__.__name__] = cached.cache_info().currsize
+        if hasattr(cached, "cache_clear"):
+            cached.cache_clear()
     return previous
 
 

@@ -20,7 +20,7 @@ from typing import Any
 from ._audit import NO_OP_AUDIT_MANAGER, AuditConfig, AuditManager
 from ._builder import Builder, QueryPairs
 from ._components import SecurityFinding
-from ._parser import Parser
+from ._parser import Parser, normalize_host
 from ._relative import build_relative_reference, parse_relative_reference, round_trip_relative
 from ._security import (
     SecurityPolicy,
@@ -55,7 +55,11 @@ class URL:
         check_dns: If True, perform DNS resolution checks.
         check_phishing: If True, check for known phishing domains.
         security_policy: Policy governing which checks are enforced. This is
-            the single control for security behaviour.
+            the single control for security behaviour. Defaults to ``strict``,
+            matching :func:`urlps.parse_url` -- constructing ``URL(...)``
+            directly must not be a quieter way to skip the checks that
+            ``parse_url()`` applies. Pass ``SecurityPolicy.local()`` (or use
+            :func:`urlps.parse_url_local`) for development URLs.
         correlation_id: Optional identifier propagated to audit events.
         audit: Optional AuditConfig supplying audit callbacks.
 
@@ -71,6 +75,7 @@ class URL:
         "_correlation_id",
         "_debug",
         "_fragment",
+        "_frozen",
         "_host",
         "_parser",
         "_path",
@@ -83,6 +88,30 @@ class URL:
         "_userinfo",
         "recognized_scheme",
     )
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Block attribute assignment once construction has finished.
+
+        A URL is validated exactly once, at construction. Without this guard a
+        caller could do ``u._host = "evil.com"`` and walk straight past every
+        check that ``parse_url()`` just ran -- the object would still report
+        itself as validated while pointing somewhere else entirely. The four
+        internal writers (``__init__``, ``copy``, ``_apply_parsed`` and
+        unpickling) go through ``object.__setattr__`` deliberately.
+        """
+        if getattr(self, "_frozen", False):
+            raise AttributeError(
+                f"URL is immutable; use with_*() or copy() to derive a new URL (tried to set {name!r})"
+            )
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        """Block attribute deletion -- otherwise ``del u._host`` is a trivial bypass of __setattr__."""
+        if getattr(self, "_frozen", False):
+            raise AttributeError(
+                f"URL is immutable; use with_*() or copy() to derive a new URL (tried to delete {name!r})"
+            )
+        object.__delattr__(self, name)
 
     def __init__(
         self,
@@ -97,6 +126,9 @@ class URL:
         correlation_id: str | None = None,
         audit: AuditConfig | None = None,
     ) -> None:
+        # Must be first: __setattr__ consults it on every assignment below.
+        object.__setattr__(self, "_frozen", False)
+
         _check_type(url, str, "url")
         _check_type(debug, bool, "debug")
         _check_type(check_dns, bool, "check_dns")
@@ -111,13 +143,14 @@ class URL:
         self._check_dns = check_dns
         self._check_phishing = check_phishing
         self._security_policy = (
-            security_policy if security_policy is not None else SecurityPolicy.internal(check_dns=check_dns)
+            security_policy if security_policy is not None else SecurityPolicy.strict(check_dns=check_dns)
         )
         self._security_findings: list[SecurityFinding] = []
         self._correlation_id = correlation_id
         self.recognized_scheme: bool | None = None
 
         self._parse_and_validate(url)
+        object.__setattr__(self, "_frozen", True)
 
     def _parse_and_validate(self, url: str) -> None:
         """Parse URL and run security validations."""
@@ -136,7 +169,7 @@ class URL:
             parsed = self._parser.parse(url)
             self.recognized_scheme = self._parser.recognized_scheme
             self._apply_parsed(parsed)
-            self.validate(raise_on_error=True, raw_url=url)
+            self._security_findings = self.validate(raise_on_error=True, raw_url=url)
             self._audit_manager.invoke(
                 raw_url=url,
                 parsed_url=self,
@@ -266,9 +299,19 @@ class URL:
         components = self._to_dict()
         components.update(overrides)
         components["port"] = _normalize_port(components.get("port"))
+        # copy() does not go through the parser, so the RFC 3986 §6.2.2
+        # host normalization applied there has to be re-applied here --
+        # otherwise with_host("EXAMPLE.COM.") would hand back a URL whose
+        # .host defeats the caller's allowlist, reintroducing exactly the
+        # bypass that normalization exists to close.
+        host_override = components.get("host")
+        if isinstance(host_override, str):
+            components["host"] = normalize_host(host_override)
         self._reconcile_query_components(components, overrides)
 
         new_url = object.__new__(URL)
+        # Same reason as in __init__: __setattr__ reads this on every write.
+        object.__setattr__(new_url, "_frozen", False)
         new_url.recognized_scheme = self.recognized_scheme
         new_url._parser = self._parser
         new_url._builder = self._builder
@@ -280,7 +323,8 @@ class URL:
         new_url._correlation_id = self._correlation_id
         new_url._apply_parsed(components)
         new_url._security_findings = []
-        new_url.validate(raise_on_error=True)
+        new_url._security_findings = new_url.validate(raise_on_error=True)
+        object.__setattr__(new_url, "_frozen", True)
         return new_url
 
     def _reconcile_query_components(
@@ -386,15 +430,50 @@ class URL:
         sorted_pairs = sorted(self._query_pairs, key=lambda x: (x[0], x[1] or ""))
         canonical_query = self._builder.serialize_query(sorted_pairs) if sorted_pairs else None
 
-        new_url = self.copy(
+        # Pass query and query_pairs together rather than writing _query_pairs
+        # afterwards: _reconcile_query_components treats "both supplied" as
+        # "caller owns both" and keeps the sort order, which a post-hoc write
+        # would otherwise have to smuggle past the immutability guard.
+        return self.copy(
             scheme=canonical_scheme,
             host=canonical_host,
             port=canonical_port,
             path=canonical_path,
             query=canonical_query,
+            query_pairs=sorted_pairs,
         )
-        new_url._query_pairs = sorted_pairs
-        return new_url
+
+    def __copy__(self) -> URL:
+        """Immutable, so a shallow copy can safely be the object itself."""
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> URL:
+        """Immutable, so a deep copy can safely be the object itself.
+
+        Defined explicitly because the default implementation reconstructs
+        slot-by-slot through ``__setattr__``, which the immutability guard
+        rejects.
+        """
+        memo[id(self)] = self
+        return self
+
+    #: Collaborators rather than URL data: a Parser/Builder is stateless
+    #: machinery, and an AuditManager holds a thread lock and user callbacks
+    #: (neither picklable, and a deserialized URL firing someone's audit
+    #: callbacks would be surprising). They are rebuilt fresh on unpickle.
+    _UNPICKLED_COLLABORATORS = ("_parser", "_builder", "_audit_manager")
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {name: getattr(self, name, None) for name in URL.__slots__ if name not in URL._UNPICKLED_COLLABORATORS}
+
+    def __setstate__(self, state: Mapping[str, Any]) -> None:
+        """Restore via object.__setattr__ -- the default path trips the guard."""
+        for name, value in state.items():
+            object.__setattr__(self, name, value)
+        object.__setattr__(self, "_parser", Parser())
+        object.__setattr__(self, "_builder", Builder())
+        object.__setattr__(self, "_audit_manager", NO_OP_AUDIT_MANAGER)
+        object.__setattr__(self, "_frozen", True)
 
     def is_semantically_equal(self, other: URL) -> bool:
         """Check semantic equality after normalization."""
@@ -424,7 +503,13 @@ class URL:
         raise_on_error: bool = False,
         raw_url: str | None = None,
     ) -> list[SecurityFinding]:
-        """Validate this URL against a security policy and return findings."""
+        """Validate this URL against a security policy and return findings.
+
+        Pure: the returned findings are *not* stored on the instance.
+        ``security_findings`` reports what was found at construction, so
+        ``validate(policy=stricter)`` can be used to ask a hypothetical
+        question without rewriting the URL's own recorded verdict.
+        """
         effective_policy = policy if policy is not None else self._security_policy
         candidate_url = raw_url if raw_url is not None else self.as_string()
         check_dns = None if policy is not None else self._check_dns
@@ -436,7 +521,6 @@ class URL:
             check_phishing=check_phishing,
             raise_on_error=raise_on_error,
         )
-        self._security_findings = list(findings)
         return list(findings)
 
     def redacted(self) -> str:

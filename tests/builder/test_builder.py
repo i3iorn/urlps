@@ -64,10 +64,8 @@ def test_percent_encode_preserves_safe_chars() -> None:
 def test_compose_prefers_query_over_query_pairs() -> None:
     """An explicit `query` wins over `query_pairs`.
 
-    The precedence used to be reversed, which is what made URL.with_query(),
-    with_query_param() and without_query_param() silent no-ops: they computed
-    a new query string, and copy() then handed compose() a dict where the
-    stale query_pairs overrode it.
+    `with_query()`, `with_query_param()` and `without_query_param()` all
+    compute a new query string and rely on this precedence to take effect.
     """
     builder = Builder()
     result = builder.compose(

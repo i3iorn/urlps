@@ -39,14 +39,35 @@ class ErrorCode(Enum):
     DOUBLE_ENCODING = "double_encoding"
     PATH_TRAVERSAL = "path_traversal"
     OPEN_REDIRECT = "open_redirect"
+    #: Deprecated: never emitted. See MIXED_SCRIPT_LABEL and CONFUSABLE_HOST.
     MIXED_SCRIPTS = "mixed_scripts"
+    #: Deprecated: never emitted.
     SUSPICIOUS_PUNYCODE = "suspicious_punycode"
     PARSER_CONFUSION = "parser_confusion"
+    #: Deprecated: never emitted. Retained so existing `except ... if e.code
+    #: is ErrorCode.QUERY_INJECTION` handlers keep importing.
     QUERY_INJECTION = "query_injection"
     CREDENTIALS_IN_URL = "credentials_in_url"
     DANGEROUS_PORT = "dangerous_port"
+    #: Deprecated: never emitted.
     NON_CANONICAL_URL = "non_canonical_url"
     INVALID_IPV6_ZONE_ID = "invalid_ipv6_zone_id"
+
+    #: A label written entirely in a non-Latin script whose characters are all
+    #: Latin lookalikes -- "раураӏ.com". Distinct from MIXED_SCRIPT_LABEL:
+    #: nothing is mixed, the whole label is a disguise.
+    CONFUSABLE_HOST = "confusable_host"
+    #: A single label mixing scripts, e.g. "pаypal" (Latin p, Cyrillic а).
+    MIXED_SCRIPT_LABEL = "mixed_script_label"
+    #: A host containing a codepoint UTS-46 disallows outright.
+    IDNA_DISALLOWED = "idna_disallowed"
+    #: Bidirectional control characters in the host (U+202A-202E, U+2066-2069),
+    #: used to make a hostname render right-to-left and read as another domain.
+    BIDI_CONTROL_IN_HOST = "bidi_control_in_host"
+    #: Zero-width or invisible characters in the host (U+200B-200D, U+FEFF).
+    ZERO_WIDTH_IN_HOST = "zero_width_in_host"
+    #: An "xn--" label that is not decodable Punycode.
+    INVALID_PUNYCODE = "invalid_punycode"
 
 
 class URLpError(Exception):

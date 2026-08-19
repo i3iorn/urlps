@@ -12,8 +12,7 @@ from urlps.exceptions import InvalidURLError, RelativeReferenceError
 
 class TestParseRelativeReferenceExceptionType:
     """`_relative.py` raises the typed RelativeReferenceError, not a generic
-    InvalidURLError -- it used to raise the generic type, making it
-    impossible for a caller to distinguish this failure from any other."""
+    InvalidURLError, so a caller can distinguish this failure from any other."""
 
     def test_absolute_reference_raises_relative_reference_error(self):
         with pytest.raises(RelativeReferenceError):

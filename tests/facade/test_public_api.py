@@ -62,7 +62,7 @@ class TestPublicExports:
         assert hasattr(urlps, name), f"{name} not importable from urlps"
 
     def test_dns_rate_limiter_needs_no_private_import(self):
-        """The README used to instruct importing these from a private module."""
+        """DNSRateLimiter must be importable from the package root, not a private module."""
         limiter = DNSRateLimiter(DNSRateLimiterConfig(max_lookups_per_second=5))
         assert limiter.is_allowed("example.com") is True
 
@@ -183,7 +183,7 @@ class TestStrictParameterRemoved:
 
 
 class TestCopyValidatesComponents:
-    """copy()/with_* previously only type-checked overrides."""
+    """copy()/with_* must validate overrides, not just type-check them."""
 
     @pytest.mark.parametrize(
         "host",

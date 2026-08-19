@@ -35,11 +35,7 @@ class TestSecurityPrivateChecks:
         assert result is True
 
     def test_check_resolved_ips_safe_invalid_ip_fails_closed(self):
-        """An unparseable resolved address is unsafe, not skippable.
-
-        This previously hit `continue`, so a resolution returning only
-        unparseable addresses reported "safe" without checking anything.
-        """
+        """An unparseable resolved address is unsafe, not skippable."""
         from urlps._security.ip_utils import _check_resolved_ips_safe
 
         addr_info = [(2, 1, 6, "", ("invalid_ip_string", 80))]

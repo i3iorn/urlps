@@ -2,7 +2,7 @@
 
 import pytest
 
-from urlps import URL, InvalidURLError
+from urlps import URL, InvalidURLError, parse_url
 from urlps._parser import Parser
 from urlps._relative import build_relative_reference, parse_relative_reference, round_trip_relative
 
@@ -71,7 +71,10 @@ def test_relative_reference_rejects_schemes() -> None:
 
 def test_with_netloc_accepts_ipv6_and_port() -> None:
     """Test with_netloc for IPv6 addresses."""
-    url = URL("https://example.com")
+    # 2001:db8::/32 is the RFC 3849 documentation prefix, which Python's
+    # ipaddress reports as is_private -- use the local policy so this stays a
+    # test of with_netloc rather than of SSRF enforcement.
+    url = parse_url("https://example.com", policy="local")
     new_url = url.with_netloc("[2001:db8::1]:4443")
     assert new_url.host == "[2001:db8::1]"
     assert new_url.port == 4443

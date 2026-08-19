@@ -2,6 +2,44 @@
 
 All notable changes to `urlps` are documented here.
 
+## 1.0.0 - 2026-08-19
+
+The theme is one correction: **urlps was rejecting where it should have been
+normalizing.** Canonicalization was a validation gate rather than a
+transformation, which simultaneously made the library hostile to ordinary
+input (`HTTP://EXAMPLE.COM/` and `https://example.com:443/` were rejected)
+*and* left a real bypass — with that gate off, `url.host` came back
+un-normalized, so `EVIL.COM` and `evil.com.` slipped past a caller's
+blocklist. Normalizing fixes both.
+
+**Security fixes**
+
+- Host normalization bypass: `url.host` is now always canonical under every
+  policy, so allowlist comparisons are reliable.
+- `URL(...)` defaulted to a near-no-op policy while `parse_url()` defaulted to
+  `strict`, making the class a quiet way to skip every check. Both now use
+  `strict`.
+- `SecurityPolicy.internal()` silently disabled SSRF; it no longer does.
+- Punycode homographs received **no** script analysis (Punycode is ASCII, and
+  the check was gated on `not isascii()`), so `xn--pypal-4ve.com` was accepted
+  under `balanced`. The host is now decoded before analysis.
+- IDNA parser differential: `straße.de` resolved to `strasse.de` rather than
+  the `xn--strae-oqa.de` browsers use — a different domain.
+- `URL` was documented as immutable but wasn't; it now is.
+
+**Breaking**
+
+- `enforce_query_injection` and `require_canonical` removed;
+  `block_dangerous_ports` and `reject_credentials` are now opt-in. Each with a
+  security justification and a non-bypass regression test.
+- `parse_url_unsafe()` → `parse_url_local()` (alias retained), now using the
+  new `local` policy, which narrows SSRF rather than disabling it.
+- `URL.host` casing/trailing dot, `URL()` default policy, `internal()` SSRF,
+  and `URL` immutability all change observable behaviour.
+
+See [changelogs/1.0.0.md](changelogs/1.0.0.md) for the full account and
+[MIGRATION.md](MIGRATION.md) for the upgrade path.
+
 ## 0.8.0 - 2026-08-18
 
 **Breaking:** `parse_url()`'s default security policy is now `"strict"`

@@ -8,7 +8,7 @@ from collections.abc import Iterable, Sequence
 from functools import lru_cache
 
 from .._cache_config import SECURITY_CACHE_SIZE
-from ..constants import BLOCKED_HOSTNAMES
+from ..constants import BLOCKED_HOSTNAMES, LOOPBACK_HOSTNAMES, METADATA_HOSTNAMES
 
 # `X | Y` works here at runtime (not just in annotations) because it's a
 # plain module-level assignment, not something `from __future__ import
@@ -247,18 +247,66 @@ def is_private_ip(host: str) -> bool:
     return _check_ipv4_private(host) or _check_ipv6_private(host)
 
 
+def _resolve_host_to_ip(host: str) -> IpAddress | None:
+    """Best-effort literal-IP resolution, obfuscated spellings included.
+
+    Returns None for genuine hostnames (which need DNS, out of scope here).
+    """
+    stripped = _strip_ipv6_brackets(host)
+    for factory in (ipaddress.IPv6Address, ipaddress.IPv4Address):
+        try:
+            return factory(stripped)
+        except (ValueError, ipaddress.AddressValueError):
+            continue
+    # Decimal / octal / hex / short-form inet_aton spellings.
+    return _parse_inet_aton_ipv4(host)
+
+
+def _is_permitted_private_host(host: str, host_lower: str) -> bool:
+    """Whether ``local`` policy may permit this host.
+
+    True only for loopback/RFC1918/ULA. Link-local (which is where the cloud
+    metadata endpoints live), multicast, reserved and unspecified addresses
+    are never permitted, nor is anything in METADATA_HOSTNAMES.
+    """
+    if host_lower in METADATA_HOSTNAMES or host_lower.endswith(".internal"):
+        return False
+
+    ip = _resolve_host_to_ip(host_lower)
+    if ip is not None:
+        # Order matters. Link-local is checked first because it is where the
+        # cloud metadata endpoints live and because IPv6 link-local is also
+        # is_private. is_reserved is deliberately NOT a veto: IPv6 ::1 is both
+        # loopback and reserved (it falls inside ::/8), and a reserved address
+        # that is neither loopback nor private simply fails the permit below
+        # and stays risky anyway.
+        if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+            return False
+        return bool(ip.is_loopback or ip.is_private)
+
+    # Hostname, not a literal: only the explicit loopback spellings and the
+    # loopback/mDNS suffixes qualify.
+    return host_lower in LOOPBACK_HOSTNAMES or host_lower.endswith((".local", ".localhost"))
+
+
 @lru_cache(maxsize=SECURITY_CACHE_SIZE)
-def is_ssrf_risk(host: str) -> bool:
+def is_ssrf_risk(host: str, *, allow_private: bool = False) -> bool:
     """Check if host poses SSRF risk (blocked hostnames, private IPs, and ambiguous IPs).
 
     ``_is_obfuscated_ip_private`` subsumes the two narrower checks above it;
     they are retained because overlapping checks in a security OR-chain are
     defensive, not harmful.
+
+    ``allow_private=True`` (the ``local`` policy) *narrows* this rather than
+    disabling it: loopback and RFC1918/ULA hosts stop being risks, but cloud
+    metadata endpoints, the link-local range, ``.internal``, kubernetes service
+    names, multicast, reserved and 0.0.0.0 all still are.
     """
     if not isinstance(host, str) or not host:
         return False
     host_lower = host.lower().rstrip(".")
-    return (
+
+    risky = (
         _is_blocked_hostname(host_lower)
         or _is_ipv4_mapped_ipv6(host_lower)
         or _is_decimal_ip_private(host)
@@ -266,6 +314,11 @@ def is_ssrf_risk(host: str) -> bool:
         or _is_obfuscated_ip_private(host)
         or is_private_ip(host)
     )
+
+    if risky and allow_private:
+        return not _is_permitted_private_host(host, host_lower)
+
+    return risky
 
 
 def is_malicious_ipv6_zone_id(host: str) -> bool:

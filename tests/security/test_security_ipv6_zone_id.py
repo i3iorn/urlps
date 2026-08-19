@@ -64,13 +64,19 @@ class TestIPv6ZoneIdentifier:
 
     def test_valid_zone_ids_pass(self):
         """Valid IPv6 zone identifiers should parse successfully."""
-        # Note: These will fail SSRF checks, so use parse_url_unsafe
+        # Zone IDs only exist on link-local addresses, which every policy
+        # that enforces SSRF at all blocks (that is where the cloud metadata
+        # endpoints live). Testing zone-ID *parsing* therefore requires an
+        # explicit SSRF opt-out.
         from urlps import parse_url_unsafe
+        from urlps._security import SecurityPolicy
 
-        url = parse_url_unsafe("http://[fe80::1%25eth0]/")
+        no_ssrf = SecurityPolicy.internal(enforce_ssrf=False)
+
+        url = parse_url_unsafe("http://[fe80::1%25eth0]/", policy=no_ssrf)
         assert url.host == "[fe80::1%25eth0]"
 
-        url2 = parse_url_unsafe("http://[fe80::1%25en0]/path")
+        url2 = parse_url_unsafe("http://[fe80::1%25en0]/path", policy=no_ssrf)
         assert url2.host == "[fe80::1%25en0]"
 
 

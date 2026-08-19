@@ -14,11 +14,9 @@ def parse_relative_reference(reference: str) -> dict[str, str | None]:
     """Split a relative URL reference into path, query, and fragment.
 
     A reference is rejected only if it is genuinely absolute, i.e. it carries
-    its own scheme. It previously rejected any reference containing ``://``
-    anywhere, which wrongly refused ordinary relative references that embed a
-    URL in a query value -- ``/redirect?next=http://example.com`` being the
-    common case. That is the same substring-matching bug fixed in the scheme
-    parser for 0.6.1, which had not been applied here.
+    its own scheme -- not merely if it contains ``://`` anywhere, which would
+    wrongly refuse ordinary relative references that embed a URL in a query
+    value (``/redirect?next=http://example.com``).
     """
     if not isinstance(reference, str) or reference == "":
         raise RelativeReferenceError("Relative references must be non-empty strings.")

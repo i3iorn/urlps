@@ -152,18 +152,18 @@ class TestSecurityAdditional:
         result = has_suspicious_punycode("xn--p1ai.tk")
         assert result is True
 
-    def test_is_non_canonical_url_unnecessary_path_encoding(self):
-        """Line 960-966: unreserved char encoded in path → non-canonical."""
-        from urlps._security import is_non_canonical_url
+    def test_unnecessary_path_encoding_is_decoded(self):
+        """Over-encoded unreserved characters are decoded (RFC 3986 §6.2.2.2)."""
+        from urlps import parse_url
 
-        assert is_non_canonical_url("http://example.com/%41path") is True
+        assert parse_url("http://example.com/%41path", policy="internal").path == "/Apath"
 
-    def test_is_non_canonical_url_ipv6_non_canonical(self):
-        """Lines 990-1000: non-canonical IPv6 detected."""
-        from urlps._security import is_non_canonical_url
+    def test_non_canonical_ipv6_is_compressed(self):
+        """Two spellings of one IPv6 address must not compare unequal."""
+        from urlps import parse_url
 
-        result = is_non_canonical_url("http://[2001:0db8:0000:0000:0000:0000:0000:0001]/")
-        assert result is True
+        url = parse_url("http://[2001:0db8:0000:0000:0000:0000:0000:0001]/", policy="local")
+        assert url.host == "[2001:db8::1]"
 
     def test_collect_security_findings_non_scheme_url(self):
         """Line 1592: URL without :// - only double-encoding check applied."""

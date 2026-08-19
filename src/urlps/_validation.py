@@ -39,6 +39,8 @@ from .constants import (
 if TYPE_CHECKING:
     from types import ModuleType
 
+from ._security._unicode.uts46 import to_ascii
+
 compiled_regex = PATTERNS
 
 _idna_module: ModuleType | None = None
@@ -81,9 +83,9 @@ class Validator:
         Returns:
             The ASCII-compatible encoding (ACE) of the host.
         """
-        if _HAS_IDNA and _idna_module is not None:
-            return _idna_module.encode(host).decode("ascii")  # type: ignore
-        return host.encode("idna").decode("ascii")
+        # Delegates: a second IDNA implementation here is exactly how the
+        # parser and the validator came to disagree about "straße.de".
+        return to_ascii(host)
 
     @staticmethod
     @lru_cache(maxsize=VALIDATION_CACHE_SIZE)

@@ -43,29 +43,38 @@ strict_url = parse_url("https://example.com", policy="strict")
 
 ### Security
 
-`parse_url()` defaults to `policy="strict"` -- the strongest built-in preset.
-It blocks:
-- Private IPs (192.168.x.x, 10.x.x.x, 172.16.x.x)
-- Localhost and loopback addresses
-- Link-local addresses (169.254.x.x)
-- `.local` and `.internal` domains
-- Path traversal patterns (`../`)
-- Double-encoded characters
-- Open redirect patterns (leading `//`, backslashes, raw or percent-encoded)
-- Mixed Unicode scripts (homograph attacks)
-- URL parser confusion attacks
-- Query parameter injection
-- Dangerous ports (commonly exploited)
-- Non-canonical URL forms (filter bypass prevention)
-- Credentials in URL userinfo (`user:pass@host`)
-- Suspicious Punycode/IDN domains (confusable characters, excessive
-  hyphens, brand-like names combined with non-ASCII)
+`parse_url()` defaults to `policy="strict"`. Rejection is reserved for input
+that is genuinely malformed or genuinely dangerous -- **cosmetic differences
+are normalized, not rejected**, so `HTTP://EXAMPLE.COM./`,
+`https://example.com:443/`, `/a/./b` and `%7E` all parse fine and resolve to
+one canonical form. That is what makes `url.host` safe to compare against an
+allowlist directly.
 
-The last five are the ones `policy="balanced"` relaxes -- it's meant for
-parsing URLs you intend to inspect/canonicalize/reconstruct yourself rather
-than reject outright, and it trades some protection for fewer false
-positives (the Punycode heuristic in particular flags some plain ASCII
-domains too, e.g. `carnival.com` for containing "rn"):
+Blocked under **both** `strict` and `balanced`:
+
+- **SSRF** -- private IPs (10.x, 172.16-31.x, 192.168.x), loopback,
+  link-local (169.254.x), `.local`/`.internal`, cloud metadata endpoints
+  (`169.254.169.254`, `metadata.google.internal`), kubernetes service names,
+  and obfuscated spellings (decimal `2130706433`, octal, hex,
+  IPv4-mapped IPv6, NAT64)
+- **Path traversal** -- `../`, null bytes, and encoded variants
+- **Open redirect** -- leading `//`, backslashes, raw or percent-encoded
+- **Double-encoded characters** -- `%25xx` filter bypass
+- **Parser confusion** -- URLs that different parsers disagree about
+- **Homograph attacks** -- mixed scripts *and* whole-script confusables,
+  evaluated per label on the Punycode-*decoded* host
+- **Invisible characters** -- bidi controls, zero-width, malformed Punycode
+
+Opt-in (off by default; enable via `SecurityPolicy`):
+
+- `block_dangerous_ports` -- SSRF already covers the internal-service case,
+  and blocking port 22 on a *public* host prevents nothing
+- `reject_credentials` -- `user:pass@host` is legal RFC 3986; a non-blocking
+  advisory finding is emitted regardless
+
+`policy="balanced"` differs from `strict` only in those two opt-in checks, so
+in practice the two are very close. Use `balanced` when you intend to inspect
+and canonicalize URLs yourself rather than reject them outright:
 
 ```python
 from urlps import parse_url
@@ -73,22 +82,33 @@ from urlps import parse_url
 balanced_url = parse_url("HTTP://EXAMPLE.com", policy="balanced")
 ```
 
-Use `parse_url_unsafe()` for internal/development URLs:
+Use `parse_url_local()` for development and internal URLs. It turns the
+heuristic checks off and permits loopback/RFC1918 hosts, but **narrows SSRF
+enforcement rather than disabling it** -- cloud metadata endpoints, the
+link-local range, `.internal` and kubernetes service names stay blocked:
+
 ```python
-from urlps import SecurityPolicy, parse_url_unsafe
+from urlps import SecurityPolicy, parse_url_local
 
-dev_url = parse_url_unsafe("http://localhost:3000/api")
-internal = parse_url_unsafe("http://192.168.1.100/metrics")
+dev_url = parse_url_local("http://localhost:3000/api")
+internal = parse_url_local("http://192.168.1.100/metrics")
 
-# If policy is passed, parse_url_unsafe uses it exactly.
-trusted_policy = SecurityPolicy.internal(check_dns=True)
-internal_checked = parse_url_unsafe("http://intranet.local/service", policy=trusted_policy)
+# If policy is passed, parse_url_local uses it exactly.
+trusted_policy = SecurityPolicy.local(check_dns=True)
+internal_checked = parse_url_local("http://intranet.local/service", policy=trusted_policy)
 ```
+
+`parse_url_unsafe()` is the former name for the same function and still works.
 
 Need to adjust the tradeoff? Use policy presets:
 - `policy="strict"` (default): maximum protections, DNS connect checks fail-closed by default
 - `policy="balanced"`: fewer false positives, DNS connect checks fail-open by default
-- `policy="internal"`: trusted/internal traffic
+- `policy="internal"`: trusted traffic -- heuristics off, **SSRF still enforced**
+- `policy="local"`: development -- heuristics off, loopback/private hosts allowed,
+  metadata endpoints still blocked
+
+To genuinely disable SSRF enforcement you must say so explicitly:
+`SecurityPolicy.internal(enforce_ssrf=False)`.
 
 DNS connect behavior can be customized per policy:
 
@@ -132,6 +152,15 @@ url2 = url.with_netloc("admin@example.com")
 url3 = url.with_host("other.com").with_port(443).with_path("/api")
 url4 = url.with_query_param("new", "value")
 url5 = url.without_query_param("token")
+
+# Genuinely immutable, not immutable by convention -- a URL that passed
+# validation cannot be re-pointed afterwards.
+try:
+    url._host = "evil.com"
+except AttributeError as exc:
+    print(exc)  # URL is immutable; use with_*() or copy() to derive a new URL ...
+
+assert url.host == "example.com"
 ```
 
 ### Query strings round-trip exactly

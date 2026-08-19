@@ -8,38 +8,51 @@ from urlps.exceptions import ErrorCode
 
 
 class TestSecurityPolicy:
-    def test_non_canonical_blocked_in_strict_policy(self) -> None:
-        with pytest.raises(InvalidURLError):
-            parse_url("HTTP://example.com/", policy="strict")
-
-    def test_balanced_policy_allows_non_canonical(self) -> None:
-        url = parse_url("HTTP://example.com/", policy="balanced")
+    @pytest.mark.parametrize("policy", ["strict", "balanced", "internal"])
+    def test_non_canonical_is_normalized_not_rejected(self, policy: str) -> None:
+        # 1.0 normalizes rather than gating: canonical form is an invariant of
+        # every URL object, so no policy can switch it off.
+        url = parse_url("HTTP://EXAMPLE.COM.:80/a/./b", policy=policy)
         assert url.scheme == "http"
+        assert url.host == "example.com"
+        assert str(url) == "http://example.com/a/b"
 
-    def test_query_injection_blocked_in_strict_policy(self) -> None:
-        with pytest.raises(InvalidURLError):
-            parse_url("http://example.com/?x=<script>alert(1)</script>", policy="strict")
+    def test_dangerous_port_is_opt_in(self) -> None:
+        # Not blocked by default: SSRF-to-internal-service is already covered
+        # by enforce_ssrf, and a blocked port on a *public* host is deployment
+        # policy rather than a property of the URL.
+        assert parse_url("http://example.com:22/", policy="strict").effective_port == 22
 
-    def test_dangerous_port_blocked_in_strict_policy(self) -> None:
+        policy = SecurityPolicy(name="ports", block_dangerous_ports=True)
         with pytest.raises(InvalidURLError):
-            parse_url("http://example.com:22/", policy="strict")
+            parse_url("http://example.com:22/", policy=policy)
 
     def test_copy_rechecks_security(self) -> None:
         u = parse_url("http://example.com/", policy="strict")
         with pytest.raises(InvalidURLError):
             u.with_host("127.0.0.1")
 
-    def test_strict_policy_blocks_scheme_relative_credentials(self) -> None:
+    def test_scheme_relative_credentials_are_opt_in(self) -> None:
+        assert parse_url("//user:pass@example.com/path", policy="strict").host == "example.com"
+
+        policy = SecurityPolicy(name="creds", reject_credentials=True)
         with pytest.raises(InvalidURLError):
-            parse_url("//user:pass@example.com/path", policy="strict")
+            parse_url("//user:pass@example.com/path", policy=policy)
 
 
 class TestSecurityAPIs:
     def test_validate_returns_findings(self) -> None:
-        u = parse_url_unsafe("http://example.com/?x=<script>alert(1)</script>")
-        findings = u.validate(policy=SecurityPolicy.strict())
+        # Parsed under the permissive internal policy, then re-validated under
+        # strict. Uses an SSRF host rather than a traversal path because the
+        # parser resolves dot segments, so "/a/../b" is already normalized
+        # away by the time validate() sees the stored URL.
+        u = parse_url_unsafe(
+            "http://169.254.169.254/latest/meta-data/",
+            policy=SecurityPolicy.internal(enforce_ssrf=False),
+        )
+        findings = u.validate(policy=SecurityPolicy.strict(), raise_on_error=False)
         assert findings
-        assert any(f.code == "query_injection" for f in findings)
+        assert any(f.code == ErrorCode.SSRF_RISK.value for f in findings)
 
     def test_redacted_masks_sensitive_data(self) -> None:
         u = parse_url_unsafe("http://user:pass@example.com/?token=abc&x=1")
@@ -85,7 +98,7 @@ class TestSecurityAPIs:
 class TestSecureBuilder:
     def test_build_secure_validates(self) -> None:
         with pytest.raises(InvalidURLError):
-            build_secure("http", "example.com", port=22, policy="strict")
+            build_secure("http", "169.254.169.254", path="/latest/meta-data/", policy="strict")
 
 
 class TestDnsConnectPolicyBehavior:

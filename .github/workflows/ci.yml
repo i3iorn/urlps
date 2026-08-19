@@ -83,10 +83,20 @@ jobs:
       # All three of these were previously `|| true` and could never fail the
       # build. They are gates now.
       - name: Lint (ruff)
-        run: ruff check src/ tests/
+        run: ruff check src/ tests/ tools/
 
       - name: Format check (ruff format)
-        run: ruff format --check src/ tests/
+        run: ruff format --check src/ tests/ tools/
+
+      # The Unicode Script table is generated from the `regex` package's UCD
+      # data and checked in, so urlps needs no Unicode dependency at runtime.
+      # Regenerating and diffing keeps the committed table honest: it cannot
+      # drift from the regex version pinned in the dev extra, and nobody can
+      # hand-edit it without CI noticing.
+      - name: Unicode tables are up to date
+        run: |
+          python tools/gen_unicode_tables.py
+          git diff --exit-code -- src/urlps/_security/_unicode/_tables.py
 
       - name: Type check (mypy)
         run: mypy src/urlps --ignore-missing-imports

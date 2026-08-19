@@ -31,16 +31,23 @@ class SecurityFinding:
     """Structured security finding emitted by URL validation.
 
     Attributes:
-        severity: Severity level (e.g., "low", "medium", "high").
+        severity: One of ``"critical"``, ``"major"`` or ``"warning"``.
+            ``critical`` and ``major`` block (see ``BLOCKING_SEVERITIES``);
+            ``warning`` is advisory and never raises.
         code: Machine‑readable identifier for the finding.
         message: Human‑readable description of the issue.
         component: Optional URL component associated with the finding.
+        remediation: Optional human-readable next step, e.g. which policy or
+            entry point to use if the rejection was not what the caller
+            wanted. Carried as its own field rather than concatenated into
+            ``message`` so structured consumers keep the two separable.
     """
 
     severity: str
     code: str
     message: str
     component: str | None = None
+    remediation: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
