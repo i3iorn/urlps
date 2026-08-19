@@ -559,27 +559,35 @@ class URL:
 
     def __lt__(self, other: object) -> bool:
         """Compare URLs lexicographically for sorting."""
-        if not isinstance(other, URL):
-            return NotImplemented
-        return self.as_string() < other.as_string()
+        if isinstance(other, URL):
+            return self.as_string() < other.as_string()
+        elif isinstance(other, str):
+            return self.as_string() < other
+        raise NotImplementedError
 
     def __le__(self, other: object) -> bool:
         """Compare URLs lexicographically for sorting."""
-        if not isinstance(other, URL):
-            return NotImplemented
-        return self.as_string() <= other.as_string()
+        if isinstance(other, URL):
+            return self.as_string() <= other.as_string()
+        elif isinstance(other, str):
+            return self.as_string() <= other
+        raise NotImplementedError
 
     def __gt__(self, other: object) -> bool:
         """Compare URLs lexicographically for sorting."""
-        if not isinstance(other, URL):
-            return NotImplemented
-        return self.as_string() > other.as_string()
+        if isinstance(other, URL):
+            return self.as_string() > other.as_string()
+        elif isinstance(other, str):
+            return self.as_string() > other
+        raise NotImplementedError
 
     def __ge__(self, other: object) -> bool:
         """Compare URLs lexicographically for sorting."""
-        if not isinstance(other, URL):
-            return NotImplemented
-        return self.as_string() >= other.as_string()
+        if isinstance(other, URL):
+            return self.as_string() >= other.as_string()
+        elif isinstance(other, str):
+            return self.as_string() >= other
+        raise NotImplementedError
 
     @classmethod
     def _validate_copy_overrides(cls, overrides: dict[str, Any]) -> None:
