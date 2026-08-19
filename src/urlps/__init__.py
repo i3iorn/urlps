@@ -198,9 +198,19 @@ def parse_url_unsafe(
     correlation_id: str | None = None,
     audit: AuditConfig | None = None,
 ) -> URL:
-    """Parse a URL string WITHOUT security checks (for trusted sources only).
+    """Parse a local/development URL, with the heuristic checks turned off.
 
-    WARNING: This function DISABLES security validations. Use ONLY for:
+    Deprecated alias for :func:`parse_url_local`, which says what this actually
+    does. Use that instead; this name is retained for compatibility.
+
+    Applies the ``local`` policy: the heuristic checks (path traversal, open
+    redirect, parser confusion, mixed scripts, double encoding, Punycode) are
+    off, and loopback/RFC1918 hosts are permitted so ``http://localhost:3000``
+    parses. SSRF enforcement is *narrowed, not disabled* -- cloud metadata
+    endpoints (169.254.169.254, metadata.google.internal), the whole link-local
+    range, ``.internal`` and kubernetes service names remain blocked.
+
+    Use ONLY for:
         - Internal URLs (localhost, 192.168.x.x, 10.x.x.x)
         - Development/testing environments
         - Configuration files from trusted sources
@@ -221,7 +231,7 @@ def parse_url_unsafe(
             Ignored when an explicit policy is provided.
         dns_rate_limiter: Optional DNSRateLimiter instance to use when DNS checks
             are enabled. Prefer explicit injection for deterministic behavior.
-        policy: Optional policy to apply instead of the default ``internal``
+        policy: Optional policy to apply instead of the default ``local``
             preset. To re-enable protections, pass ``policy="strict"`` or use
             ``parse_url()`` rather than reaching for a separate flag.
         correlation_id: Optional identifier propagated to audit events.
@@ -248,7 +258,7 @@ def parse_url_unsafe(
     resolved_policy = (
         resolve_security_policy(policy, dns_rate_limiter=dns_rate_limiter)
         if policy is not None
-        else SecurityPolicy.internal(
+        else SecurityPolicy.local(
             check_dns=check_dns,
             dns_rate_limiter=dns_rate_limiter,
         )
@@ -266,6 +276,16 @@ def parse_url_unsafe(
         correlation_id=correlation_id,
         audit=audit,
     )
+
+
+#: Preferred name for :func:`parse_url_unsafe`.
+#:
+#: "unsafe" reads as "you are doing something wrong", which is the wrong signal
+#: for the overwhelmingly common case of parsing your own development URL. The
+#: actual semantics is "this is a local/trusted URL", and under the ``local``
+#: policy it is not even unsafe: cloud metadata endpoints and the link-local
+#: range stay blocked. The old name remains exported for compatibility.
+parse_url_local = parse_url_unsafe
 
 
 def build(
@@ -589,5 +609,6 @@ __all__ = [
     "get_cache_info",
     "join",
     "parse_url",
+    "parse_url_local",
     "parse_url_unsafe",
 ]

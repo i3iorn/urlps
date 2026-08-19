@@ -23,7 +23,11 @@ class TestSecurityPolicy:
 
         resolved = resolve_security_policy("internal")
         assert resolved.name == "internal"
-        assert resolved.enforce_ssrf is False
+        # SSRF stays enforced: a preset named "internal" must not silently
+        # permit a request to 169.254.169.254. Opting out is explicit.
+        assert resolved.enforce_ssrf is True
+        assert resolved.allow_private_hosts is False
+        assert resolve_security_policy("local").allow_private_hosts is True
 
     def test_resolve_security_policy_none_returns_strict(self):
         """resolve with None returns the strict policy (the project default)."""

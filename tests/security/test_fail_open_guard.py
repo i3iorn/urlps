@@ -141,15 +141,6 @@ _ALLOWLIST = {
         "credentials to find, so False ('none found') is correct, not a "
         "safety verdict being widened."
     ),
-    (
-        "url_checks.py",
-        "is_non_canonical_url",
-        False,
-    ): (
-        "Canonicalization-comparison helper, not an SSRF/connection safety "
-        "check -- an unparseable URL can't be shown non-canonical against "
-        "itself, so False is the correct 'nothing to compare' answer."
-    ),
 }
 
 

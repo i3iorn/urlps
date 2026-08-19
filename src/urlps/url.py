@@ -20,7 +20,7 @@ from typing import Any
 from ._audit import NO_OP_AUDIT_MANAGER, AuditConfig, AuditManager
 from ._builder import Builder, QueryPairs
 from ._components import SecurityFinding
-from ._parser import Parser
+from ._parser import Parser, normalize_host
 from ._relative import build_relative_reference, parse_relative_reference, round_trip_relative
 from ._security import (
     SecurityPolicy,
@@ -55,7 +55,11 @@ class URL:
         check_dns: If True, perform DNS resolution checks.
         check_phishing: If True, check for known phishing domains.
         security_policy: Policy governing which checks are enforced. This is
-            the single control for security behaviour.
+            the single control for security behaviour. Defaults to ``strict``,
+            matching :func:`urlps.parse_url` -- constructing ``URL(...)``
+            directly must not be a quieter way to skip the checks that
+            ``parse_url()`` applies. Pass ``SecurityPolicy.local()`` (or use
+            :func:`urlps.parse_url_local`) for development URLs.
         correlation_id: Optional identifier propagated to audit events.
         audit: Optional AuditConfig supplying audit callbacks.
 
@@ -111,7 +115,7 @@ class URL:
         self._check_dns = check_dns
         self._check_phishing = check_phishing
         self._security_policy = (
-            security_policy if security_policy is not None else SecurityPolicy.internal(check_dns=check_dns)
+            security_policy if security_policy is not None else SecurityPolicy.strict(check_dns=check_dns)
         )
         self._security_findings: list[SecurityFinding] = []
         self._correlation_id = correlation_id
@@ -266,6 +270,14 @@ class URL:
         components = self._to_dict()
         components.update(overrides)
         components["port"] = _normalize_port(components.get("port"))
+        # copy() does not go through the parser, so the RFC 3986 §6.2.2
+        # host normalization applied there has to be re-applied here --
+        # otherwise with_host("EXAMPLE.COM.") would hand back a URL whose
+        # .host defeats the caller's allowlist, reintroducing exactly the
+        # bypass that normalization exists to close.
+        host_override = components.get("host")
+        if isinstance(host_override, str):
+            components["host"] = normalize_host(host_override)
         self._reconcile_query_components(components, overrides)
 
         new_url = object.__new__(URL)

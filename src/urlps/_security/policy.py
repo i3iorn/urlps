@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Any, Literal, Union
 
 from .._cache_config import POLICY_CACHE_SIZE
 from ..exceptions import SecurityPolicyError
 
-PolicyName = Literal["strict", "balanced", "internal"]
+PolicyName = Literal["strict", "balanced", "internal", "local"]
 PolicyInput = Union[None, PolicyName, "SecurityPolicy"]
+_POLICY_NAMES: tuple[str, ...] = ("strict", "balanced", "internal", "local")
 _UNSET = object()
 
 
@@ -18,24 +19,37 @@ class SecurityPolicy:
 
     name: str
     enforce_ssrf: bool = True
+    # Narrows -- never disables -- SSRF enforcement, for the local-development
+    # case ("http://localhost:3000/api", "http://192.168.1.50/metrics"). When
+    # True, loopback and RFC1918/ULA addresses plus the localhost/.local/
+    # .localhost hostnames are permitted, while cloud metadata endpoints
+    # (169.254.169.254, metadata.google.internal), the whole link-local range,
+    # .internal, kubernetes service names, multicast, reserved and 0.0.0.0 stay
+    # blocked. Only meaningful while enforce_ssrf is True.
+    allow_private_hosts: bool = False
     enforce_path_traversal: bool = True
     enforce_open_redirect: bool = True
     enforce_mixed_scripts: bool = True
     enforce_parser_confusion: bool = True
     enforce_double_encoding: bool = True
-    enforce_query_injection: bool = True
-    block_dangerous_ports: bool = True
-    reject_credentials: bool = True
-    require_canonical: bool = True
+    # Deployment policy, not a URL property: SSRF-to-internal-service is
+    # already covered by enforce_ssrf, and blocking port 22/3306 on a *public*
+    # host prevents nothing an attacker wants. Opt in when your egress policy
+    # genuinely only permits 80/443.
+    block_dangerous_ports: bool = False
+    # "user:pass@host" is legal RFC 3986 and common in internal tooling.
+    # Rejecting it is a policy choice, so it is opt-in; when off, a
+    # non-blocking "warning" finding is still emitted (see
+    # collect_security_findings) and the phishing shape that actually matters
+    # ("https://apple.com@evil.com/") is caught by enforce_parser_confusion.
+    reject_credentials: bool = False
     # has_suspicious_punycode() deliberately trades false positives for false
     # negatives -- its own test suite documents plain ASCII domains like
     # "carnival.com" or "click.com" as intended flags (confusable-letter and
     # excessive-hyphen heuristics apply regardless of whether the host is
-    # actually Punycode-encoded). That is too aggressive for a default-on
-    # check against arbitrary URLs, so -- unlike enforce_mixed_scripts, which
-    # only fires on genuinely mixed-script raw Unicode and stays on
-    # everywhere -- this follows the same strict-only pattern as
-    # enforce_query_injection/block_dangerous_ports/reject_credentials.
+    # actually Punycode-encoded). That is too aggressive to widen beyond
+    # strict; it is replaced wholesale by the UTS-39 confusables engine, after
+    # which it becomes precise enough to default on everywhere.
     enforce_suspicious_punycode: bool = True
     check_dns: bool = False
     check_phishing: bool = False
@@ -78,11 +92,42 @@ class SecurityPolicy:
             check_phishing=check_phishing,
             dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
             dns_rate_limiter=dns_rate_limiter,
-            enforce_query_injection=False,
             block_dangerous_ports=False,
             reject_credentials=False,
-            require_canonical=False,
             enforce_suspicious_punycode=False,
+        )
+
+    @classmethod
+    def local(
+        cls,
+        *,
+        check_dns: bool = False,
+        dns_fail_open_on_connect_error: bool = True,
+        dns_rate_limiter: Any | None = None,
+    ) -> SecurityPolicy:
+        """Local development: like ``internal``, but loopback/private hosts are allowed.
+
+        SSRF enforcement stays *on* and is merely narrowed -- cloud metadata
+        endpoints, the link-local range, ``.internal`` and kubernetes service
+        names remain blocked, so this is not a blanket "turn security off".
+        """
+        return cls(
+            name="local",
+            enforce_ssrf=True,
+            allow_private_hosts=True,
+            enforce_path_traversal=False,
+            enforce_open_redirect=False,
+            enforce_mixed_scripts=False,
+            enforce_parser_confusion=False,
+            enforce_double_encoding=False,
+            block_dangerous_ports=False,
+            reject_credentials=False,
+            enforce_suspicious_punycode=False,
+            check_dns=check_dns,
+            check_phishing=False,
+            enforce_dns_rate_limit=True,
+            dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
+            dns_rate_limiter=dns_rate_limiter,
         )
 
     @classmethod
@@ -90,10 +135,18 @@ class SecurityPolicy:
         cls,
         *,
         check_dns: bool = False,
-        enforce_ssrf: bool = False,
+        enforce_ssrf: bool = True,
         dns_fail_open_on_connect_error: bool = True,
         dns_rate_limiter: Any | None = None,
     ) -> SecurityPolicy:
+        """Trusted/internal input: heuristics off, but SSRF still enforced.
+
+        ``enforce_ssrf`` defaults to True: a preset whose name suggests
+        "internal network" must not silently permit a request to
+        169.254.169.254. Pass ``enforce_ssrf=False`` to opt out explicitly, or
+        use :meth:`local` for the development case, which permits loopback and
+        RFC1918 while still blocking metadata endpoints.
+        """
         return cls(
             name="internal",
             enforce_ssrf=enforce_ssrf,
@@ -102,10 +155,8 @@ class SecurityPolicy:
             enforce_mixed_scripts=False,
             enforce_parser_confusion=False,
             enforce_double_encoding=False,
-            enforce_query_injection=False,
             block_dangerous_ports=False,
             reject_credentials=False,
-            require_canonical=False,
             enforce_suspicious_punycode=False,
             check_dns=check_dns,
             check_phishing=False,
@@ -142,28 +193,13 @@ def _apply_overrides(
     ):
         return base
 
-    concrete_base = base
-
-    return SecurityPolicy(
-        name=concrete_base.name,
-        enforce_ssrf=concrete_base.enforce_ssrf,
-        enforce_path_traversal=concrete_base.enforce_path_traversal,
-        enforce_open_redirect=concrete_base.enforce_open_redirect,
-        enforce_mixed_scripts=concrete_base.enforce_mixed_scripts,
-        enforce_parser_confusion=concrete_base.enforce_parser_confusion,
-        enforce_double_encoding=concrete_base.enforce_double_encoding,
-        enforce_query_injection=concrete_base.enforce_query_injection,
-        block_dangerous_ports=concrete_base.block_dangerous_ports,
-        reject_credentials=concrete_base.reject_credentials,
-        require_canonical=concrete_base.require_canonical,
-        enforce_suspicious_punycode=concrete_base.enforce_suspicious_punycode,
+    # dataclasses.replace() rather than re-listing every field by hand: the
+    # manual version silently dropped any field added later back to its
+    # default, which in a security policy means silently disabling a check.
+    return replace(
+        base,
         check_dns=effective_dns,
         check_phishing=effective_phishing,
-        enforce_dns_rate_limit=concrete_base.enforce_dns_rate_limit,
-        dns_fail_open_on_connect_error=concrete_base.dns_fail_open_on_connect_error,
-        dns_retries=concrete_base.dns_retries,
-        dns_backoff_base_seconds=concrete_base.dns_backoff_base_seconds,
-        dns_backoff_jitter_seconds=concrete_base.dns_backoff_jitter_seconds,
         dns_rate_limiter=effective_dns_rate_limiter,
     )
 
@@ -181,6 +217,8 @@ def _resolve_named_policy(
         base = SecurityPolicy.balanced()
     elif policy_name == "internal":
         base = SecurityPolicy.internal()
+    elif policy_name == "local":
+        base = SecurityPolicy.local()
     else:
         raise SecurityPolicyError(f"Unsupported security policy: {policy_name!r}")
 
@@ -221,7 +259,7 @@ def resolve_security_policy(
             dns_rate_limiter=dns_rate_limiter,
         )
 
-    if policy in ("strict", "balanced", "internal"):
+    if policy in _POLICY_NAMES:
         base = _resolve_named_policy(policy, None, None)
         return _apply_overrides(
             base,

@@ -6,6 +6,7 @@ from typing import Any
 from urllib.parse import quote, quote_plus, unquote_plus
 
 from ._cache_config import BUILDER_PATH_ENCODE_CACHE_SIZE, BUILDER_QUERY_ENCODE_CACHE_SIZE
+from ._normalize import normalize_host
 from ._patterns import PATTERNS
 from .constants import DEFAULT_PORTS, OfficialSchemes
 from .exceptions import (
@@ -185,7 +186,11 @@ class Builder:
         parts = []
         if userinfo:
             parts.append(f"{userinfo}@")
-        parts.append(host)
+        # build()/compose_url() never go through the parser, so the RFC 3986
+        # §6.2.2 host normalization has to be applied here too -- otherwise
+        # the same host would canonicalize differently depending on whether
+        # the caller parsed a string or assembled one from components.
+        parts.append(normalize_host(host))
         display_port = port
         if scheme and display_port is not None and DEFAULT_PORTS.get(scheme.lower()) == display_port:
             display_port = None

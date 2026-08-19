@@ -86,9 +86,14 @@ class TestPercentEncodingRFC3986:
 
     def test_ipv6_with_zone_id_percent_encoded(self):
         """RFC 6874: IPv6 zone IDs must be percent-encoded"""
-        # Use parse_url_unsafe for link-local IPv6 addresses
-        # Correct: zone ID is percent-encoded as %25eth0
-        url = parse_url_unsafe("http://[fe80::1%25eth0]/")
+        # Link-local IPv6 is blocked by every policy that enforces SSRF at
+        # all, so testing zone-ID syntax needs an explicit SSRF opt-out.
+        from urlps._security import SecurityPolicy
+
+        url = parse_url_unsafe(
+            "http://[fe80::1%25eth0]/",
+            policy=SecurityPolicy.internal(enforce_ssrf=False),
+        )
         assert "[fe80::1%25eth0]" in url.host or url.host == "[fe80::1%25eth0]"
 
     def test_ipv6_zone_id_raw_percent_invalid(self):

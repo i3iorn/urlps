@@ -113,22 +113,35 @@ MAX_FRAGMENT_LENGTH: Final[int] = _get_positive_int_from_env("URLPS_MAX_FRAGMENT
 MAX_USERINFO_LENGTH: Final[int] = _get_positive_int_from_env("URLPS_MAX_USERINFO_LENGTH", 128)
 MAX_IPV6_STRING_LENGTH: Final[int] = _get_positive_int_from_env("URLPS_MAX_IPV6_STRING_LENGTH", 128)
 
-BLOCKED_HOSTNAMES: Final[frozenset[str]] = frozenset(
+#: Loopback/localhost spellings. Blocked by default, but permitted by the
+#: ``local`` policy (SecurityPolicy.allow_private_hosts) because they are what
+#: a developer actually types: "http://localhost:3000/api".
+#:
+#: "0.0.0.0" is deliberately NOT here -- it is the unspecified address, routes
+#: to loopback on Linux, and is a well-known filter-bypass spelling for
+#: 127.0.0.1, while nobody legitimately *fetches* it. It stays blocked even
+#: under ``local``.
+LOOPBACK_HOSTNAMES: Final[frozenset[str]] = frozenset(
     {
-        # Localhost variations
         "localhost",
         "localhost.localdomain",
         "localhost.",
-        # IPv4 loopback and special addresses
         "127.0.0.1",
-        "0.0.0.0",  # nosec B104 -- SSRF blocklist entry, not a bind address
-        # IPv6 loopback
         "::1",
         "[::1]",
-        "[::]",
         "[0:0:0:0:0:0:0:1]",
         "[0000:0000:0000:0000:0000:0000:0000:0001]",
-        # Cloud metadata endpoints (AWS, GCP, Azure, etc.)
+    }
+)
+
+#: Cloud metadata and cluster service-discovery endpoints. These stay blocked
+#: under *every* policy that enforces SSRF at all, including ``local`` -- a
+#: developer never needs to reach 169.254.169.254, and it is the single most
+#: valuable SSRF target there is.
+METADATA_HOSTNAMES: Final[frozenset[str]] = frozenset(
+    {
+        "0.0.0.0",  # nosec B104 -- SSRF blocklist entry, not a bind address
+        "[::]",
         "169.254.169.254",
         "metadata.google.internal",
         "metadata.goog",
@@ -139,6 +152,8 @@ BLOCKED_HOSTNAMES: Final[frozenset[str]] = frozenset(
         "kubernetes.default.svc.cluster.local",
     }
 )
+
+BLOCKED_HOSTNAMES: Final[frozenset[str]] = LOOPBACK_HOSTNAMES | METADATA_HOSTNAMES
 
 DEFAULT_DNS_TIMEOUT: Final[float] = 2.0
 
@@ -171,6 +186,7 @@ __all__ = [
     "DEFAULT_PHISHING_DATABASE_MAX_BYTES",
     "DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS",
     "DEFAULT_PORTS",
+    "LOOPBACK_HOSTNAMES",
     "MAX_FRAGMENT_LENGTH",
     "MAX_HOST_LENGTH",
     "MAX_IPV6_STRING_LENGTH",
@@ -179,6 +195,7 @@ __all__ = [
     "MAX_SCHEME_LENGTH",
     "MAX_URL_LENGTH",
     "MAX_USERINFO_LENGTH",
+    "METADATA_HOSTNAMES",
     "OFFICIAL_SCHEMES",
     "PASSWORD_MASK",
     "PHISHING_DATABASE_URL",

@@ -9,6 +9,7 @@ from urllib.parse import unquote_plus
 from ._builder import Builder, QueryPairs
 from ._cache_config import PARSER_CACHE_SIZE
 from ._components import ParseResult
+from ._normalize import normalize_host, normalize_percent_encoding
 from ._validation import Validator, is_valid_userinfo
 from .constants import (
     DEFAULT_PORTS,
@@ -154,7 +155,7 @@ def parse_ipv6_host(host_candidate: str) -> tuple[str, int | None]:
         port = parse_port(remainder[1:])
     elif remainder:
         raise HostValidationError("Unexpected characters after IPv6 literal.", value=remainder, component="host")
-    return host_literal, port
+    return normalize_host(host_literal), port
 
 
 def parse_regular_host(host_candidate: str) -> tuple[str, int | None]:
@@ -165,7 +166,7 @@ def parse_regular_host(host_candidate: str) -> tuple[str, int | None]:
     if "." in host_part and host_part.replace(".", "").replace("-", "").isdigit():
         if not Validator.is_valid_ipv4(host_part):
             raise HostValidationError("Invalid IPv4 address format.", value=host_part, component="host")
-        return host_part, parse_port(port_part) if sep else None
+        return normalize_host(host_part), parse_port(port_part) if sep else None
     if not Validator.is_valid_host(host_part):
         raise HostValidationError("Host contains invalid characters.", value=host_part, component="host")
     if not host_part.isascii():
@@ -175,7 +176,7 @@ def parse_regular_host(host_candidate: str) -> tuple[str, int | None]:
             raise HostValidationError("Unable to IDNA-encode host.", value=host_part, component="host") from exc
     else:
         ascii_host = host_part
-    return ascii_host, parse_port(port_part) if sep else None
+    return normalize_host(ascii_host), parse_port(port_part) if sep else None
 
 
 def parse_host(host_candidate: str, require_host: bool = False) -> tuple[str | None, int | None]:
@@ -345,11 +346,19 @@ def parse_url(url: str, allow_custom_scheme: bool = False) -> ParseResult:
     require_host = scheme is not None and scheme.lower() != "file" and has_authority
     host, port = parse_host(host_candidate, require_host=require_host)
     port = apply_port_defaults(scheme, port, host)
-    path = normalize_path(path_candidate)
+    path = normalize_percent_encoding(normalize_path(path_candidate))
     if host and not path:
         path = "/"
     query, query_pairs = parse_query_string(query_str)
+    # RFC 3986 §6.2.2.1/.2 applied to the stored components, not just at
+    # serialization time -- otherwise `url.path` and `str(url)` disagree
+    # about the same escape, and a caller comparing components sees a
+    # different answer than one comparing strings.
+    if query is not None:
+        query = normalize_percent_encoding(query)
     fragment = parse_fragment_string(fragment_str)
+    if fragment is not None:
+        fragment = normalize_percent_encoding(fragment)
 
     return ParseResult(
         scheme=scheme,

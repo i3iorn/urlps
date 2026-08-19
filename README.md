@@ -73,22 +73,33 @@ from urlps import parse_url
 balanced_url = parse_url("HTTP://EXAMPLE.com", policy="balanced")
 ```
 
-Use `parse_url_unsafe()` for internal/development URLs:
+Use `parse_url_local()` for development and internal URLs. It turns the
+heuristic checks off and permits loopback/RFC1918 hosts, but **narrows SSRF
+enforcement rather than disabling it** -- cloud metadata endpoints, the
+link-local range, `.internal` and kubernetes service names stay blocked:
+
 ```python
-from urlps import SecurityPolicy, parse_url_unsafe
+from urlps import SecurityPolicy, parse_url_local
 
-dev_url = parse_url_unsafe("http://localhost:3000/api")
-internal = parse_url_unsafe("http://192.168.1.100/metrics")
+dev_url = parse_url_local("http://localhost:3000/api")
+internal = parse_url_local("http://192.168.1.100/metrics")
 
-# If policy is passed, parse_url_unsafe uses it exactly.
-trusted_policy = SecurityPolicy.internal(check_dns=True)
-internal_checked = parse_url_unsafe("http://intranet.local/service", policy=trusted_policy)
+# If policy is passed, parse_url_local uses it exactly.
+trusted_policy = SecurityPolicy.local(check_dns=True)
+internal_checked = parse_url_local("http://intranet.local/service", policy=trusted_policy)
 ```
+
+`parse_url_unsafe()` is the former name for the same function and still works.
 
 Need to adjust the tradeoff? Use policy presets:
 - `policy="strict"` (default): maximum protections, DNS connect checks fail-closed by default
 - `policy="balanced"`: fewer false positives, DNS connect checks fail-open by default
-- `policy="internal"`: trusted/internal traffic
+- `policy="internal"`: trusted traffic -- heuristics off, **SSRF still enforced**
+- `policy="local"`: development -- heuristics off, loopback/private hosts allowed,
+  metadata endpoints still blocked
+
+To genuinely disable SSRF enforcement you must say so explicitly:
+`SecurityPolicy.internal(enforce_ssrf=False)`.
 
 DNS connect behavior can be customized per policy:
 
