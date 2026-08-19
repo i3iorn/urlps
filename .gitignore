@@ -164,4 +164,3 @@ htmlcov/
 # Tooling caches not covered above
 .ruff_cache/
 .review_dist/
-!/performance/benchmark_results.json
