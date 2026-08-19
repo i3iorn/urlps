@@ -181,4 +181,3 @@ detail and [MIGRATION.md](MIGRATION.md) for upgrade steps.
 
 - Initial public releases of URL parsing/building APIs.
 - Core immutable URL representation and component helpers.
-

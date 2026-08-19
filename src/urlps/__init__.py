@@ -68,7 +68,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 from . import _parser
 from . import url as _url

@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from _helpers import _check_type, _normalize_port
+
 from ._audit import NO_OP_AUDIT_MANAGER, AuditConfig, AuditManager
 from ._builder import Builder, QueryPairs
 from ._components import SecurityFinding
@@ -187,7 +188,7 @@ class URL:
         self._userinfo = str(userinfo_component) if userinfo_component is not None else None
         host_component = components.get("host")
         self._host = str(host_component) if host_component is not None else None
-        self._port = _normalize_port(components.get("port"))
+        self._port: int | None = _normalize_port(components.get("port"))
         path_component = components.get("path")
         self._path = str(path_component) if path_component is not None else ""
         query_component = components.get("query")
@@ -290,7 +291,7 @@ class URL:
         Raises:
             InvalidURLError: If overrides are invalid.
         """
-        _validate_copy_overrides(overrides)
+        self._validate_copy_overrides(overrides)
         components = self._to_dict()
         components.update(overrides)
         components["port"] = _normalize_port(components.get("port"))
