@@ -1,10 +1,7 @@
 """URL objects must actually be immutable, not immutable by convention.
 
-The README has always advertised immutable URL objects, but before 1.0
-``u._host = "evil.com"`` worked and changed ``str(u)``. That is a security
-problem, not just a documentation one: a URL validated by ``parse_url()``
-could be pointed somewhere else afterwards while still presenting itself as
-validated.
+A URL validated by ``parse_url()`` must not be mutable afterwards while still
+presenting itself as validated.
 
 The slot list is read from ``URL.__slots__`` rather than hardcoded, so a slot
 added later is covered automatically instead of quietly escaping these tests.
@@ -96,8 +93,6 @@ def test_with_methods_return_new_objects(url: URL) -> None:
 
 def test_copy_and_canonicalize_still_work(url: URL) -> None:
     assert url.copy(path="/other").path == "/other"
-    # canonicalize() used to write _query_pairs after construction; it now
-    # passes query and query_pairs together through copy().
     canonical = url.canonicalize()
     assert canonical.query == "a=2&z=1"
     assert canonical.query_params == [("a", "2"), ("z", "1")]

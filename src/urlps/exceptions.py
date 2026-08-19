@@ -39,20 +39,17 @@ class ErrorCode(Enum):
     DOUBLE_ENCODING = "double_encoding"
     PATH_TRAVERSAL = "path_traversal"
     OPEN_REDIRECT = "open_redirect"
+    #: Deprecated: never emitted. See MIXED_SCRIPT_LABEL and CONFUSABLE_HOST.
     MIXED_SCRIPTS = "mixed_scripts"
+    #: Deprecated: never emitted.
     SUSPICIOUS_PUNYCODE = "suspicious_punycode"
     PARSER_CONFUSION = "parser_confusion"
-    #: Deprecated, never emitted since 1.0. The query-injection check was a
-    #: substring blocklist over the raw query; whether "?q=DROP TABLE" is an
-    #: attack depends entirely on the consuming application, which a URL
-    #: parser cannot see. It produced false positives on ordinary input
-    #: ("?q=WAITFOR", "?src=home", "?filter=a--b") while being trivially
-    #: bypassed by re-encoding, so it provided no security floor. Retained so
-    #: existing `except ... if e.code is ErrorCode.QUERY_INJECTION` handlers
-    #: keep importing; scheduled for removal in 2.0.
+    #: Deprecated: never emitted. Retained so existing `except ... if e.code
+    #: is ErrorCode.QUERY_INJECTION` handlers keep importing.
     QUERY_INJECTION = "query_injection"
     CREDENTIALS_IN_URL = "credentials_in_url"
     DANGEROUS_PORT = "dangerous_port"
+    #: Deprecated: never emitted.
     NON_CANONICAL_URL = "non_canonical_url"
     INVALID_IPV6_ZONE_ID = "invalid_ipv6_zone_id"
 
@@ -61,8 +58,6 @@ class ErrorCode(Enum):
     #: nothing is mixed, the whole label is a disguise.
     CONFUSABLE_HOST = "confusable_host"
     #: A single label mixing scripts, e.g. "pаypal" (Latin p, Cyrillic а).
-    #: Replaces MIXED_SCRIPTS, which was evaluated over the whole host and so
-    #: flagged legitimate IDNs like "例え.com" purely for having a Latin TLD.
     MIXED_SCRIPT_LABEL = "mixed_script_label"
     #: A host containing a codepoint UTS-46 disallows outright.
     IDNA_DISALLOWED = "idna_disallowed"

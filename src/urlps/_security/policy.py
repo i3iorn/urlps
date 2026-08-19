@@ -43,17 +43,13 @@ class SecurityPolicy:
     # collect_security_findings) and the phishing shape that actually matters
     # ("https://apple.com@evil.com/") is caught by enforce_parser_confusion.
     reject_credentials: bool = False
-    # Superseded by enforce_mixed_scripts + enforce_confusable_host, which
-    # decode Punycode first and work per label. Retained as an accepted
-    # keyword so existing SecurityPolicy(...) calls keep constructing; it no
-    # longer gates anything. Removed in 2.0.
+    # Deprecated: accepted as a keyword for compatibility, but gates nothing.
+    # See enforce_mixed_scripts and enforce_confusable_host.
     enforce_suspicious_punycode: bool = False
     # Whole-script confusables: a label written entirely in a non-Latin script
     # whose characters are all Latin lookalikes ("раураӏ.com"). Distinct from
     # the mixed-script check, which by definition cannot see it -- nothing is
-    # mixed. On by default: the detection is precise (a label keeps any
-    # character without a Latin lookalike, so ordinary non-Latin domains are
-    # untouched), unlike the ASCII heuristics it replaces.
+    # mixed.
     enforce_confusable_host: bool = True
     # Bidi controls, zero-width characters and malformed Punycode in the host.
     # These have no legitimate use in a hostname.

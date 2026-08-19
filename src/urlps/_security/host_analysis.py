@@ -1,17 +1,9 @@
 """Unicode-aware host findings: mixed scripts, confusables, invisible characters.
 
-This is the policy-facing layer over :mod:`urlps._security._unicode`. It exists
-mainly to get the *order of operations* right, which is where the pre-1.0
-implementation went wrong.
-
-The bug it fixes: ``has_mixed_scripts()`` returned False for any ASCII string,
-and its call site was additionally gated on ``not url.isascii()``. Punycode is
-ASCII. So ``xn--pypal-4ve.com`` -- which decodes to ``pаypal`` with a Cyrillic
-а -- received **no script analysis at all**, under any policy. Homograph
-attacks are delivered A-label-encoded precisely because that is what goes on
-the wire, so the one form that mattered was the one form never examined.
-
-Everything here therefore decodes Punycode *first*, then analyses per label.
+Policy-facing layer over :mod:`urlps._security._unicode`. Punycode is ASCII,
+and homograph attacks are delivered A-label-encoded (that is what actually
+goes on the wire), so everything here decodes Punycode *first*, then
+analyses per label -- never on the raw ASCII form.
 """
 
 from __future__ import annotations

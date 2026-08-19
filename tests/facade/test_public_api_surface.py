@@ -119,7 +119,7 @@ def test_error_codes_match_snapshot() -> None:
 
 
 def test_every_exception_class_is_exported() -> None:
-    """Only 8 of 19 were reachable from the package root before 1.0."""
+    """Every exception subclass must be reachable from the package root."""
     import urlps.exceptions as exceptions
 
     classes = {

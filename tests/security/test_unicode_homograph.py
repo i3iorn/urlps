@@ -1,15 +1,9 @@
-"""Unicode host analysis: scripts, confusables, UTS-46, and the Punycode bypass.
+"""Unicode host analysis: scripts, confusables, UTS-46, and Punycode decoding.
 
-The bypass this file exists for: before 1.0, ``has_mixed_scripts()`` returned
-False for any ASCII string and its call site was gated on ``not
-url.isascii()``. Punycode is ASCII. So ``xn--pypal-4ve.com`` -- the A-label
-form of ``pаypal`` with a Cyrillic а, which is exactly how a homograph attack
-travels -- got no script analysis at all, and was **accepted** under the
-shipped ``balanced`` policy.
-
-The other half of the story is false positives: the old check ran over the
-whole host rather than per label, so any legitimate IDN looked "mixed" purely
-because its TLD is Latin. Both directions are pinned here.
+Pins two directions: homograph attacks must be caught even when delivered
+A-label-encoded (``xn--pypal-4ve.com`` decodes to ``pаypal`` with a Cyrillic
+а), and legitimate per-label single-script IDNs must not be flagged just
+because their TLD is Latin.
 """
 
 from __future__ import annotations
@@ -102,7 +96,7 @@ def test_homograph_labels_are_not_single_script(label: str) -> None:
 
 
 def test_japanese_domain_is_not_flagged_as_mixed() -> None:
-    """The whole-host check used to flag this purely because ".com" is Latin."""
+    """Per-label analysis: a Latin TLD must not flag an unrelated non-Latin label."""
     assert is_single_script_label("例え")
     assert not _codes("http://例え.com/")
 
@@ -150,7 +144,7 @@ def test_mixed_script_labels_are_not_double_reported() -> None:
 )
 @pytest.mark.parametrize("policy", ["strict", "balanced"])
 def test_punycode_homographs_are_caught(host: str, expected_code: ErrorCode, policy: str) -> None:
-    """Under 0.8 these were ACCEPTED by policy="balanced" -- Punycode is ASCII."""
+    """Punycode is ASCII, so homograph analysis must decode it first."""
     assert expected_code.value in _codes(f"http://{host}/", policy)
 
 
@@ -188,7 +182,7 @@ def test_to_ascii_matches_browser_resolution(host: str, expected: str) -> None:
 
 
 def test_parser_and_validator_agree_on_idna() -> None:
-    """They used to disagree: the parser hardcoded stdlib IDNA 2003."""
+    """Parser and Validator must resolve a host through the same IDNA path."""
     from urlps._validation import Validator
 
     host = "straße.de"

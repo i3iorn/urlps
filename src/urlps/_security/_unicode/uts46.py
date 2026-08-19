@@ -1,16 +1,11 @@
 """A single IDNA/UTS-46 entry point for the whole package.
 
-Before 1.0 there were two, and they disagreed. ``_parser.parse_regular_host``
-called stdlib ``host.encode("idna")`` unconditionally (IDNA 2003), while
-``_validation.Validator._to_ascii_host`` preferred the third-party ``idna``
-package (IDNA 2008 + UTS-46) when it was installed. The parser won, so the
-host actually stored on a ``URL`` was IDNA 2003 -- *even with ``idna``
-installed*.
+The parser and the Validator must never disagree on a host's ASCII form --
+that would be a parser differential letting a caller allowlist on one
+spelling while the URL actually resolves via another:
 
-That is not merely inconsistent, it is a parser differential:
-
-    https://straße.de/   stdlib  -> "strasse.de"
-                         UTS-46  -> "xn--strae-oqa.de"
+    https://straße.de/   stdlib IDNA 2003  -> "strasse.de"
+                         UTS-46            -> "xn--strae-oqa.de"
 
 Browsers use the second. A caller allowlisting on ``url.host`` would admit a
 URL that navigates somewhere else entirely.

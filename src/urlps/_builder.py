@@ -102,13 +102,6 @@ class Builder:
 
         # `query` is authoritative when supplied; `query_pairs` is only a
         # fallback for callers that provide structured pairs instead.
-        #
-        # This precedence used to be reversed, which made every query override
-        # a silent no-op: URL.copy(query=...) merged the new string into a
-        # component dict that still carried the *old* query_pairs, and those
-        # pairs then won. That is what broke with_query(), with_query_param()
-        # and without_query_param() -- they all computed a correct new query
-        # and then had it discarded.
         if query is not None:
             serialized_query = query
         elif query_pairs:

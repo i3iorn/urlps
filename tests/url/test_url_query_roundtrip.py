@@ -166,7 +166,7 @@ class TestQueryRoundTrip:
 
 
 class TestQueryMutators:
-    """Mutators must actually mutate (they previously returned self unchanged)."""
+    """Mutators must actually produce a changed URL, not return self unchanged."""
 
     def test_without_query_param_removes_it(self):
         url = parse_url(f"{BASE}?a=1&b=2")

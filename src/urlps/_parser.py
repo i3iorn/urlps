@@ -171,12 +171,8 @@ def parse_regular_host(host_candidate: str) -> tuple[str, int | None]:
     if not Validator.is_valid_host(host_part):
         raise HostValidationError("Host contains invalid characters.", value=host_part, component="host")
     if not host_part.isascii():
-        # One IDNA entry point for the whole package. This used to call stdlib
-        # encode("idna") (IDNA 2003) directly while Validator._to_ascii_host
-        # preferred the idna package (IDNA 2008/UTS-46), so the host actually
-        # stored on a URL disagreed with the one validation had checked --
-        # "straße.de" became "strasse.de" here but "xn--strae-oqa.de" there,
-        # which is what browsers resolve. See _unicode/uts46.py.
+        # Route through the one IDNA entry point (see _unicode/uts46.py) so
+        # the parser and Validator can never disagree on a host's ASCII form.
         try:
             ascii_host = to_ascii(host_part)
         except IdnaError as exc:
@@ -258,16 +254,12 @@ def parse_query_string(query_candidate: str | None) -> tuple[str | None, QueryPa
     """Parse a query string into its original form plus decoded pairs.
 
     Returns ``(raw_query, pairs)``. The first element is the query string
-    **exactly as received** -- parsing is non-destructive.
-
-    This previously returned a re-serialized form built from the decoded
-    pairs, which silently corrupted data: ``quote_plus`` treats ``+``, ``&``
-    and ``=`` as safe, so a decoded literal ``+`` was re-emitted bare (and
-    would decode as a space on the next pass) and a decoded literal ``&`` was
-    re-emitted as a *delimiter*, splitting one parameter into two. Round
-    tripping ``?q=a+%26+b`` produced ``?q=a+&+b``, which re-parses as two
-    parameters -- a parameter-smuggling vector, and fatal for signature
-    verification or proxying.
+    **exactly as received** -- parsing is non-destructive. Re-serializing
+    from the decoded pairs instead would be lossy: ``quote_plus`` treats
+    ``+``, ``&`` and ``=`` as safe, so a decoded literal ``+`` would decode
+    as a space on the next pass and a decoded literal ``&`` would become a
+    delimiter, splitting one parameter into two -- a parameter-smuggling
+    vector, and fatal for signature verification or proxying.
 
     Re-encoding is now performed only where the caller explicitly asks for a
     different query (see ``URL.with_query_param`` / ``canonicalize``).

@@ -1,15 +1,8 @@
 """
 Canonicalization is applied, not merely detected.
 
-Before 1.0 this was a validation *gate*: `require_canonical` rejected URLs
-that differed from canonical form, and turning the gate off (the shipped
-`balanced` preset) handed back an un-normalized host. That combination was
-both user-hostile and a security bug -- a caller's `url.host in ALLOWLIST`
-check silently failed to match "EXAMPLE.COM" or "evil.com.".
-
-1.0 normalizes instead. These tests assert the resulting invariant, which is
-strictly stronger than the old detector: **you cannot obtain a non-canonical
-URL object from urlps by any route or under any policy.** Equal resources
+These tests assert the invariant: **you cannot obtain a non-canonical URL
+object from urlps by any route or under any policy.** Equal resources
 therefore compare equal, which is what the security scenarios at the bottom
 of this file actually depend on.
 """
@@ -139,11 +132,8 @@ class TestIdempotence:
 
 
 class TestSecurityImplications:
-    """
-    The scenarios that motivated canonicalization in the first place. Each one
-    used to require the caller to remember to canonicalize; now it holds by
-    construction.
-    """
+    """Security properties that must hold by construction, without the caller
+    having to remember to canonicalize."""
 
     def test_cache_key_collision_is_impossible(self) -> None:
         urls = [

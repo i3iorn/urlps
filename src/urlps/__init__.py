@@ -296,13 +296,8 @@ def parse_url_unsafe(
     )
 
 
-#: Preferred name for :func:`parse_url_unsafe`.
-#:
-#: "unsafe" reads as "you are doing something wrong", which is the wrong signal
-#: for the overwhelmingly common case of parsing your own development URL. The
-#: actual semantics is "this is a local/trusted URL", and under the ``local``
-#: policy it is not even unsafe: cloud metadata endpoints and the link-local
-#: range stay blocked. The old name remains exported for compatibility.
+#: Alias for :func:`parse_url_unsafe`. Under the ``local`` policy, cloud
+#: metadata endpoints and the link-local range still stay blocked.
 parse_url_local = parse_url_unsafe
 
 
@@ -600,12 +595,8 @@ __all__ = [
     "AuditConfig",
     "AuditEventCallback",
     "AuditManager",
-    # Typed error codes and the finding type returned by URL.security_findings
-    # and URL.validate(); both were previously only reachable privately.
     "DNSConnectionError",
     "DNSRateLimitError",
-    # Injectable DNS rate limiting. The README used to tell users to import
-    # these from urlps._security.dns_guard -- a private module.
     "DNSRateLimiter",
     "DNSRateLimiterConfig",
     "DNSRateLimiterError",
@@ -613,7 +604,6 @@ __all__ = [
     "DNSResolutionError",
     "ErrorCode",
     "FragmentEncodingError",
-    # Exception hierarchy.
     "HostValidationError",
     "InvalidURLError",
     "MissingHostError",

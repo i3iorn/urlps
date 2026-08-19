@@ -1,17 +1,8 @@
 """Unicode Script resolution and the UTS-39 restriction-level check.
 
-Replaces the pre-1.0 homograph heuristic, which derived a character's "script"
-by taking the first word of ``unicodedata.name(char)`` and matching it against
-a hardcoded list of eleven names. That approach:
-
-- missed every script outside the list;
-- misclassified characters whose names do not start with a script name
-  (``MATHEMATICAL SMALL A``, ``FULLWIDTH LATIN SMALL LETTER A``, ``CIRCLED ...``);
-- and ran against the whole host rather than per label, so a legitimate IDN
-  like ``例え.com`` looked "mixed" purely because its TLD is Latin.
-
-This module resolves the real Script property from a generated table and
-implements UTS-39 §5.1 Highly Restrictive, applied per label.
+Resolves the real Script property from a generated table and implements
+UTS-39 §5.1 Highly Restrictive, applied per label -- so a legitimate IDN like
+``例え.com`` is not flagged just because its TLD is Latin.
 """
 
 from __future__ import annotations

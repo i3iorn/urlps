@@ -237,14 +237,11 @@ def _resolve_addr_info(host: str, timeout_seconds: float | None = None) -> list[
     """Resolve host to address info, raising socket.gaierror on failure.
 
     ``socket.getaddrinfo`` takes no timeout argument and is bounded only by the
-    OS resolver, which under packet loss can block for 5-30 seconds. The
-    documented ``timeout_seconds`` previously applied only to the subsequent
-    socket connect, so a caller asking for a 2s budget could still block far
-    longer. ``socket.setdefaulttimeout`` does not affect getaddrinfo either,
-    so the lookup is run in a worker thread and abandoned on timeout.
-
-    The abandoned thread is a daemon and will finish on its own; we simply
-    stop waiting for it.
+    OS resolver, which under packet loss can block for 5-30 seconds --
+    unaffected by ``socket.setdefaulttimeout``. To honor ``timeout_seconds``
+    for the lookup itself (not just the subsequent socket connect), the
+    lookup runs in a worker thread and is abandoned on timeout; the abandoned
+    thread is a daemon and finishes on its own.
 
     Deliberately a fresh ``ThreadPoolExecutor`` per call, not a shared
     module-level pool -- this was profiled (2000 calls, mocked

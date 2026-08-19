@@ -1,9 +1,7 @@
 """``_apply_overrides`` must preserve every policy field.
 
-It used to re-list all twenty fields by hand. That is a bug factory in a
-security policy specifically: a field added later and forgotten in the list
-silently reverts to its default on every override, which means silently
-*disabling a check* for anyone who passed ``check_dns=`` or a rate limiter.
+A field forgotten during an override silently reverts to its default, which
+in a security policy means silently *disabling a check*.
 
 These tests are driven by ``dataclasses.fields(SecurityPolicy)`` rather than a
 hardcoded list, so adding a field to the policy automatically extends the

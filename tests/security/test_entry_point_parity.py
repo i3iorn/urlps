@@ -1,12 +1,5 @@
 """Every entry point must agree on what it enforces.
 
-Before 1.0 they did not: ``parse_url("http://169.254.169.254/")`` raised while
-``URL("http://169.254.169.254/")`` succeeded silently, because the class
-defaulted to the near-no-op ``internal`` policy while the function defaulted to
-``strict``. ``URL`` is the type in every annotation and throughout the README,
-so reaching for the class instead of the function was a quiet way to skip every
-check.
-
 This module pins the matrix so that divergence cannot come back. Anything that
 takes an untrusted URL and hands back a validated ``URL`` enforces the default
 policy; the two documented string builders do not, and that is asserted here

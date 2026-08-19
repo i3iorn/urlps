@@ -162,8 +162,7 @@ def collect_security_findings(
             )
         # Unicode host analysis. Deliberately NOT gated on `not is_ascii`:
         # Punycode is ASCII, and an A-label is exactly how a homograph attack
-        # arrives on the wire. analyze_host() decodes first, then works per
-        # label -- see host_analysis for the bypass this closes.
+        # arrives on the wire. analyze_host() decodes first, then works per label.
         _CODE_TO_FLAG = {
             ErrorCode.MIXED_SCRIPT_LABEL: effective_policy.enforce_mixed_scripts,
             ErrorCode.CONFUSABLE_HOST: effective_policy.enforce_confusable_host,
