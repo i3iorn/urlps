@@ -54,8 +54,10 @@ dev = [
     "idna>=3.11",
     # Generator-only: tools/gen_unicode_tables.py reads UCD Script data from
     # regex to produce src/urlps/_security/_unicode/_tables.py, which is checked
-    # in. urlps itself never imports regex at runtime.
-    "regex>=2024.0.0",
+    # in. urlps itself never imports regex at runtime. Pinned exactly (not
+    # >=) because newer regex releases ship newer UCD data, which changes the
+    # generated table and fails the CI freshness check non-deterministically.
+    "regex==2024.11.6",
 ]
 
 [project.urls]
