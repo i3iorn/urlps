@@ -77,3 +77,46 @@ class TestBuilder:
         builder = Builder()
         with pytest.raises(PortValidationError):
             builder.build_netloc(None, None, 8080, "https")
+
+
+class TestBuildHostValidation:
+    """build()/compose_url() must not emit strings parse_url() then rejects.
+
+    Previously Builder.compose() only normalized the host (case-fold, strip
+    a trailing dot) and never validated its format, so a malformed host
+    passed straight through to the output string.
+    """
+
+    def test_build_rejects_host_with_invalid_characters(self):
+        from urlps import build
+        from urlps.exceptions import HostValidationError
+
+        with pytest.raises(HostValidationError):
+            build("https", "not a valid host! <script>")
+
+    def test_build_rejects_malformed_ipv4(self):
+        from urlps import build
+        from urlps.exceptions import HostValidationError
+
+        with pytest.raises(HostValidationError):
+            build("https", "999.999.999.999")
+
+    def test_build_rejects_malformed_ipv6(self):
+        from urlps import build
+        from urlps.exceptions import HostValidationError
+
+        with pytest.raises(HostValidationError):
+            build("https", "[not_a_valid_ipv6]")
+
+    def test_build_accepts_valid_host_and_round_trips_through_parse_url(self):
+        from urlps import build, parse_url
+
+        result = build("https", "example.com", port=8443, path="/api")
+        parsed = parse_url(result, policy="balanced")
+        assert parsed.host == "example.com"
+
+    def test_build_accepts_valid_ipv6_host(self):
+        from urlps import build
+
+        result = build("https", "[::1]")
+        assert result.startswith("https://[::1]")
