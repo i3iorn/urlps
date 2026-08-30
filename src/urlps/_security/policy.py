@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Any, Literal, Union
@@ -62,6 +63,17 @@ class SecurityPolicy:
     dns_backoff_base_seconds: float = 0.05
     dns_backoff_jitter_seconds: float = 0.02
     dns_rate_limiter: Any | None = None
+
+    def __post_init__(self) -> None:
+        if self.enforce_suspicious_punycode:
+            warnings.warn(
+                "SecurityPolicy.enforce_suspicious_punycode is deprecated and "
+                "gates nothing; homograph detection runs unconditionally via "
+                "enforce_mixed_scripts and enforce_confusable_host. This field "
+                "will be removed in a future major release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
     @classmethod
     def strict(

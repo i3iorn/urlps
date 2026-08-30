@@ -44,45 +44,60 @@ class _URLComparison:
 
     @staticmethod
     def equals(url: URL, other: object) -> Any:
-        """Check equality with another URL object."""
+        """Check equality with another URL object, or with a plain string.
+
+        Comparing to a string compares against ``as_string()`` byte-for-byte
+        (no canonicalization) -- the same "compare what was actually parsed"
+        contract ``as_string()`` itself documents.
+        """
         from ._serialization import _URLSerialization
 
-        if not isinstance(other, type(url)):
-            return NotImplemented
-        return _URLSerialization.as_string(url) == _URLSerialization.as_string(other)
+        if isinstance(other, type(url)):
+            return _URLSerialization.as_string(url) == _URLSerialization.as_string(other)
+        if isinstance(other, str):
+            return _URLSerialization.as_string(url) == other
+        return NotImplemented
 
     @staticmethod
     def compare_lt(url: URL, other: object) -> Any:
-        """Compare URLs lexicographically for sorting."""
+        """Compare URLs (or a URL and a string) lexicographically for sorting."""
         from ._serialization import _URLSerialization
 
         if isinstance(other, type(url)):
             return _URLSerialization.as_string(url) < _URLSerialization.as_string(other)
+        if isinstance(other, str):
+            return _URLSerialization.as_string(url) < other
         return NotImplemented
 
     @staticmethod
     def compare_le(url: URL, other: object) -> Any:
-        """Compare URLs lexicographically for sorting."""
+        """Compare URLs (or a URL and a string) lexicographically for sorting."""
         from ._serialization import _URLSerialization
 
         if isinstance(other, type(url)):
             return _URLSerialization.as_string(url) <= _URLSerialization.as_string(other)
+        if isinstance(other, str):
+            return _URLSerialization.as_string(url) <= other
         return NotImplemented
 
     @staticmethod
     def compare_gt(url: URL, other: object) -> Any:
-        """Compare URLs lexicographically for sorting."""
+        """Compare URLs (or a URL and a string) lexicographically for sorting."""
         from ._serialization import _URLSerialization
 
         if isinstance(other, type(url)):
             return _URLSerialization.as_string(url) > _URLSerialization.as_string(other)
+        if isinstance(other, str):
+            return _URLSerialization.as_string(url) > other
         return NotImplemented
 
     @staticmethod
     def compare_ge(url: URL, other: object) -> Any:
-        """Compare URLs lexicographically for sorting."""
+        """Compare URLs (or a URL and a string) lexicographically for sorting."""
         from ._serialization import _URLSerialization
 
         if isinstance(other, type(url)):
             return _URLSerialization.as_string(url) >= _URLSerialization.as_string(other)
+        if isinstance(other, str):
+            return _URLSerialization.as_string(url) >= other
         return NotImplemented

@@ -98,7 +98,9 @@ trusted_policy = SecurityPolicy.local(check_dns=True)
 internal_checked = parse_url_local("http://intranet.local/service", policy=trusted_policy)
 ```
 
-`parse_url_unsafe()` is the former name for the same function and still works.
+`parse_url_unsafe()` is the former name for the same function. It still
+works but is deprecated -- it emits a `DeprecationWarning` and will be
+removed in a future major release; use `parse_url_local()` instead.
 
 Need to adjust the tradeoff? Use policy presets:
 - `policy="strict"` (default): maximum protections, DNS connect checks fail-closed by default
@@ -310,7 +312,7 @@ URLs are redacted before being passed to callbacks (credentials and sensitive
 query values are masked). Pass `AuditConfig(..., redact_urls=False)` to opt out.
 A callback that raises is recorded as a failure and never breaks the parse.
 
-The same `audit=` parameter is accepted by `parse_url_unsafe()`, `join()` and
+The same `audit=` parameter is accepted by `parse_url_local()`, `join()` and
 `build_secure()`.
 
 ### Component Length Limits
@@ -365,7 +367,8 @@ Internal `@lru_cache` sizes are also overridable this way -- see [Cache Sizing](
 | Function | Description |
 | --- | --- |
 | `parse_url(url, *, allow_custom_scheme=False, check_dns=False, check_phishing=False, dns_rate_limiter=None, policy=None, correlation_id=None, audit=None)` | Parse URL with policy-aware security checks (recommended) |
-| `parse_url_unsafe(url, *, allow_custom_scheme=False, debug=False, check_dns=False, dns_rate_limiter=None, policy=None, correlation_id=None, audit=None)` | Parse URL for trusted/internal input with optional policy overrides |
+| `parse_url_local(url, *, allow_custom_scheme=False, debug=False, check_dns=False, dns_rate_limiter=None, policy=None, correlation_id=None, audit=None)` | Parse URL for trusted/internal input with optional policy overrides |
+| `parse_url_unsafe(...)` | **Deprecated** alias for `parse_url_local()`; emits `DeprecationWarning` |
 | `join(base, reference, *, policy=None, strict_resolution=True, ...)` | Resolve a reference against a base URI (RFC 3986 §5), then validate |
 | `build(*scheme_and_host, port=None, path="/", query=None, fragment=None, userinfo=None)` | Build URL string from components |
 | `build_secure(*scheme_and_host, policy=None, check_dns=False, check_phishing=False, dns_rate_limiter=None, correlation_id=None, audit=None, ...)` | Build and then validate a URL under a selected security policy |
@@ -387,6 +390,7 @@ Note: `get_dns_rate_limiter()` and `reset_dns_rate_limiter()` remain available f
 | `url.canonicalize()` | Return canonicalized copy |
 | `url.is_semantically_equal(other)` | Compare URLs by meaning after canonicalization |
 | `url.same_origin(other)` | Check if URLs have same origin |
+| `url == "https://..."`, `<`, `<=`, `>`, `>=` | Compare a `URL` directly against another `URL` or a plain string, against `as_string()` (no canonicalization) |
 | `url.origin` | Return origin string (e.g., `https://example.com`) |
 | `url.copy(**overrides)` | Create copy with optional component overrides |
 | `url.with_*()` | Functional updates: `with_scheme`, `with_host`, `with_port`, `with_path`, `with_fragment`, `with_userinfo`, `with_netloc`, `with_query_param`, `without_query_param` |
