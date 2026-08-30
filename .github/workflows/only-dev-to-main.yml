@@ -1,9 +1,9 @@
-name: Only dev can merge to main
+name: Only dev can merge to master
 
 on:
   pull_request:
     branches:
-      - main
+      - master
 
 jobs:
   check-source-branch:
@@ -13,6 +13,6 @@ jobs:
       - name: Verify source branch
         run: |
           if [ "${{ github.head_ref }}" != "dev" ]; then
-            echo "Only pull requests from the 'dev' branch can be merged into main."
+            echo "Only pull requests from the 'dev' branch can be merged into master."
             exit 1
           fi
