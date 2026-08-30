@@ -452,23 +452,23 @@ class URL:
         return _URLComparison.hash_url(self)
 
     def __eq__(self, other: object) -> Any:
-        """Check equality with another URL object."""
+        """Check equality with another URL object, or with a plain string."""
         return _URLComparison.equals(self, other)
 
     def __lt__(self, other: object) -> Any:
-        """Compare URLs lexicographically for sorting."""
+        """Compare URLs (or a URL and a string) lexicographically for sorting."""
         return _URLComparison.compare_lt(self, other)
 
     def __le__(self, other: object) -> Any:
-        """Compare URLs lexicographically for sorting."""
+        """Compare URLs (or a URL and a string) lexicographically for sorting."""
         return _URLComparison.compare_le(self, other)
 
     def __gt__(self, other: object) -> Any:
-        """Compare URLs lexicographically for sorting."""
+        """Compare URLs (or a URL and a string) lexicographically for sorting."""
         return _URLComparison.compare_gt(self, other)
 
     def __ge__(self, other: object) -> Any:
-        """Compare URLs lexicographically for sorting."""
+        """Compare URLs (or a URL and a string) lexicographically for sorting."""
         return _URLComparison.compare_ge(self, other)
 
     @classmethod
