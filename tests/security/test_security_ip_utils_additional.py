@@ -3,6 +3,37 @@
 from __future__ import annotations
 
 
+class TestIsSsrfRiskTrailingDot:
+    """Regression tests for the trailing-dot private-IP bypass.
+
+    A bare hostname with a trailing dot (``evil.com.``) was normalized before
+    every check in 1.0.0 so it couldn't slip an allowlist. The same
+    normalization was missing for numeric IP-literal forms in
+    ``is_ssrf_risk`` -- every IP-literal branch parsed the raw ``host``
+    string instead of the trailing-dot-stripped ``host_lower`` that only the
+    hostname-blocklist branch used.
+    """
+
+    def test_private_ipv4_with_trailing_dot_is_risky(self):
+        from urlps._security.ip_utils import is_ssrf_risk
+
+        assert is_ssrf_risk("10.0.0.5.") is True
+        assert is_ssrf_risk("192.168.1.1.") is True
+        assert is_ssrf_risk("127.0.0.1.") is True
+
+    def test_obfuscated_ipv4_with_trailing_dot_is_risky(self):
+        from urlps._security.ip_utils import is_ssrf_risk
+
+        # Decimal and octal/hex obfuscated spellings of 127.0.0.1.
+        assert is_ssrf_risk("2130706433.") is True
+        assert is_ssrf_risk("0177.0.0.1.") is True
+
+    def test_public_ip_with_trailing_dot_stays_safe(self):
+        from urlps._security.ip_utils import is_ssrf_risk
+
+        assert is_ssrf_risk("93.184.216.34.") is False
+
+
 class TestSecurityPrivateChecks:
     def test_check_ipv6_private_invalid_address(self):
         """Lines 80-81: ValueError in _check_ipv6_private returns False."""
