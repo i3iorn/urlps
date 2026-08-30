@@ -90,13 +90,17 @@ class TestGetCanonicalUrl:
         assert result is not None
         assert "user:pass@" in result
 
-    def test_bracketed_host_without_port_or_closing_bracket(self):
-        # netloc starts with "[" but has trailing text after the closing
-        # bracket, so neither the "]:"-port nor the plain "]"-ending branch
-        # applies; falls back to parsed.hostname.
-        result = get_canonical_url("http://[::1]extra/path")
-        assert result is not None
-        assert "[::1]" in result
+    def test_bracketed_host_with_trailing_garbage_is_rejected_upstream(self):
+        # This was written to exercise the netloc.startswith("[")/else
+        # fallback at the bottom of the bracketed-host branch (parsed.hostname
+        # for a netloc that's neither "]:port" nor a plain "]" ending). But
+        # stdlib's urlparse() validates IPv6 bracket syntax strictly and
+        # raises ValueError("Invalid IPv6 URL") for "[::1]extra" before
+        # get_canonical_url ever reaches that branch -- get_canonical_url's
+        # own try/except (ValueError, AttributeError) then fails closed and
+        # returns None, which is the correct, safe outcome for malformed
+        # input, not a bug to work around.
+        assert get_canonical_url("http://[::1]extra/path") is None
 
     def test_ipv6_host_with_port(self):
         result = get_canonical_url("http://[::1]:8080/path")
