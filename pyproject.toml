@@ -156,7 +156,7 @@ source = ["src/urlps", "*/site-packages/urlps"]
 
 [tool.coverage.report]
 # Ratchet upward over time; never lower this to make a red build go green.
-fail_under = 92
+fail_under = 96
 show_missing = true
 skip_covered = true
 exclude_lines = [
