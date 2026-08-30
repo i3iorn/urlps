@@ -62,6 +62,35 @@ jobs:
             exit 1
           fi
 
+  idna-fallback:
+    name: idna-absent fallback path
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Deliberately installs without the [idna] extra, and without [dev]
+      # (which also pulls idna in transitively), so the package genuinely
+      # runs against the stdlib-only IDNA 2003 fallback in _unicode/uts46.py
+      # -- the one CI never otherwise exercises, since [dev] hard-requires
+      # idna. `pytest` alone is enough to run the targeted fallback suite.
+      - name: Install package without the idna extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install . pytest
+
+      - name: Verify idna is genuinely absent
+        run: python -c "import importlib.util; assert importlib.util.find_spec('idna') is None"
+
+      - name: Run the idna-fallback test suite
+        run: pytest tests/security/test_idna_fallback.py -v
+
   quality:
     name: Lint, types and security
     runs-on: ubuntu-latest
