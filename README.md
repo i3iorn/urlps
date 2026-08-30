@@ -331,6 +331,12 @@ Internal `@lru_cache` sizes are also overridable this way -- see [Cache Sizing](
 | `build_secure(*scheme_and_host, policy=None, check_dns=False, check_phishing=False, dns_rate_limiter=None, correlation_id=None, audit=None, ...)` | Build and then validate a URL under a selected security policy |
 | `compose_url(components)` | Build URL from components dict |
 
+`build()`/`compose_url()` validate that `host` is a syntactically valid
+hostname, IPv4 literal, or bracketed IPv6 literal (raising
+`HostValidationError` otherwise), so their output always round-trips through
+`parse_url()`. This is structural validation only, not security policy --
+use `build_secure()` when the host isn't already trusted.
+
 Note: `get_dns_rate_limiter()` and `reset_dns_rate_limiter()` remain available for compatibility, but explicit `dns_rate_limiter=` injection is preferred.
 
 ### URL Methods
