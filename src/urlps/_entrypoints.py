@@ -6,6 +6,7 @@ __init__.py stays limited to package setup (version, imports, __all__).
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Mapping
 from typing import Any
 
@@ -121,7 +122,7 @@ def parse_url(
     )
 
 
-def parse_url_unsafe(
+def parse_url_local(
     url: str,
     *,
     allow_custom_scheme: bool = False,
@@ -133,9 +134,6 @@ def parse_url_unsafe(
     audit: AuditConfig | None = None,
 ) -> URL:
     """Parse a local/development URL, with the heuristic checks turned off.
-
-    Deprecated alias for :func:`parse_url_local`, which says what this actually
-    does. Use that instead; this name is retained for compatibility.
 
     Applies the ``local`` policy: the heuristic checks (path traversal, open
     redirect, parser confusion, mixed scripts, double encoding, Punycode) are
@@ -178,11 +176,11 @@ def parse_url_unsafe(
         URLParseError: If URL structure is invalid (format errors only, not security)
 
     Examples:
-        >>> url = parse_url_unsafe("http://localhost:3000/api")
+        >>> url = parse_url_local("http://localhost:3000/api")
         >>> url.port
         3000
 
-        >>> url = parse_url_unsafe("http://192.168.1.100/metrics")
+        >>> url = parse_url_local("http://192.168.1.100/metrics")
         >>> url.host
         '192.168.1.100'
 
@@ -212,9 +210,39 @@ def parse_url_unsafe(
     )
 
 
-#: Alias for :func:`parse_url_unsafe`. Under the ``local`` policy, cloud
-#: metadata endpoints and the link-local range still stay blocked.
-parse_url_local = parse_url_unsafe
+def parse_url_unsafe(
+    url: str,
+    *,
+    allow_custom_scheme: bool = False,
+    debug: bool = False,
+    check_dns: bool = False,
+    dns_rate_limiter: DNSRateLimiter | None = None,
+    policy: PolicyInput = None,
+    correlation_id: str | None = None,
+    audit: AuditConfig | None = None,
+) -> URL:
+    """Deprecated alias for :func:`parse_url_local`.
+
+    .. deprecated::
+        Use :func:`parse_url_local` instead, which says what this actually
+        does. This name will be removed in a future major release.
+    """
+    warnings.warn(
+        "parse_url_unsafe() is deprecated and will be removed in a future "
+        "major release; use parse_url_local() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return parse_url_local(
+        url,
+        allow_custom_scheme=allow_custom_scheme,
+        debug=debug,
+        check_dns=check_dns,
+        dns_rate_limiter=dns_rate_limiter,
+        policy=policy,
+        correlation_id=correlation_id,
+        audit=audit,
+    )
 
 
 def build(
