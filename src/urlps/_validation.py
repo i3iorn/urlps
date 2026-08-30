@@ -38,8 +38,6 @@ from .constants import (
 from .exceptions import InvalidURLError
 
 if TYPE_CHECKING:
-    from types import ModuleType
-
     from ._components import SecurityFinding
     from ._security import SecurityPolicy
     from .url import URL
@@ -47,17 +45,6 @@ if TYPE_CHECKING:
 from ._security._unicode.uts46 import to_ascii
 
 compiled_regex = PATTERNS
-
-_idna_module: ModuleType | None = None
-_HAS_IDNA: bool = False
-
-try:
-    import idna as _idna_import
-
-    _idna_module = _idna_import
-    _HAS_IDNA = True
-except ImportError:
-    _idna_import = None  # type: ignore[assignment]
 
 
 class Validator:
