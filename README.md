@@ -233,6 +233,41 @@ url = parse_url("https://admin:secret123@api.example.com/", policy="balanced")
 print(url.as_string(mask_password=True))  # https://admin:***@api.example.com/
 ```
 
+### Using `check_dns`/`check_phishing` from `asyncio` code
+
+`check_dns=True` and `check_phishing=True` both do **blocking** network I/O
+(DNS resolution plus a verification connect; a synchronous HTTP download,
+respectively). Calling either directly inside an `async def` request handler
+blocks the event loop for the duration of that call -- exactly the kind of
+mistake that's easy to make in a FastAPI/aiohttp/Starlette handler doing
+SSRF-guarded URL validation, which is precisely where this library is most
+useful. Run them in an executor instead:
+
+```python
+import asyncio
+import functools
+
+from urlps import parse_url
+
+
+async def parse_url_async(url, **kwargs):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, functools.partial(parse_url, url, **kwargs))
+
+
+async def main():
+    url = await parse_url_async("https://api.example.com/data", check_dns=True)
+    print(url.host)  # api.example.com
+
+
+asyncio.run(main())
+```
+
+The same pattern applies to `check_phishing=True` and to `build_secure()`.
+There is no bundled async wrapper -- `run_in_executor` (or an equivalent from
+your framework, e.g. `starlette.concurrency.run_in_threadpool`) is sufficient
+and avoids committing this library to a specific async runtime.
+
 ### Audit Logging
 
 Audit callbacks are supplied per call via `AuditConfig`, so different callers
