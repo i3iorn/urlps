@@ -1,5 +1,28 @@
 # Migration Guide
 
+## 1.0.x → 1.1.0
+
+No breaking changes. Two things are worth knowing about before you upgrade.
+
+### You will notice these
+
+| Change | Who it affects | What to do |
+|---|---|---|
+| `build()`/`compose_url()` now raise `HostValidationError` for a host that isn't a syntactically valid hostname or IPv4/IPv6 literal | Anyone building URLs from an unvalidated/untrusted host component | Validate or sanitize the host first, or catch `HostValidationError`. Previously an invalid host silently produced a string that `parse_url()` then failed to re-parse. |
+| `is_ssrf_risk("10.0.0.5.")` (and other trailing-dot numeric hosts) now correctly returns `True` | Anyone calling `is_ssrf_risk()` directly (not through `parse_url()`, which was never affected) | Nothing, unless you were relying on the bypass. |
+| `url == "https://example.com/"` (and `<`, `<=`, `>`, `>=` against a plain string) works again | Anyone comparing a `URL` to a string | Nothing — this restores behavior that briefly regressed in 1.0.1's internal refactor. |
+
+### Renamed and deprecated (now enforced at runtime)
+
+These were already listed as deprecated in the 1.0.0 section below, but
+nothing actually warned until 1.1.0:
+
+| Old | New | Status |
+|---|---|---|
+| `parse_url_unsafe()` | `parse_url_local()` | Now emits `DeprecationWarning`. Still works identically. Removed in 2.0. |
+| `SecurityPolicy(enforce_suspicious_punycode=True)` | `enforce_mixed_scripts` / `enforce_confusable_host` (already on by default) | Passing `True` now emits `DeprecationWarning`. The default (`False`) is silent. Removed in 2.0. |
+| `has_suspicious_punycode()` | `urlps._security.host_analysis.analyze_host()` | Now emits `DeprecationWarning`. Removed in 2.0. |
+
 ## 0.8.x → 1.0.0
 
 1.0 makes the library behave the way its documentation always claimed:
@@ -26,10 +49,10 @@ second only if you touched internals.
 
 | Old | New | Status |
 |---|---|---|
-| `parse_url_unsafe()` | `parse_url_local()` | Alias retained, still works. "Unsafe" was the wrong signal for parsing your own dev URL — and under the `local` policy it is not even unsafe. |
+| `parse_url_unsafe()` | `parse_url_local()` | Alias retained, still works, but now emits `DeprecationWarning` (as of 1.1.0). "Unsafe" was the wrong signal for parsing your own dev URL — and under the `local` policy it is not even unsafe. Removed in 2.0. |
 | `enforce_query_injection` | *(removed)* | Passing it is accepted and ignored; removed in 2.0. |
 | `require_canonical` | *(removed)* | Superseded by normalization. |
-| `enforce_suspicious_punycode` | `enforce_confusable_host` + `enforce_mixed_scripts` | Old flag accepted as a no-op; removed in 2.0. |
+| `enforce_suspicious_punycode` | `enforce_confusable_host` + `enforce_mixed_scripts` | Old flag accepted as a no-op; passing `True` now emits `DeprecationWarning` (as of 1.1.0); removed in 2.0. |
 | `ErrorCode.QUERY_INJECTION`, `.NON_CANONICAL_URL`, `.MIXED_SCRIPTS`, `.SUSPICIOUS_PUNYCODE` | `.MIXED_SCRIPT_LABEL`, `.CONFUSABLE_HOST` | Old members remain importable but are never emitted; removed in 2.0. |
 
 ### Why the query-injection check was removed

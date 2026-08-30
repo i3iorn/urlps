@@ -40,7 +40,9 @@ Main Entry Points:
         names stay blocked.
 
         WARNING: Never use with user input or external data.
-        (parse_url_unsafe is the former name and still works.)
+        (parse_url_unsafe is a deprecated alias for this function; it still
+        works but emits a DeprecationWarning and will be removed in a future
+        major release.)
 
     build(scheme_and_host, **components) -> str
         Construct URLs from components with proper encoding.
@@ -65,7 +67,7 @@ Performance:
 
 from __future__ import annotations
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 
 from ._audit import AuditCallback, AuditConfig, AuditEventCallback, AuditManager
 from ._components import SecurityFinding
