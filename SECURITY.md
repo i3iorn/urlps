@@ -34,7 +34,11 @@ Opt-in via `SecurityPolicy` (off by default — see the README for why):
 
 Optional, always off by default, and both do blocking network I/O:
 `check_dns=True` (DNS rebinding, rate-limited), `check_phishing=True`
-(downloaded domain blocklist).
+(downloaded domain blocklist). `check_phishing=True` trusts a single
+third-party feed (`phish.co.za`) by default, fetched with no integrity
+check beyond a size cap; set `URLPS_PHISHING_DATABASE_URL` (see the
+README's Environment Variables section) to self-host the list or point at
+a feed you trust instead.
 
 Cosmetic differences (host case, trailing dot, default port, `%7E`, dot
 segments) are normalized rather than rejected — see the README's Security

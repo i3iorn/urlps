@@ -315,6 +315,11 @@ Supported variables:
 - `URLPS_MAX_FRAGMENT_LENGTH`
 - `URLPS_MAX_USERINFO_LENGTH`
 - `URLPS_MAX_IPV6_STRING_LENGTH`
+- `URLPS_PHISHING_DATABASE_URL` -- overrides the feed `check_phishing=True`
+  downloads hostnames from (default: a third-party list at `phish.co.za`).
+  Must be an `http://` or `https://` URL; set this to self-host the list or
+  point at a mirror you trust instead. Must be set before `import urlps`,
+  same as the cache-size variables below.
 
 Internal `@lru_cache` sizes are also overridable this way -- see [Cache Sizing](#cache-sizing) below.
 
