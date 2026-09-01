@@ -57,7 +57,7 @@ dev = [
     # in. urlps itself never imports regex at runtime. Pinned exactly (not
     # >=) because newer regex releases ship newer UCD data, which changes the
     # generated table and fails the CI freshness check non-deterministically.
-    "regex==2024.11.6",
+    "regex==2026.7.19",
 ]
 
 [project.urls]
