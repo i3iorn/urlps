@@ -101,6 +101,29 @@ def _get_positive_int_from_env(env_name: str, default: int) -> int:
     return parsed_value
 
 
+def _get_url_from_env(env_name: str, default: str) -> str:
+    """Return an ``http(s)://`` URL from environment or the provided default.
+
+    Invalid values (not a string starting with ``http://``/``https://``) are
+    ignored with a warning and the default is returned, mirroring
+    :func:`_get_positive_int_from_env`'s fail-safe behaviour for the other
+    ``URLPS_*`` environment overrides.
+    """
+    raw_value = os.getenv(env_name)
+    if raw_value is None:
+        return default
+
+    if not raw_value.startswith(("http://", "https://")):
+        warnings.warn(
+            f"Environment variable {env_name} must be an http:// or https:// URL; ignoring value.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return default
+
+    return raw_value
+
+
 # Component length limits for security (tuned for 99.99% of URLs)
 # These are intentionally conservative to reduce attack surface while
 # still accommodating real-world usage (tracking, long query strings, etc.).
@@ -165,7 +188,11 @@ DEFAULT_DNS_TIME_WINDOW_SECONDS: Final[float] = 60.0  # Time window for per-host
 DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS: Final[float] = 300.0  # Cleanup old tracking data
 
 # Phishing Database Configuration
-PHISHING_DATABASE_URL: Final[str] = "https://phish.co.za/latest/ALL-phishing-domains.lst"
+# Overridable via URLPS_PHISHING_DATABASE_URL so callers can self-host or
+# point at a vetted mirror instead of trusting this single third-party feed.
+PHISHING_DATABASE_URL: Final[str] = _get_url_from_env(
+    "URLPS_PHISHING_DATABASE_URL", "https://phish.co.za/latest/ALL-phishing-domains.lst"
+)
 DEFAULT_PHISHING_DATABASE_MAX_BYTES: Final[int] = 25 * 1024 * 1024
 # Minimum time between download retries after a failed refresh, so a check_phishing=True
 # caller doesn't pay a synchronous network round trip on every single parse_url() call

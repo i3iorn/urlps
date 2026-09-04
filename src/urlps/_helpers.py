@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.urlps import InvalidURLError
+from .exceptions import InvalidURLError
 
 
 def _check_type(value: Any, expected: type, name: str) -> None:
@@ -25,4 +25,4 @@ def _normalize_port(value: Any | None) -> int | None:
         raise InvalidURLError("Port must be an integer or numeric string.")
     if not 0 < candidate < 65536:
         raise InvalidURLError("Port must be between 1 and 65535.")
-    return candidate
+    return int(candidate)

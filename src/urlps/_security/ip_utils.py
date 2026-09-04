@@ -306,13 +306,19 @@ def is_ssrf_risk(host: str, *, allow_private: bool = False) -> bool:
         return False
     host_lower = host.lower().rstrip(".")
 
+    # Every IP-literal branch below must see the same trailing-dot-stripped
+    # form as the hostname-blocklist branch. Without this, "10.0.0.5." and
+    # "192.168.1.1." parsed as raw strings instead of host_lower and slipped
+    # past every private-IP check here -- the same class of bypass 1.0.0
+    # fixed for hostname allowlisting (evil.com.), just reintroduced for
+    # numeric-IP forms.
     risky = (
         _is_blocked_hostname(host_lower)
         or _is_ipv4_mapped_ipv6(host_lower)
-        or _is_decimal_ip_private(host)
-        or _is_octal_hex_ip_private(host)
-        or _is_obfuscated_ip_private(host)
-        or is_private_ip(host)
+        or _is_decimal_ip_private(host_lower)
+        or _is_octal_hex_ip_private(host_lower)
+        or _is_obfuscated_ip_private(host_lower)
+        or is_private_ip(host_lower)
     )
 
     if risky and allow_private:
