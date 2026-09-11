@@ -35,24 +35,16 @@ from .constants import (
     MAX_USERINFO_LENGTH,
     STANDARD_PORTS,
 )
+from .exceptions import InvalidURLError
 
 if TYPE_CHECKING:
-    from types import ModuleType
+    from ._components import SecurityFinding
+    from ._security import SecurityPolicy
+    from .url import URL
 
 from ._security._unicode.uts46 import to_ascii
 
 compiled_regex = PATTERNS
-
-_idna_module: ModuleType | None = None
-_HAS_IDNA: bool = False
-
-try:
-    import idna as _idna_import
-
-    _idna_module = _idna_import
-    _HAS_IDNA = True
-except ImportError:
-    _idna_import = None  # type: ignore[assignment]
 
 
 class Validator:
@@ -351,4 +343,100 @@ def is_valid_userinfo(value: str, max_length: int = MAX_USERINFO_LENGTH) -> bool
     return True
 
 
-__all__ = ["Validator", "is_valid_userinfo"]
+class _URLValidation:
+    """URL-level validation: copy overrides and security policies.
+
+    Complements Validator (component-level) with higher-level URL operations
+    validation. Both are in one module since the project is not large enough
+    for separate validation layers.
+    """
+
+    __slots__ = ()
+
+    @staticmethod
+    def validate_copy_overrides(overrides: dict[str, Any]) -> None:
+        """Validate copy() override arguments.
+
+        Overrides are checked against the same component validators the parser
+        uses. Previously this only verified that values were strings, so
+        ``with_host("not a valid host!")`` succeeded and produced a URL object
+        that ``parse_url`` would have rejected -- component validation on the
+        mutation path was strictly weaker than on the parse path.
+        """
+        valid_keys = {"scheme", "host", "port", "path", "query", "fragment", "userinfo", "query_pairs"}
+        invalid_keys = set(overrides.keys()) - valid_keys
+        if invalid_keys:
+            raise InvalidURLError(f"Invalid override(s): {', '.join(sorted(invalid_keys))}")
+
+        for key in ("scheme", "host", "path", "query", "fragment"):
+            if key in overrides and overrides[key] is not None:
+                if not isinstance(overrides[key], str):
+                    raise InvalidURLError(f"{key} must be a string")
+
+        if "userinfo" in overrides and overrides["userinfo"] is not None:
+            if not isinstance(overrides["userinfo"], str):
+                raise InvalidURLError("userinfo must be a string")
+            if not is_valid_userinfo(overrides["userinfo"]):
+                raise InvalidURLError("Invalid userinfo format.")
+
+        scheme = overrides.get("scheme")
+        if scheme is not None and not Validator.is_valid_scheme(scheme.lower()):
+            raise InvalidURLError(f"Invalid scheme: {scheme!r}", value=scheme, component="scheme")
+
+        host = overrides.get("host")
+        if host is not None and not _URLValidation._is_valid_host_override(host):
+            raise InvalidURLError(f"Invalid host: {host!r}", value=host, component="host")
+
+        fragment = overrides.get("fragment")
+        if fragment is not None and not Validator.is_valid_fragment(fragment):
+            raise InvalidURLError(f"Invalid fragment: {fragment!r}", value=fragment, component="fragment")
+
+        for key in ("path", "query"):
+            value = overrides.get(key)
+            if value is not None and not Validator.is_url_safe_string(value):
+                raise InvalidURLError(f"{key} contains invalid control characters.", value=value, component=key)
+
+    @staticmethod
+    def _is_valid_host_override(host: str) -> bool:
+        """Return True if host is a valid hostname, IPv4 literal, or IPv6 literal."""
+        if host == "":
+            return True  # Clearing the host is allowed; compose() enforces the rest.
+        if host.startswith("["):
+            return Validator.is_valid_ipv6(host)
+        if Validator.is_valid_ipv4(host):
+            return True
+        return Validator.is_valid_host(host)
+
+    @staticmethod
+    def validate_security(
+        url: URL,
+        *,
+        policy: SecurityPolicy | None = None,
+        raise_on_error: bool = False,
+        raw_url: str | None = None,
+    ) -> list[SecurityFinding]:
+        """Validate this URL against a security policy and return findings.
+
+        Pure: the returned findings are *not* stored on the instance.
+        ``security_findings`` reports what was found at construction, so
+        ``validate(policy=stricter)`` can be used to ask a hypothetical
+        question without rewriting the URL's own recorded verdict.
+        """
+        from ._security import validate_url_security
+        from ._serialization import _URLSerialization
+
+        effective_policy = policy if policy is not None else url._security_policy
+        candidate_url = raw_url if raw_url is not None else _URLSerialization.as_string(url)
+        check_dns = None if policy is not None else url._check_dns
+        check_phishing = None if policy is not None else url._check_phishing
+        findings = validate_url_security(
+            candidate_url,
+            policy=effective_policy,
+            check_dns=check_dns,
+            check_phishing=check_phishing,
+            raise_on_error=raise_on_error,
+        )
+        return list(findings)
+
+
+__all__ = ["Validator", "_URLValidation", "is_valid_userinfo"]

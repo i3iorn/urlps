@@ -2,6 +2,89 @@
 
 All notable changes to `urlps` are documented here.
 
+## 1.1.0 - 2026-08-30
+
+**Fixed**
+
+- SSRF bypass: `is_ssrf_risk()` normalized the host for its hostname-blocklist
+  check but not for any of its IP-literal checks, so a trailing dot on a
+  numeric host (`10.0.0.5.`, `192.168.1.1.`) slipped past private-IP
+  detection — the same class of bypass 1.0.0 fixed for hostnames,
+  reintroduced for numeric IP forms. Not reachable through `parse_url()`
+  itself (the parser already rejects a trailing dot on an IP literal as
+  malformed), but reachable by anything calling `is_ssrf_risk()` directly.
+- `build()`/`compose_url()` never validated the `host` component, only
+  normalized it, so a malformed host could produce a string that
+  `parse_url()` then refused to parse on round-trip. Host format is now
+  validated the same way the parser validates it (hostname grammar, or
+  IPv4/IPv6 literal), raising `HostValidationError` for a malformed host.
+  Purely structural — `build_secure()` remains the way to validate an
+  untrusted host.
+- Regression: `URL` objects stopped comparing equal (or orderable) against
+  plain strings. This worked once, then was silently dropped when
+  `__eq__`/`__lt__`/`__le__`/`__gt__`/`__ge__` moved into `_comparison.py`
+  during the module decomposition — every comparison there checked only
+  `isinstance(other, URL)`, so `url == "https://example.com/"` returned
+  `False` instead of comparing string content. Restored; comparisons
+  against a string now use `as_string()` directly (no canonicalization).
+- A test asserting `get_canonical_url("http://[::1]extra/path")` returns a
+  non-`None` result was wrong: stdlib's `urlparse()` raises
+  `ValueError: Invalid IPv6 URL` for that input before reaching the code
+  path the test meant to exercise, so `get_canonical_url` correctly failed
+  closed and returned `None` already. The test's premise didn't hold under
+  this Python version's `urlparse()`; corrected the assertion.
+
+**Added**
+
+- `URLPS_PHISHING_DATABASE_URL` environment variable overrides the feed
+  `check_phishing=True` downloads hostnames from (previously a single
+  hardcoded third-party URL with no override), so callers can self-host the
+  list or point at a mirror they trust. Read once at import time, like the
+  existing cache-size/length-limit environment variables.
+- CI now installs the package without the `idna` extra and runs a dedicated
+  suite against the stdlib-only IDNA 2003 fallback in
+  `_security/_unicode/uts46.py`, which previously had zero test coverage
+  despite being a security-relevant differential (the same class of bug
+  fixed in 1.0.0: `straße.de` resolves differently under IDNA 2003 vs.
+  UTS-46).
+- README section on using `check_dns=True`/`check_phishing=True` (both
+  blocking network I/O) from `asyncio` code without stalling the event loop.
+- CI now also runs on pushes and pull requests targeting `dev`, not just
+  `master` — previously every feature-branch PR into `dev` got no CI signal
+  at all.
+
+**Deprecated**
+
+- `parse_url_unsafe()` now emits `DeprecationWarning`; use `parse_url_local()`
+  instead. It has been documented as the preferred name since 1.0.0's
+  `parse_url_unsafe()` → `parse_url_local()` rename, but nothing actually
+  warned until now. Removal planned for 2.0.
+- `SecurityPolicy(enforce_suspicious_punycode=True)` now emits
+  `DeprecationWarning`. The field has gated nothing since 1.0.0 (superseded
+  by `enforce_mixed_scripts`/`enforce_confusable_host`'s real UTS-39
+  analysis); passing `True` now says so instead of silently no-opping.
+  Removal planned for 2.0.
+- `has_suspicious_punycode()` now emits `DeprecationWarning`. Its heuristics
+  (hardcoded suspicious-TLD/brand-name lists, ad hoc substring checks)
+  predate and are weaker than the real homograph detection `parse_url()`
+  actually enforces; use `urlps._security.host_analysis.analyze_host()`
+  instead. Removal planned for 2.0.
+
+See [changelogs/1.1.0.md](changelogs/1.1.0.md) for the full account.
+
+## 1.0.1 - 2026-08-20
+
+Internal cleanup. No public API or behavior changes.
+
+- Decomposed `url.py` and `__init__.py` into focused private modules
+  (`_comparison.py`, `_serialization.py`, `_entrypoints.py`, and others) —
+  same public surface, smaller and more navigable files.
+- Raised test coverage to 96%+ with targeted edge-case and hot-path tests,
+  and removed a small amount of dead code (duplicate `idna`-detection
+  variables in `_validation.py` that were never read).
+
+See [changelogs/1.0.1.md](changelogs/1.0.1.md) for the full account.
+
 ## 1.0.0 - 2026-08-19
 
 The theme is one correction: **urlps was rejecting where it should have been
@@ -181,4 +264,3 @@ detail and [MIGRATION.md](MIGRATION.md) for upgrade steps.
 
 - Initial public releases of URL parsing/building APIs.
 - Core immutable URL representation and component helpers.
-

@@ -98,7 +98,9 @@ trusted_policy = SecurityPolicy.local(check_dns=True)
 internal_checked = parse_url_local("http://intranet.local/service", policy=trusted_policy)
 ```
 
-`parse_url_unsafe()` is the former name for the same function and still works.
+`parse_url_unsafe()` is the former name for the same function. It still
+works but is deprecated -- it emits a `DeprecationWarning` and will be
+removed in a future major release; use `parse_url_local()` instead.
 
 Need to adjust the tradeoff? Use policy presets:
 - `policy="strict"` (default): maximum protections, DNS connect checks fail-closed by default
@@ -233,6 +235,41 @@ url = parse_url("https://admin:secret123@api.example.com/", policy="balanced")
 print(url.as_string(mask_password=True))  # https://admin:***@api.example.com/
 ```
 
+### Using `check_dns`/`check_phishing` from `asyncio` code
+
+`check_dns=True` and `check_phishing=True` both do **blocking** network I/O
+(DNS resolution plus a verification connect; a synchronous HTTP download,
+respectively). Calling either directly inside an `async def` request handler
+blocks the event loop for the duration of that call -- exactly the kind of
+mistake that's easy to make in a FastAPI/aiohttp/Starlette handler doing
+SSRF-guarded URL validation, which is precisely where this library is most
+useful. Run them in an executor instead:
+
+```python
+import asyncio
+import functools
+
+from urlps import parse_url
+
+
+async def parse_url_async(url, **kwargs):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, functools.partial(parse_url, url, **kwargs))
+
+
+async def main():
+    url = await parse_url_async("https://api.example.com/data", check_dns=True)
+    print(url.host)  # api.example.com
+
+
+asyncio.run(main())
+```
+
+The same pattern applies to `check_phishing=True` and to `build_secure()`.
+There is no bundled async wrapper -- `run_in_executor` (or an equivalent from
+your framework, e.g. `starlette.concurrency.run_in_threadpool`) is sufficient
+and avoids committing this library to a specific async runtime.
+
 ### Audit Logging
 
 Audit callbacks are supplied per call via `AuditConfig`, so different callers
@@ -275,7 +312,7 @@ URLs are redacted before being passed to callbacks (credentials and sensitive
 query values are masked). Pass `AuditConfig(..., redact_urls=False)` to opt out.
 A callback that raises is recorded as a failure and never breaks the parse.
 
-The same `audit=` parameter is accepted by `parse_url_unsafe()`, `join()` and
+The same `audit=` parameter is accepted by `parse_url_local()`, `join()` and
 `build_secure()`.
 
 ### Component Length Limits
@@ -315,6 +352,11 @@ Supported variables:
 - `URLPS_MAX_FRAGMENT_LENGTH`
 - `URLPS_MAX_USERINFO_LENGTH`
 - `URLPS_MAX_IPV6_STRING_LENGTH`
+- `URLPS_PHISHING_DATABASE_URL` -- overrides the feed `check_phishing=True`
+  downloads hostnames from (default: a third-party list at `phish.co.za`).
+  Must be an `http://` or `https://` URL; set this to self-host the list or
+  point at a mirror you trust instead. Must be set before `import urlps`,
+  same as the cache-size variables below.
 
 Internal `@lru_cache` sizes are also overridable this way -- see [Cache Sizing](#cache-sizing) below.
 
@@ -325,11 +367,18 @@ Internal `@lru_cache` sizes are also overridable this way -- see [Cache Sizing](
 | Function | Description |
 | --- | --- |
 | `parse_url(url, *, allow_custom_scheme=False, check_dns=False, check_phishing=False, dns_rate_limiter=None, policy=None, correlation_id=None, audit=None)` | Parse URL with policy-aware security checks (recommended) |
-| `parse_url_unsafe(url, *, allow_custom_scheme=False, debug=False, check_dns=False, dns_rate_limiter=None, policy=None, correlation_id=None, audit=None)` | Parse URL for trusted/internal input with optional policy overrides |
+| `parse_url_local(url, *, allow_custom_scheme=False, debug=False, check_dns=False, dns_rate_limiter=None, policy=None, correlation_id=None, audit=None)` | Parse URL for trusted/internal input with optional policy overrides |
+| `parse_url_unsafe(...)` | **Deprecated** alias for `parse_url_local()`; emits `DeprecationWarning` |
 | `join(base, reference, *, policy=None, strict_resolution=True, ...)` | Resolve a reference against a base URI (RFC 3986 §5), then validate |
 | `build(*scheme_and_host, port=None, path="/", query=None, fragment=None, userinfo=None)` | Build URL string from components |
 | `build_secure(*scheme_and_host, policy=None, check_dns=False, check_phishing=False, dns_rate_limiter=None, correlation_id=None, audit=None, ...)` | Build and then validate a URL under a selected security policy |
 | `compose_url(components)` | Build URL from components dict |
+
+`build()`/`compose_url()` validate that `host` is a syntactically valid
+hostname, IPv4 literal, or bracketed IPv6 literal (raising
+`HostValidationError` otherwise), so their output always round-trips through
+`parse_url()`. This is structural validation only, not security policy --
+use `build_secure()` when the host isn't already trusted.
 
 Note: `get_dns_rate_limiter()` and `reset_dns_rate_limiter()` remain available for compatibility, but explicit `dns_rate_limiter=` injection is preferred.
 
@@ -341,6 +390,7 @@ Note: `get_dns_rate_limiter()` and `reset_dns_rate_limiter()` remain available f
 | `url.canonicalize()` | Return canonicalized copy |
 | `url.is_semantically_equal(other)` | Compare URLs by meaning after canonicalization |
 | `url.same_origin(other)` | Check if URLs have same origin |
+| `url == "https://..."`, `<`, `<=`, `>`, `>=` | Compare a `URL` directly against another `URL` or a plain string, against `as_string()` (no canonicalization) |
 | `url.origin` | Return origin string (e.g., `https://example.com`) |
 | `url.copy(**overrides)` | Create copy with optional component overrides |
 | `url.with_*()` | Functional updates: `with_scheme`, `with_host`, `with_port`, `with_path`, `with_fragment`, `with_userinfo`, `with_netloc`, `with_query_param`, `without_query_param` |

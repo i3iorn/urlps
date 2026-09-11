@@ -51,3 +51,32 @@ def test_multiple_overrides(monkeypatch):
     const = _import_constants_fresh()
     assert const.MAX_PATH_LENGTH == 9999
     assert const.MAX_QUERY_LENGTH == 8888
+
+
+DEFAULT_PHISHING_DATABASE_URL = "https://phish.co.za/latest/ALL-phishing-domains.lst"
+
+
+def test_phishing_database_url_valid_override(monkeypatch):
+    monkeypatch.setenv("URLPS_PHISHING_DATABASE_URL", "https://mirror.internal/phish.lst")
+    const = _import_constants_fresh()
+    assert const.PHISHING_DATABASE_URL == "https://mirror.internal/phish.lst"
+
+
+def test_phishing_database_url_allows_plain_http(monkeypatch):
+    monkeypatch.setenv("URLPS_PHISHING_DATABASE_URL", "http://mirror.internal/phish.lst")
+    const = _import_constants_fresh()
+    assert const.PHISHING_DATABASE_URL == "http://mirror.internal/phish.lst"
+
+
+def test_phishing_database_url_invalid_warns_and_ignores(monkeypatch):
+    monkeypatch.setenv("URLPS_PHISHING_DATABASE_URL", "not-a-url")
+    sys.modules.pop("urlps.constants", None)
+    with pytest.warns(RuntimeWarning, match="http:// or https://"):
+        const = importlib.import_module("urlps.constants")
+    assert const.PHISHING_DATABASE_URL == DEFAULT_PHISHING_DATABASE_URL
+
+
+def test_phishing_database_url_defaults_when_unset(monkeypatch):
+    monkeypatch.delenv("URLPS_PHISHING_DATABASE_URL", raising=False)
+    const = _import_constants_fresh()
+    assert const.PHISHING_DATABASE_URL == DEFAULT_PHISHING_DATABASE_URL

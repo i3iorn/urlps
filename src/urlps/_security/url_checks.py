@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import unicodedata
+import warnings
 from functools import lru_cache
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlsplit, urlunparse, urlunsplit
 
@@ -328,7 +329,24 @@ def redact_url_for_logs(url: str) -> str:
 
 
 def has_suspicious_punycode(host: str) -> bool:
-    """Detect suspicious Punycode/IDN domains with confusable characters."""
+    """Detect suspicious Punycode/IDN domains with confusable characters.
+
+    .. deprecated::
+        This predates and is superseded by the real UTS-39 script/confusable
+        analysis in ``host_analysis.analyze_host`` (what ``parse_url()``
+        actually enforces via ``enforce_mixed_scripts``/
+        ``enforce_confusable_host``). Its own heuristics here (hardcoded
+        suspicious-TLD and brand-name lists, ad hoc substring checks) are
+        weaker and unmaintained. Will be removed in a future major release.
+    """
+    warnings.warn(
+        "has_suspicious_punycode() is deprecated and uses weaker, unmaintained "
+        "heuristics than parse_url()'s actual homograph detection; use "
+        "urlps._security.host_analysis.analyze_host() instead. This function "
+        "will be removed in a future major release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if not isinstance(host, str) or not host:
         return False
 

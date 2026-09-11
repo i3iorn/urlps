@@ -34,3 +34,11 @@ class TestSecurityPunycode:
         # Unicode that contains 'paypal' brand in decoded form
         result = has_suspicious_punycode("рауpal.com")  # Cyrillic р + aypal
         assert isinstance(result, bool)
+
+    def test_has_suspicious_punycode_warns_deprecated(self):
+        import pytest
+
+        from urlps._security import has_suspicious_punycode
+
+        with pytest.warns(DeprecationWarning, match="has_suspicious_punycode"):
+            has_suspicious_punycode("example.com")

@@ -143,8 +143,23 @@ def test_parse_url_local_still_blocks_metadata_and_link_local(url: str) -> None:
     assert _raises(lambda: urlps.parse_url_local(url))
 
 
-def test_parse_url_unsafe_is_an_alias_for_parse_url_local() -> None:
-    assert urlps.parse_url_unsafe is urlps.parse_url_local
+def test_parse_url_unsafe_is_a_deprecated_alias_for_parse_url_local() -> None:
+    """parse_url_unsafe() delegates to parse_url_local() and warns.
+
+    They're no longer the same function object (that's what lets the
+    deprecation warning attach only to the old name), but behavior for
+    identical arguments must still match exactly.
+    """
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        unsafe_result = urlps.parse_url_unsafe("http://localhost:3000/api")
+
+    assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+    local_result = urlps.parse_url_local("http://localhost:3000/api")
+    assert unsafe_result.as_string() == local_result.as_string()
 
 
 def test_disabling_ssrf_requires_saying_so() -> None:

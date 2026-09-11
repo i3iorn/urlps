@@ -8,8 +8,10 @@ from urllib.parse import quote, quote_plus, unquote_plus
 from ._cache_config import BUILDER_PATH_ENCODE_CACHE_SIZE, BUILDER_QUERY_ENCODE_CACHE_SIZE
 from ._normalize import normalize_host
 from ._patterns import PATTERNS
+from ._validation import Validator
 from .constants import DEFAULT_PORTS, OfficialSchemes
 from .exceptions import (
+    HostValidationError,
     PortValidationError,
     URLBuildError,
 )
@@ -81,6 +83,8 @@ class Builder:
         Raises:
             URLBuildError: If host is required but not provided.
             PortValidationError: If port is set without a host.
+            HostValidationError: If host is not a syntactically valid
+                hostname, IPv4 literal, or bracketed IPv6 literal.
 
         Note:
             - If both `query` and `query_pairs` are provided, `query_pairs` takes precedence.
@@ -164,6 +168,8 @@ class Builder:
 
         Raises:
             PortValidationError: If port is provided without a host.
+            HostValidationError: If host is not a syntactically valid
+                hostname, IPv4 literal, or bracketed IPv6 literal.
 
         Example:
             >>> builder = Builder()
@@ -183,13 +189,37 @@ class Builder:
         # §6.2.2 host normalization has to be applied here too -- otherwise
         # the same host would canonicalize differently depending on whether
         # the caller parsed a string or assembled one from components.
-        parts.append(normalize_host(host))
+        normalized_host = normalize_host(host)
+        self._validate_host_format(normalized_host, original=host)
+        parts.append(normalized_host)
         display_port = port
         if scheme and display_port is not None and DEFAULT_PORTS.get(scheme.lower()) == display_port:
             display_port = None
         if display_port is not None:
             parts.append(f":{display_port}")
         return "".join(parts)
+
+    @staticmethod
+    def _validate_host_format(normalized_host: str, *, original: str) -> None:
+        """Reject a host that ``parse_url()`` would reject as malformed.
+
+        ``build()``/``compose_url()`` never go through the parser, so without
+        this a caller could get back a string from ``build()`` that its own
+        ``parse_url()`` then refuses to parse. This mirrors the format checks
+        ``_parser.parse_regular_host``/``parse_ipv6_host`` apply -- syntactic
+        validity only, not security policy (that stays ``build_secure()``'s
+        job).
+        """
+        if normalized_host.startswith("["):
+            if not Validator.is_valid_ipv6(normalized_host):
+                raise HostValidationError("Invalid IPv6 address format.", value=original, component="host")
+            return
+        if "." in normalized_host and normalized_host.replace(".", "").replace("-", "").isdigit():
+            if not Validator.is_valid_ipv4(normalized_host):
+                raise HostValidationError("Invalid IPv4 address format.", value=original, component="host")
+            return
+        if not Validator.is_valid_host(normalized_host):
+            raise HostValidationError("Host contains invalid characters.", value=original, component="host")
 
     def normalize_path(self, path: str | None) -> str:
         """Normalize a URL path according to RFC 3986.

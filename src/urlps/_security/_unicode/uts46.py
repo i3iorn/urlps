@@ -34,7 +34,7 @@ try:
     import idna as _idna
 
     UTS46_AVAILABLE = True
-except ImportError:  # pragma: no cover - depends on the install
+except ImportError:
     _idna = None  # type: ignore[assignment]
     UTS46_AVAILABLE = False
 
@@ -54,7 +54,7 @@ _FALLBACK_WARNING = (
     "is unavailable. Install urlps[idna] for spec-conformant behaviour."
 )
 
-if not UTS46_AVAILABLE:  # pragma: no cover - depends on the install
+if not UTS46_AVAILABLE:
     warnings.warn(_FALLBACK_WARNING, RuntimeWarning, stacklevel=2)
 
 
@@ -83,7 +83,7 @@ def to_ascii(host: str) -> str:
 
     try:
         return host.encode("idna").decode("ascii")
-    except (UnicodeError, ValueError) as exc:  # pragma: no cover - fallback path
+    except (UnicodeError, ValueError) as exc:
         raise IdnaError(str(exc)) from exc
 
 
@@ -108,7 +108,7 @@ def to_unicode(host: str) -> str:
         except _idna.IDNAError:
             return host
 
-    try:  # pragma: no cover - fallback path
+    try:
         return host.encode("ascii").decode("idna")
     except (UnicodeError, ValueError):
         return host
