@@ -394,6 +394,8 @@ Note: `get_dns_rate_limiter()` and `reset_dns_rate_limiter()` remain available f
 | `url.origin` | Return origin string (e.g., `https://example.com`) |
 | `url.copy(**overrides)` | Create copy with optional component overrides |
 | `url.with_*()` | Functional updates: `with_scheme`, `with_host`, `with_port`, `with_path`, `with_fragment`, `with_userinfo`, `with_netloc`, `with_query_param`, `without_query_param` |
+| `url.get_query_param(key, default=None)` | First value for `key`, or `default` if absent (`None` for a present, value-less key like `?flag`) |
+| `url.get_query_param_all(key)` | All values for `key`, in order; `[]` if absent |
 
 ### Cache Management
 
