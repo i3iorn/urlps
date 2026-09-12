@@ -248,6 +248,39 @@ class URL:
         """Alias for query_params."""
         return self.query_params
 
+    def get_query_param(self, key: str, default: str | None = None) -> str | None:
+        """Return the first value for ``key``, or ``default`` if absent.
+
+        A key present with no ``=value`` (``?flag&x=1``) has a value of
+        ``None`` in ``query_params``, which is returned as-is -- it is
+        distinct from the key being absent entirely, which returns
+        ``default``.
+
+        Example:
+            >>> url = parse_url("https://example.com/?id=1&id=2&flag")
+            >>> url.get_query_param("id")
+            '1'
+            >>> url.get_query_param("flag")
+            >>> url.get_query_param("missing", default="none")
+            'none'
+        """
+        for k, v in self._query_pairs:
+            if k == key:
+                return v
+        return default
+
+    def get_query_param_all(self, key: str) -> list[str | None]:
+        """Return every value for ``key``, in order; ``[]`` if absent.
+
+        Example:
+            >>> url = parse_url("https://example.com/?id=1&id=2")
+            >>> url.get_query_param_all("id")
+            ['1', '2']
+            >>> url.get_query_param_all("missing")
+            []
+        """
+        return [v for k, v in self._query_pairs if k == key]
+
     @property
     def netloc(self) -> str:
         """Return the network location (userinfo@host:port)."""
