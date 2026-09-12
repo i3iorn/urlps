@@ -78,6 +78,8 @@ dev_url = parse_url_local("http://localhost:3000/api")
   or `URL.redacted()` for logging.
 - **Length limits** are overridable via `URLPS_MAX_*` environment variables.
   Raising them expands attack surface — only do so with a reason.
+- **Supply chain.** CI generates a CycloneDX SBOM (`urlps-sbom.json`) for
+  every build, uploaded as a build artifact alongside the sdist/wheel.
 
 ## Best practices
 

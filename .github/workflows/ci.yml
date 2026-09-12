@@ -155,7 +155,7 @@ jobs:
       - name: Install build tooling
         run: |
           python -m pip install --upgrade pip
-          pip install build twine
+          pip install build twine cyclonedx-bom
 
       - name: Build sdist and wheel
         run: python -m build
@@ -170,9 +170,29 @@ jobs:
           python -m zipfile -l dist/*.whl | grep -q "urlps/py.typed" \
             || { echo "::error::py.typed missing from wheel"; exit 1; }
 
+      # Generated from a clean venv with only the built wheel installed
+      # (rather than this job's own environment, which also carries build/
+      # twine/etc.) so the SBOM describes what a real install actually pulls
+      # in, not this job's tooling. `dependencies = []` at runtime keeps this
+      # small today, but it's the artifact that stops being trivial the
+      # moment a runtime dependency is ever added.
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          python -m venv /tmp/sbom-venv
+          /tmp/sbom-venv/bin/pip install --quiet dist/*.whl
+          cyclonedx-py environment --mc-type library --pyproject pyproject.toml \
+            --of JSON -o urlps-sbom.json /tmp/sbom-venv/bin/python
+
       - name: Upload distributions
         uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
+          retention-days: 14
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: urlps-sbom.json
           retention-days: 14
