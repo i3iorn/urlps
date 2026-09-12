@@ -83,3 +83,33 @@ def test_only_local_widens_to_private_hosts() -> None:
     for name in POLICY_NAMES:
         expected = name == "local"
         assert resolve_security_policy(name).allow_private_hosts is expected, name
+
+
+@pytest.mark.parametrize("name", POLICY_NAMES)
+def test_distinct_dns_rate_limiters_are_not_conflated_across_cached_base_policies(name: str) -> None:
+    """Pin the interaction between ``_resolve_named_policy``'s ``lru_cache`` and
+
+    ``_apply_overrides``'s identity check on ``dns_rate_limiter``.
+
+    ``_resolve_named_policy`` is cached only on ``(policy_name, check_dns,
+    check_phishing)`` -- not on ``dns_rate_limiter`` -- so two calls to
+    ``resolve_security_policy(name, check_dns=True, dns_rate_limiter=...)``
+    with different limiter instances resolve through the *same* cached base
+    policy object before ``_apply_overrides`` substitutes each limiter back
+    in via its ``is base.dns_rate_limiter`` check. This is correct today
+    (each call still gets its own limiter back), but the correctness depends
+    on that identity-comparison substitution happening *after* the cache
+    lookup rather than on the cache key itself -- a fragile enough
+    interaction that a future field added to ``SecurityPolicy`` could
+    reintroduce the class of bug ``dataclasses.replace()`` was specifically
+    adopted elsewhere in this module to prevent, without this test failing.
+    """
+    limiter_a = object()
+    limiter_b = object()
+
+    resolved_a = resolve_security_policy(name, check_dns=True, dns_rate_limiter=limiter_a)
+    resolved_b = resolve_security_policy(name, check_dns=True, dns_rate_limiter=limiter_b)
+
+    assert resolved_a.dns_rate_limiter is limiter_a
+    assert resolved_b.dns_rate_limiter is limiter_b
+    assert resolved_a.dns_rate_limiter is not resolved_b.dns_rate_limiter
