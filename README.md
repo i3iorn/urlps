@@ -461,6 +461,35 @@ to check hit rates before guessing:
   string, and eviction under memory pressure is not automatic the way it
   is for cache-key diversity.
 
+## Command Line
+
+`pip install urlps` also installs a `urlps` script for validating URLs from
+shell scripts, CI pipelines, or pre-commit hooks, without writing a
+throwaway Python file:
+
+```bash
+urlps check https://example.com/path 'HTTP://EXAMPLE.COM:80/'
+# https://example.com/path
+# http://example.com/
+
+urlps check http://localhost/admin
+# http://localhost/admin: Host poses SSRF risk and is disallowed. ...  (to stderr)
+# exit code 1
+
+urlps check --policy local http://localhost:3000/api   # like parse_url_local()
+urlps check --check-dns https://api.example.com/        # also verify DNS resolution
+
+# One URL per line on stdin when no URL arguments are given
+# ('#'-prefixed and blank lines are skipped):
+cat urls.txt | urlps check
+```
+
+Exits `0` and prints the canonical form of every URL if all pass; exits `1`
+and prints the rejection reason (to stderr) for each URL that fails,
+alongside the canonical form of the ones that passed. `--quiet` suppresses
+success output so only failures are printed. `--policy`, `--check-dns` and
+`--check-phishing` mirror `parse_url()`'s own options.
+
 ## Comparison with urllib.parse
 
 | Feature | urllib.parse | urlps |
