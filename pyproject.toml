@@ -39,6 +39,9 @@ classifiers = [
 dependencies = []
 dynamic = ["version"]
 
+[project.scripts]
+urlps = "urlps._cli:main"
+
 [project.optional-dependencies]
 idna = ["idna>=3.11"]
 dev = [
