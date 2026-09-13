@@ -7,14 +7,14 @@ Stored as three parallel arrays of range starts, inclusive ends and script
 indices, resolved by :func:`bisect.bisect_right`. That keeps the lookup at
 O(log n) with no per-character dict of 290k entries to build at import.
 
-Unicode version: 14.0.0
+Unicode version: 15.0.0
 Ranges: 955
 Scripts: 163
 """
 
 from __future__ import annotations
 
-UCD_VERSION = "14.0.0"
+UCD_VERSION = "15.0.0"
 
 #: Scripts with no identity of their own for UTS-39: they legitimately co-occur
 #: with any script, so they never make a label "mixed".
