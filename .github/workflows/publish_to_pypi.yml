@@ -1,9 +1,8 @@
 name: Publish to PyPI
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -24,23 +23,6 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-
-      - name: Verify tag is on master
-        shell: bash
-        run: |
-          git fetch origin master --tags
-
-          tag_commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
-          master_commit="$(git rev-parse origin/master)"
-
-          echo "tag=${GITHUB_REF_NAME}"
-          echo "tag_commit=$tag_commit"
-          echo "master_commit=$master_commit"
-
-          if [ "$tag_commit" != "$master_commit" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} must point to the current HEAD of master"
-            exit 1
-          fi
 
       - name: Install package and dev dependencies
         run: |
