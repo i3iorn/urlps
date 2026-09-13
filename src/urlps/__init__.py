@@ -67,7 +67,7 @@ Performance:
 
 from __future__ import annotations
 
-__version__ = "1.1.0"
+__version__ = "1.1.3"
 
 from ._audit import AuditCallback, AuditConfig, AuditEventCallback, AuditManager
 from ._components import SecurityFinding

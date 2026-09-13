@@ -2,6 +2,35 @@
 
 All notable changes to `urlps` are documented here.
 
+## 1.1.3 - 2026-09-13
+
+**Added**
+
+- `URL.get_query_param()`/`get_query_param_all()` accessors for reading a
+  single query parameter's first value or all its values, without having
+  to unpack `query_params()` for the common case.
+- `urlps` CLI entry point for checking a URL's parse/validation result from
+  the shell.
+- Python 3.14 added to the supported/tested version matrix.
+- CI now generates a CycloneDX SBOM (`urlps-sbom.json`) for every build,
+  uploaded as a build artifact alongside the sdist/wheel.
+
+**Fixed**
+
+- Pinned `dns_rate_limiter` identity test to guard the interaction between
+  `_resolve_named_policy`'s cache and `_apply_overrides`'s identity check,
+  preventing a future policy field from silently reintroducing limiter
+  cross-contamination between differently-configured callers.
+
+**Changed**
+
+- Bumped the pinned `regex` dev dependency (used only to generate the
+  Unicode Script tables checked into the package; not a runtime
+  dependency) to 2026.7.19.
+- Removed the `only-dev-to-main.yml` workflow enforcing "only `dev` can
+  merge to `master`" — that branch protection rule has been dropped in
+  favor of GitHub's own branch protection settings.
+
 ## 1.1.0 - 2026-08-30
 
 **Fixed**
