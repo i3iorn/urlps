@@ -15,4 +15,10 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # A release created with the default GITHUB_TOKEN does not fire
+          # other workflows' `release:` triggers (GitHub suppresses
+          # cascading runs from the built-in token) -- publish_to_pypi.yml's
+          # `on: release: published` would otherwise never fire. Needs a
+          # PAT (repo scope: contents + pull-requests write) stored as the
+          # RELEASE_PLEASE_TOKEN repo secret.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
