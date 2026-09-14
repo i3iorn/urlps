@@ -2,6 +2,14 @@
 
 All notable changes to `urlps` are documented here.
 
+## [1.1.4](https://github.com/i3iorn/urlps/compare/v1.1.3...v1.1.4) (2026-09-14)
+
+
+### Fixed
+
+* correct release-please tag format, revert spurious 2.0.0 ([75ccc98](https://github.com/i3iorn/urlps/commit/75ccc9876ec05132d5d58ac5f8cad15cb12bb287))
+* correct release-please tag format, revert spurious 2.0.0 ([884b386](https://github.com/i3iorn/urlps/commit/884b38690b07f75d0e10df58b2a634701841b942))
+
 ## 1.1.3 - 2026-09-13
 
 **Added**
