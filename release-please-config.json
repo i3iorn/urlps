@@ -5,6 +5,8 @@
     ".": {
       "release-type": "simple",
       "package-name": "urlps",
+      "include-component-in-tag": false,
+      "bootstrap-sha": "bf29074bb21461aaff35ce8bae5854378801a1e6",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
         {
