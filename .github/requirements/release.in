@@ -1,0 +1,9 @@
+# Build and upload tooling for the release workflows, installed with
+# --require-hashes. `python -m build --no-isolation` uses the setuptools and
+# wheel pinned here instead of fetching unpinned ones into an isolated env.
+# Regenerate: uv pip compile --generate-hashes --python-version 3.12 \
+#   --universal .github/requirements/release.in -o .github/requirements/release.txt
+build
+twine
+setuptools>=77.0
+wheel

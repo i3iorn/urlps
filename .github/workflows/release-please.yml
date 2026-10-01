@@ -13,12 +13,14 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
         with:
           # A release created with the default GITHUB_TOKEN does not fire
           # other workflows' `release:` triggers (GitHub suppresses
           # cascading runs from the built-in token) -- publish_to_pypi.yml's
-          # `on: release: published` would otherwise never fire. Needs a
-          # PAT (repo scope: contents + pull-requests write) stored as the
-          # RELEASE_PLEASE_TOKEN repo secret.
+          # `on: release: published` would otherwise never fire. Use a
+          # *fine-grained* PAT (or a GitHub App token) restricted to this one
+          # repository with only Contents: read/write and Pull requests:
+          # read/write, stored as the RELEASE_PLEASE_TOKEN repo secret -- not a
+          # classic PAT, whose `repo` scope covers every repository you own.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
