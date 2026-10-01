@@ -65,6 +65,25 @@ succeeds.** `URL.__init__` calls `self._parser.parse(url)` first, then
 A syntactically valid URL can still be rejected at that second step (e.g.
 `http://127.0.0.1/` parses fine and is rejected only by the SSRF check).
 
+**The second pass validates the parser's output, not a re-parse of the
+input.** `validate()` hands `_security` the host, port and userinfo the
+parser produced (`ParsedAuthority`), and every host/port-based check — SSRF,
+IPv6 zone ID, Unicode host analysis, dangerous ports, DNS, phishing — runs on
+those. Only the heuristics that look for things the parser normalizes away
+(path traversal, open redirect, double encoding, parser confusion) read the
+raw string. The identity checks *also* run on the host as spelled in the raw
+string, but only ever to add findings: some signals (a zero-width space) exist
+only in the text a user sees, because IDNA maps them to nothing.
+
+This was learned the hard way. `_security` used to extract the host from the
+raw string with its own splitter, and wherever that splitter and the parser
+disagreed, the checks approved one host while `URL.host` was another:
+`http://169.254.169.254?` (the splitter ended the authority only at `/`) and
+`127.0.0.1` written with ideographic full stops (the parser applies UTS-46
+mapping, the splitter did not) both reached loopback/metadata under the
+default `strict` policy. If you add a check that is about *where the URL
+goes*, read it from `ParsedAuthority`, never from the raw string.
+
 This split is why `parse_url_local()` and `parse_url()` can share the exact
 same parser: the difference between them is entirely which `SecurityPolicy`
 gets applied in the second pass, not a different parsing codepath. If you're

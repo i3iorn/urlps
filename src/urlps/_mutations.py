@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from ._helpers import _normalize_port
 from ._parser import normalize_host
+from ._security._unicode.uts46 import to_ascii
 from .constants import DEFAULT_PORTS
 from .exceptions import InvalidURLError
 
@@ -52,8 +53,16 @@ class _URLMutations:
         # otherwise with_host("EXAMPLE.COM.") would hand back a URL whose
         # .host defeats the caller's allowlist, reintroducing exactly the
         # bypass that normalization exists to close.
+        #
+        # IDNA-encode first, exactly as the parser does: storing the Unicode
+        # spelling left .host non-ASCII (fullwidth "127.0.0.1" with
+        # ideographic full stops) while every HTTP client and getaddrinfo map
+        # it straight to loopback. validate_copy_overrides() has already
+        # proven the host encodes, via the same to_ascii().
         host_override = components.get("host")
         if isinstance(host_override, str):
+            if not host_override.isascii():
+                host_override = to_ascii(host_override)
             components["host"] = normalize_host(host_override)
         _URLMutations._reconcile_query_components(components, overrides)
 

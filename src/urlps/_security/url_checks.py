@@ -259,11 +259,12 @@ def extract_host_and_path(url: str) -> tuple[str, str]:
     else:
         return "", ""
 
-    # The host/path split always needs both halves, so partition() once
-    # (one scan) strictly beats an "x in s" pre-check plus split()/find()
-    # (two-plus scans) for the same separator.
-    host_portion, sep, rest = after_scheme.partition("/")
-    path_portion = sep + rest
+    # The authority ends at the first "/", "?" or "#" (RFC 3986 §3.2), not
+    # just at "/". Splitting on "/" alone read "http://127.0.0.1?x" as host
+    # "127.0.0.1?x" -- not an IP, so the SSRF check passed -- while the
+    # parser (which splits off "#" and "?" first) produced host "127.0.0.1".
+    host_portion, rest = _extract_authority_and_rest(after_scheme)
+    path_portion = rest if rest.startswith("/") else ""
 
     # Userinfo and explicit ports are the exception rather than the rule, so
     # keep the cheap "x in s" pre-check here: it lets the common case (no

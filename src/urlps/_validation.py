@@ -422,7 +422,7 @@ class _URLValidation:
         ``validate(policy=stricter)`` can be used to ask a hypothetical
         question without rewriting the URL's own recorded verdict.
         """
-        from ._security import validate_url_security
+        from ._security import ParsedAuthority, validate_url_security
         from ._serialization import _URLSerialization
 
         effective_policy = policy if policy is not None else url._security_policy
@@ -435,6 +435,10 @@ class _URLValidation:
             check_dns=check_dns,
             check_phishing=check_phishing,
             raise_on_error=raise_on_error,
+            # The host/port this URL actually exposes and serializes. Without
+            # it the checks re-parse candidate_url themselves and can land on
+            # a different host than the parser did.
+            parsed=ParsedAuthority(host=url._host, port=url._port, userinfo=url._userinfo),
         )
         return list(findings)
 

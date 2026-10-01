@@ -131,7 +131,10 @@ def parse_port(candidate: str) -> int:
     Raises:
         PortValidationError: If port is non-numeric or out of valid range (1-65535)
     """
-    if not candidate or not candidate.isdigit():
+    # isascii() too: str.isdigit() accepts any Unicode digit (fullwidth "22",
+    # U+FF12 U+FF12), which int() reads as 22 while urlsplit() rejects it --
+    # one port meaning two different things to two parsers.
+    if not candidate or not candidate.isascii() or not candidate.isdigit():
         raise PortValidationError(
             f"Port must be a positive integer. Received: {candidate!r}", value=candidate, component="port"
         )
