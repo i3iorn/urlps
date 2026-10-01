@@ -159,3 +159,13 @@ def test_round_trip_assertion_accepts_every_ordinary_derivation() -> None:
         base.canonicalize(),
     ):
         assert parse_url(str(derived)).host == derived.host
+
+
+def test_long_non_ascii_components_still_derive() -> None:
+    """Percent-encoding makes these longer than the parse limits; derivation must not fail on that."""
+    user, path, fragment = "\u00fc" * 100, "\U0001f600" * 2000, "[" * 900
+    url = parse_url_local(f"http://{user}:pw@example.com/{path}#{fragment}")
+    derived = url.with_query("a=1").canonicalize()
+    assert derived.host == "example.com"
+    assert parse_url_local(str(url)).userinfo == url.userinfo
+    assert parse_url_local(str(url)).path == url.as_string().split("example.com", 1)[1].split("#", 1)[0]

@@ -6,10 +6,9 @@ import ipaddress
 import re
 import unicodedata
 import warnings
-from functools import lru_cache
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlsplit, urlunparse, urlunsplit
 
-from .._cache_config import SECURITY_CACHE_SIZE
+from .._cache_config import SECURITY_CACHE_SIZE, bounded_lru_cache
 from .._patterns import PATTERNS
 from ..constants import DANGEROUS_PORTS
 
@@ -45,7 +44,7 @@ _TRACKED_UNICODE_SCRIPTS = frozenset(
 )
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@bounded_lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def find_authority_marker(url: str) -> int:
     """Return the index of a genuine scheme '://' authority marker, or -1.
 
@@ -76,7 +75,7 @@ def has_scheme_authority(url: str) -> bool:
     return find_authority_marker(url) != -1 or url.startswith("//")
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@bounded_lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def has_mixed_scripts(host: str) -> bool:
     """Detect potential homograph attacks using mixed Unicode scripts."""
     if not isinstance(host, str):
@@ -191,7 +190,7 @@ def _has_confusing_userinfo_markers(authority: str) -> bool:
     return any(terminator in before_last_at for terminator in ("/", "?", "#"))
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@bounded_lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def has_parser_confusion(url: str) -> bool:
     """Detect ambiguous URLs that could be parsed differently by different parsers.
 

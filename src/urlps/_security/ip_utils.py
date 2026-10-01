@@ -6,7 +6,7 @@ import ipaddress
 from collections.abc import Callable, Iterable, Sequence
 from functools import lru_cache
 
-from .._cache_config import SECURITY_CACHE_SIZE
+from .._cache_config import SECURITY_CACHE_SIZE, bounded_lru_cache
 from ..constants import (
     BLOCKED_HOSTNAMES,
     LOOPBACK_HOSTNAMES,
@@ -338,7 +338,7 @@ def _is_permitted_private_host(host: str, host_lower: str) -> bool:
     return host_lower in LOOPBACK_HOSTNAMES or host_lower.endswith((".local", ".localhost"))
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@bounded_lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def is_ssrf_risk(host: str, *, allow_private: bool = False) -> bool:
     """Check if host poses SSRF risk (blocked hostnames, private IPs, and ambiguous IPs).
 

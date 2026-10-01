@@ -393,7 +393,7 @@ def resolve_security_policy(
         )
 
     if policy in _POLICY_NAMES:
-        base = _resolve_named_policy(policy, None, None)
+        base = _resolve_named_policy(cast(PolicyName, policy), None, None)
         return _apply_overrides(
             base,
             check_dns=check_dns,

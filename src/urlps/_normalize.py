@@ -19,7 +19,7 @@ import ipaddress
 import re
 from functools import lru_cache
 
-from ._cache_config import PARSER_CACHE_SIZE
+from ._cache_config import PARSER_CACHE_SIZE, bounded_lru_cache
 
 #: The unreserved set (RFC 3986 §2.3). These are the *only* characters that
 #: may be percent-decoded during normalization. They are never delimiters, so
@@ -90,7 +90,7 @@ def _normalize_escape(match: re.Match[str]) -> str:
     return f"%{hex_digits.upper()}"
 
 
-@lru_cache(maxsize=PARSER_CACHE_SIZE)
+@bounded_lru_cache(maxsize=PARSER_CACHE_SIZE)
 def normalize_percent_encoding(value: str) -> str:
     """
     Apply RFC 3986 §6.2.2.1-.2 to a single URL component.

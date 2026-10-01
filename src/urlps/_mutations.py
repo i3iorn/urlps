@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from ._helpers import _normalize_port
-from ._normalize import normalize_fragment, normalize_percent_encoding, normalize_userinfo
+from ._normalize import normalize_percent_encoding, normalize_userinfo
 from ._parser import normalize_host
 from ._security._unicode.uts46 import to_ascii
 from .constants import DEFAULT_PORTS, OFFICIAL_SCHEMES
@@ -112,40 +112,43 @@ class _URLMutations:
 
     @staticmethod
     def _assert_round_trip(url: URL) -> None:
-        """Refuse a derived URL whose string would re-parse into different components.
+        """Refuse a derived URL whose string would name a different destination.
 
         A copy is assembled from components rather than parsed, so nothing
-        else guarantees that ``str(url)`` means what ``url`` reports -- and
+        else guarantees that ``str(url)`` goes where ``url`` reports -- and
         when it does not, the security checks validated one URL and the
-        caller sends another. The path is not compared: it is always
-        percent-encoded on output and cannot move the authority. Scheme-less
-        URLs are skipped: they serialize without "//" by design (``build()``).
+        caller sends another. What decides the destination is the scheme and
+        authority, plus the query not swallowing a "#". The path cannot move
+        either (the builder escapes "?" and "#" in it and collapses a leading
+        "//"), and the fragment comes last, so they are left out -- which also
+        keeps a long percent-encoded path or fragment, longer serialized than
+        the parse limits allow, from failing a derivation. Scheme-less URLs
+        are skipped: they serialize without "//" by design (``build()``).
         """
+        if url._query is not None and "#" in url._query:
+            raise InvalidURLError("Derived URL does not round-trip: its query contains '#'.", component="query")
         if not url._scheme:
             return
         from ._parser import Parser
 
+        authority_only = url._builder.compose(
+            {"scheme": url._scheme, "userinfo": url._userinfo, "host": url._host, "port": url._port, "path": "/"}
+        )
         parser = Parser()
         parser.custom_scheme = url._parser.custom_scheme
         try:
-            reparsed = parser.parse(url.as_string())
+            reparsed = parser.parse(authority_only)
         except InvalidURLError as exc:
             raise InvalidURLError(f"Derived URL does not re-parse: {exc.message}", component="url") from exc
 
         def effective_port(scheme: Any, port: Any) -> Any:
             return port if port is not None else DEFAULT_PORTS.get(str(scheme or "").lower())
 
-        def canonical_fragment(fragment: Any) -> Any:
-            # An empty fragment is not serialized; "" and None mean the same.
-            return normalize_fragment(fragment) if fragment else None
-
         comparisons = (
             ("scheme", url._scheme, reparsed["scheme"]),
             ("userinfo", url._userinfo, reparsed["userinfo"]),
             ("host", url._host, reparsed["host"]),
             ("port", effective_port(url._scheme, url._port), effective_port(reparsed["scheme"], reparsed["port"])),
-            ("query", url._query, reparsed["query"]),
-            ("fragment", canonical_fragment(url._fragment), canonical_fragment(reparsed["fragment"])),
         )
         changed = [name for name, ours, theirs in comparisons if ours != theirs]
         if changed:

@@ -24,8 +24,9 @@ from __future__ import annotations
 import ipaddress
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote
 
-from ._cache_config import VALIDATION_CACHE_SIZE
+from ._cache_config import VALIDATION_CACHE_SIZE, bounded_lru_cache
 from ._patterns import PATTERNS
 from .constants import (
     MAX_FRAGMENT_LENGTH,
@@ -82,7 +83,7 @@ class Validator:
         return to_ascii(host)
 
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_valid_scheme(scheme: str) -> bool:
         """Validate URL scheme.
 
@@ -96,7 +97,7 @@ class Validator:
         return bool(compiled_regex["scheme"].fullmatch(scheme))
 
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_valid_host(host: str) -> bool:
         """Validate hostname.
 
@@ -116,7 +117,7 @@ class Validator:
         return bool(compiled_regex["host"].fullmatch(ascii_host))
 
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_valid_ipv4(ip: str) -> bool:
         """Validate IPv4 address.
 
@@ -154,7 +155,7 @@ class Validator:
         return True
 
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_valid_ipv6(ip: str) -> bool:
         """Validate IPv6 address (bracketed format).
 
@@ -217,7 +218,7 @@ class Validator:
             return False
 
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_url_safe_string(url: str) -> bool:
         """Check if string contains only URL-safe characters (no control characters).
 
@@ -260,7 +261,7 @@ class Validator:
         return Validator.is_url_safe_string(param)
 
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_valid_fragment(fragment: str) -> bool:
         """Validate URL fragment.
 
@@ -269,12 +270,12 @@ class Validator:
         Returns:
             True if valid, False otherwise.
         """
-        if not isinstance(fragment, str) or len(fragment) > MAX_FRAGMENT_LENGTH:
+        if not isinstance(fragment, str) or len(unquote(fragment)) > MAX_FRAGMENT_LENGTH:
             return False
         return bool(compiled_regex["fragment"].fullmatch(fragment))
 
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_ip_address(host: str) -> bool:
         """Check if host is an IP address literal.
 
@@ -337,7 +338,10 @@ def is_valid_userinfo(value: str, max_length: int = MAX_USERINFO_LENGTH) -> bool
     Returns:
         True if valid userinfo format, False otherwise.
     """
-    if not value or len(value) > max_length or "@" in value:
+    # The limit applies to the decoded length, so a userinfo and its own
+    # percent-encoded serialization (which can be up to 12x longer) are held
+    # to the same bound and str(url) always re-parses.
+    if not value or "@" in value or len(unquote(value)) > max_length:
         return False
     if ":" in value:
         username, _, _ = value.partition(":")

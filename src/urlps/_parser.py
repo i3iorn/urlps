@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
 from typing import Any
-from urllib.parse import unquote_plus
+from urllib.parse import unquote, unquote_plus
 
 from ._builder import Builder, QueryPairs
-from ._cache_config import PARSER_CACHE_SIZE
+from ._cache_config import PARSER_CACHE_SIZE, bounded_lru_cache
 from ._components import ParseResult
 from ._normalize import normalize_host, normalize_percent_encoding, normalize_userinfo
 from ._security._unicode.uts46 import IdnaError, to_ascii
@@ -220,7 +219,7 @@ def parse_host(host_candidate: str, require_host: bool = False) -> tuple[str | N
     return parse_regular_host(host_candidate)
 
 
-@lru_cache(maxsize=PARSER_CACHE_SIZE)
+@bounded_lru_cache(maxsize=PARSER_CACHE_SIZE)
 def normalize_path(path_candidate: str) -> str:
     """Normalize URL path by resolving . and .. segments.
 
@@ -228,7 +227,9 @@ def normalize_path(path_candidate: str) -> str:
     """
     if not path_candidate:
         return ""
-    if len(path_candidate) > MAX_PATH_LENGTH:
+    # Decoded length, like the userinfo limit: the builder percent-encodes
+    # non-ASCII on output (up to 12x longer), and str(url) must re-parse.
+    if len(unquote(path_candidate)) > MAX_PATH_LENGTH:
         raise URLParseError(
             f"Path exceeds maximum length of {MAX_PATH_LENGTH}.", value=path_candidate, component="path"
         )
@@ -319,7 +320,7 @@ def parse_fragment_string(fragment_candidate: str | None) -> str | None:
     """Parse and validate fragment."""
     if fragment_candidate is None:
         return None
-    if len(fragment_candidate) > MAX_FRAGMENT_LENGTH:
+    if len(unquote(fragment_candidate)) > MAX_FRAGMENT_LENGTH:  # decoded, as for the path
         raise FragmentEncodingError(
             f"Fragment exceeds maximum length of {MAX_FRAGMENT_LENGTH}.", value=fragment_candidate, component="fragment"
         )
@@ -444,7 +445,7 @@ class Parser:
 #: Caches reported under the "parser" group. normalize_host and
 #: normalize_percent_encoding live in _normalize but run on every parse, so
 #: they are reported here rather than in a group of their own.
-_CACHED_FUNCTIONS = [normalize_path, normalize_host, normalize_percent_encoding]
+_CACHED_FUNCTIONS: list[Any] = [normalize_path, normalize_host, normalize_percent_encoding]
 
 
 def get_cache_info() -> dict:
