@@ -30,6 +30,18 @@ class _URLMutations:
 
     @staticmethod
     def copy(url: URL, **overrides: Any) -> URL:
+        """Create a copy with optional component overrides (exception values redacted unless debug)."""
+        try:
+            return _URLMutations._copy(url, **overrides)
+        except Exception as exc:
+            if not url._debug:
+                from .url import _redact_exception
+
+                _redact_exception(exc)
+            raise
+
+    @staticmethod
+    def _copy(url: URL, **overrides: Any) -> URL:
         """Create a copy with optional component overrides.
 
         Args:

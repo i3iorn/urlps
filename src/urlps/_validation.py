@@ -465,6 +465,7 @@ class _URLValidation:
             # it the checks re-parse candidate_url themselves and can land on
             # a different host than the parser did.
             parsed=ParsedAuthority(host=url._host, port=url._port, userinfo=url._userinfo),
+            debug=url._debug,
         )
         return list(findings)
 

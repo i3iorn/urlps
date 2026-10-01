@@ -60,6 +60,7 @@ from .url_checks import (
     is_dangerous_port,
     is_open_redirect_risk,
     normalize_url_unicode,
+    redact_component,
     redact_url_for_logs,
 )
 
@@ -411,6 +412,7 @@ def validate_url_security(
     check_phishing: bool | None = None,
     raise_on_error: bool = True,
     parsed: ParsedAuthority | None = None,
+    debug: bool = False,
 ) -> list[SecurityFinding]:
     """Run policy-based security validation, raising on the first blocking finding.
 
@@ -420,7 +422,9 @@ def validate_url_security(
     a degraded optional check into a hard parse failure.
 
     ``parsed`` is passed through to :func:`collect_security_findings`; see
-    there for why a parsed URL must supply it.
+    there for why a parsed URL must supply it. The raised exception's
+    ``value`` is the URL with credentials and sensitive parameters redacted,
+    unless ``debug=True``.
     """
     findings = collect_security_findings(
         url, policy=policy, check_dns=check_dns, check_phishing=check_phishing, parsed=parsed
@@ -435,11 +439,12 @@ def validate_url_security(
                 message = finding.message
                 if finding.remediation:
                     message = f"{message} {finding.remediation}"
+                value = url if debug else redact_url_for_logs(url)
                 if exception_type is DNSRateLimitError:
                     raise DNSRateLimitError(
-                        message, component=finding.component, value=url, code=code, retry_after=finding.retry_after
+                        message, component=finding.component, value=value, code=code, retry_after=finding.retry_after
                     )
-                raise exception_type(message, component=finding.component, value=url, code=code)
+                raise exception_type(message, component=finding.component, value=value, code=code)
     return findings
 
 
@@ -519,6 +524,7 @@ __all__ = [
     "is_private_ip",
     "is_ssrf_risk",
     "normalize_url_unicode",
+    "redact_component",
     "redact_url_for_logs",
     "refresh_phishing_db",
     "reset_dns_rate_limiter",

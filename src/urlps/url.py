@@ -31,11 +31,22 @@ from ._security import (
     has_parser_confusion,
     has_path_traversal,
     is_open_redirect_risk,
+    redact_component,
 )
 from ._serialization import _URLSerialization
 from ._validation import Validator, _URLValidation
 from .constants import DEFAULT_PORTS, MAX_URL_LENGTH
-from .exceptions import InvalidURLError, URLParseError
+from .exceptions import InvalidURLError, URLParseError, URLpError
+
+
+def _redact_exception(exc: BaseException) -> None:
+    """Redact the offending value an exception carries, in place.
+
+    ``str(exc)`` includes ``value``, and both end up in logs and error
+    responses; the raw input is only kept with ``debug=True``.
+    """
+    if isinstance(exc, URLpError):
+        exc.value = redact_component(exc.value, exc.component)
 
 
 class URL:
@@ -47,7 +58,9 @@ class URL:
         url: The URL string to parse.
         parser: Optional custom parser instance.
         builder: Optional custom builder instance.
-        debug: If True, include raw input in exception traces.
+        debug: If True, exceptions carry the raw input as ``value``. By
+            default credentials and sensitive query/fragment values in it are
+            redacted, since exception text routinely reaches logs.
         check_dns: If True, perform DNS resolution checks.
         check_phishing: If True, check for known phishing domains.
         security_policy: Policy governing which checks are enforced. This is
@@ -176,6 +189,8 @@ class URL:
                 correlation_id=self._correlation_id,
             )
         except Exception as exc:
+            if not self._debug:
+                _redact_exception(exc)
             self._audit_manager.invoke(raw_url=url, parsed_url=None, exception=exc, correlation_id=self._correlation_id)
             raise
 

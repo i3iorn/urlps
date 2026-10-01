@@ -57,9 +57,10 @@ class TestRedactUrlForLogs:
         result = redact_url_for_logs("https://user:secret@example.com/path")
         assert result == "https://user:***@example.com/path"
 
-    def test_malformed_url_returns_original(self):
+    def test_malformed_url_fails_closed(self):
+        """Returning the input unredacted leaked exactly the malformed URLs that reach error logs."""
         with patch("urlps._security.url_checks.urlsplit", side_effect=ValueError("bad")):
-            assert redact_url_for_logs("https://example.com/") == "https://example.com/"
+            assert redact_url_for_logs("https://user:hunter2@example.com/") == "[unparseable URL redacted]"
 
 
 class TestHasSuspiciousPunycode:

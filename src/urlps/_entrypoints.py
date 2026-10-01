@@ -22,6 +22,7 @@ def parse_url(
     url: str,
     *,
     allow_custom_scheme: bool = False,
+    debug: bool = False,
     check_dns: bool | None = None,
     check_phishing: bool | None = None,
     dns_rate_limiter: DNSRateLimiter | None = None,
@@ -70,7 +71,9 @@ def parse_url(
     Args:
         url: The URL string to parse
         allow_custom_scheme: If True, allow non-standard schemes (default: False)
-            Standard schemes: http, https, ftp, ftps, sftp, file, ws, wss
+            Standard schemes: http, https, ftp, ftps, sftp, ws, wss
+        debug: If True, exceptions carry the raw input as ``value``; by default
+            credentials and sensitive query/fragment values are redacted.
         check_dns: If True, perform DNS lookup to verify host resolves to safe IP.
             WARNING: Has performance impact and is rate-limited to prevent DoS.
             ``None`` (the default) defers to the policy's own ``check_dns``;
@@ -116,6 +119,7 @@ def parse_url(
     return _url.URL(
         url,
         parser=parser,
+        debug=debug,
         check_dns=resolved_policy.check_dns,
         check_phishing=resolved_policy.check_phishing,
         security_policy=resolved_policy,

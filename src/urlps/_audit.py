@@ -44,11 +44,14 @@ class AuditConfig:
         callback: Optional simple audit callback.
         event_callback: Optional structured event callback.
         redact_urls: Whether URLs must be redacted before logging.
+        sensitive_keys: Extra query-key substrings to redact, on top of the
+            built-in ones (token, secret, key, sig, pass, auth, session, code, ...).
     """
 
     callback: AuditCallback | None = None
     event_callback: AuditEventCallback | None = None
     redact_urls: bool = True
+    sensitive_keys: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -157,7 +160,9 @@ class AuditManager:
         if config.callback is None and config.event_callback is None:
             return
 
-        logged_url = redact_url_for_logs(raw_url) if config.redact_urls else raw_url
+        logged_url = (
+            redact_url_for_logs(raw_url, extra_sensitive_keys=config.sensitive_keys) if config.redact_urls else raw_url
+        )
 
         # Simple callback
         if config.callback is not None:
