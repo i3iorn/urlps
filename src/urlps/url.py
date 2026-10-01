@@ -441,7 +441,14 @@ class URL:
         return {name: getattr(self, name, None) for name in URL.__slots__ if name not in URL._UNPICKLED_COLLABORATORS}
 
     def __setstate__(self, state: Mapping[str, Any]) -> None:
-        """Restore via object.__setattr__ -- the default path trips the guard."""
+        """Restore via object.__setattr__ -- the default path trips the guard.
+
+        A restored URL is *not* re-validated: pickle round-trips trusted
+        state. Never unpickle data from an untrusted source -- unpickling can
+        execute arbitrary code, so no check here could make that safe. To
+        move URLs across a trust boundary, send ``str(url)`` and
+        ``parse_url()`` it on the other side.
+        """
         for name, value in state.items():
             object.__setattr__(self, name, value)
         object.__setattr__(self, "_parser", Parser())

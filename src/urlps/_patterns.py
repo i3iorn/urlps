@@ -19,7 +19,9 @@ PATTERNS: dict[str, Pattern[str]] = {
     "ipv6": re.compile(r"^\[([0-9a-fA-F:]+)(%25[A-Za-z0-9_.~-]+)?\]$"),
     "url_safe_string": re.compile(r"^[A-Za-z0-9\-._~!$&'()*+,;=:@/%]*$"),
     "fragment": re.compile(r"^(?:[A-Za-z0-9\-._~!$&'()*+,;=:@/?\[\]]|%[0-9A-Fa-f]{2})*$"),
-    "control_chars": re.compile(r"[\s\x00-\x1F\x7F]"),
+    # C0, DEL and C1 (\x80-\x9F, which includes the 8-bit CSI \x9B some
+    # terminals honour) -- all control characters, none legal in a URL.
+    "control_chars": re.compile(r"[\s\x00-\x1F\x7F-\x9F]"),
     "percent_encode": re.compile(r"%[0-9a-fA-F]{2}"),
     "double_encode": re.compile(r"%25[0-9A-Fa-f]{2}"),
     "userinfo": re.compile(r"^[^:@]+(?::[^@]*)?$"),
