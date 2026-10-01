@@ -1,6 +1,6 @@
 # urlps
 
-Lightweight, secure URL parsing and building library with RFC 3986 compliance. Features comprehensive security protections including SSRF prevention, DNS rebinding detection, path traversal protection, and homograph attack detection.
+Lightweight, secure URL parsing and building library with RFC 3986 compliance. Features comprehensive security protections including SSRF prevention (with a connect-time guard against DNS rebinding), path traversal protection, and homograph attack detection.
 
 ## Installation
 
@@ -22,7 +22,9 @@ Search cleanup: repository searches can use `.rgignore` to skip local/IDE/build 
 ```python
 from urlps import parse_url, build
 
-# Secure by default - blocks SSRF, private IPs, localhost
+# Strict by default: internal addresses, dangerous schemes, traversal,
+# homographs and more are rejected. See "What SSRF protection covers" below
+# for where parse-time checks stop and connect-time protection starts.
 url = parse_url("https://api.example.com/data?token=abc#section")
 print(url.host)  # api.example.com
 print(url.query_params)  # [("token", "abc")]
@@ -50,13 +52,22 @@ are normalized, not rejected**, so `HTTP://EXAMPLE.COM./`,
 one canonical form. That is what makes `url.host` safe to compare against an
 allowlist directly.
 
+The security checks validate **the host the parser actually produced** --
+the one `url.host` returns and `str(url)` serializes -- not a re-reading of
+the raw string, so spellings such as `http://169.254.169.254?` or `127.0.0.1`
+written with ideographic full stops (`127。0。0。1`) cannot slip past them.
+
 Blocked under **both** `strict` and `balanced`:
 
-- **SSRF** -- private IPs (10.x, 172.16-31.x, 192.168.x), loopback,
-  link-local (169.254.x), `.local`/`.internal`, cloud metadata endpoints
-  (`169.254.169.254`, `metadata.google.internal`), kubernetes service names,
-  and obfuscated spellings (decimal `2130706433`, octal, hex,
-  IPv4-mapped IPv6, NAT64)
+- **SSRF** -- every address that is not public, globally routable unicast:
+  private IPs (10.x, 172.16-31.x, 192.168.x), loopback, link-local
+  (169.254.x), shared address space / CGNAT (100.64.0.0/10), IPv6 ULA,
+  site-local and link-local, multicast, reserved and documentation ranges;
+  `.local`/`.internal`; cloud metadata endpoints *by address*
+  (`169.254.169.254`, `169.254.170.2`, Alibaba's `100.100.100.200`, AWS's
+  `fd00:ec2::254`) and by name (`metadata.google.internal`); kubernetes
+  service names; and every obfuscated spelling of those (decimal
+  `2130706433`, octal, hex, IPv4-mapped IPv6, NAT64, 6to4, Teredo)
 - **Path traversal** -- `../`, null bytes, and encoded variants
 - **Open redirect** -- leading `//`, backslashes, raw or percent-encoded
 - **Double-encoded characters** -- `%25xx` filter bypass
@@ -64,6 +75,10 @@ Blocked under **both** `strict` and `balanced`:
 - **Homograph attacks** -- mixed scripts *and* whole-script confusables,
   evaluated per label on the Punycode-*decoded* host
 - **Invisible characters** -- bidi controls, zero-width, malformed Punycode
+- **Non-standard schemes** -- only `http`, `https`, `ftp`, `ftps`, `sftp`,
+  `ws` and `wss` are accepted unless you pass `allow_custom_scheme=True`
+  (so a vetted link can't be `ms-msdt:`, `search-ms:` or `smb://`);
+  `javascript:`, `data:`, `file:`, `gopher:` and friends need it too
 
 Opt-in (off by default; enable via `SecurityPolicy`):
 
@@ -84,8 +99,9 @@ balanced_url = parse_url("HTTP://EXAMPLE.com", policy="balanced")
 
 Use `parse_url_local()` for development and internal URLs. It turns the
 heuristic checks off and permits loopback/RFC1918 hosts, but **narrows SSRF
-enforcement rather than disabling it** -- cloud metadata endpoints, the
-link-local range, `.internal` and kubernetes service names stay blocked:
+enforcement rather than disabling it** -- cloud metadata endpoints (in every
+spelling), the link-local range, CGNAT, `.internal` and kubernetes service
+names stay blocked:
 
 ```python
 from urlps import SecurityPolicy, parse_url_local
@@ -103,8 +119,8 @@ works but is deprecated -- it emits a `DeprecationWarning` and will be
 removed in a future major release; use `parse_url_local()` instead.
 
 Need to adjust the tradeoff? Use policy presets:
-- `policy="strict"` (default): maximum protections, DNS connect checks fail-closed by default
-- `policy="balanced"`: fewer false positives, DNS connect checks fail-open by default
+- `policy="strict"` (default): maximum protections
+- `policy="balanced"`: the same, minus the two opt-in checks above
 - `policy="internal"`: trusted traffic -- heuristics off, **SSRF still enforced**
 - `policy="local"`: development -- heuristics off, loopback/private hosts allowed,
   metadata endpoints still blocked
@@ -112,22 +128,101 @@ Need to adjust the tradeoff? Use policy presets:
 To genuinely disable SSRF enforcement you must say so explicitly:
 `SecurityPolicy.internal(enforce_ssrf=False)`.
 
-DNS connect behavior can be customized per policy:
+### Allowed and denied addresses
+
+Every preset (and `SecurityPolicy` itself) takes `allowed_addresses` and
+`denied_addresses`. A rule is an IP address, a CIDR network, a hostname, or a
+`.domain` matching the domain and all its subdomains. Rules match every
+spelling of a host (hex/decimal IPs, IPv4-mapped IPv6, case, trailing dot,
+IDNA) and every address it resolves to:
 
 ```python
 from urlps import SecurityPolicy, parse_url
 
-policy = SecurityPolicy.strict(check_dns=True, dns_fail_open_on_connect_error=True)
-url = parse_url("https://api.example.com", policy=policy)
+policy = SecurityPolicy.strict(
+    allowed_addresses=["100.64.0.0/10", "fd12:3456::/32", "build.internal", ".corp.example"],
+    denied_addresses=["hr.corp.example", "203.0.113.0/24"],
+)
+
+parse_url("http://100.101.102.103/status", policy=policy)  # a Tailscale address: allowed
+parse_url("https://eng.corp.example/", policy=policy)  # allowed by the .corp.example rule
 ```
 
-Recommended for multi-tenant or concurrent applications: inject a dedicated DNS limiter.
+A denied match always rejects -- even with `enforce_ssrf=False` -- and wins
+over an allowed one. Allowing a *hostname* also trusts what it resolves to,
+except cloud metadata addresses, which only an explicit IP/network rule can
+allow. An invalid rule (`"10.0.0.0/33"`, `"*.example.com"`) raises
+`SecurityPolicyError` when the policy is built, never silently matching
+nothing.
+
+### What SSRF protection covers
+
+There are three layers, and only the last one is complete:
+
+1. **The host itself** (always on). Literal internal addresses and known
+   internal names are rejected at parse time. A hostname that *resolves* to
+   an internal address -- `127.0.0.1.nip.io`, or any domain an attacker
+   controls -- passes this layer.
+2. **`check_dns=True`** (opt-in). Rejects hosts that resolve to an internal
+   address *at parse time*. Your HTTP client resolves the name again when it
+   connects, and an attacker's DNS server can answer differently the second
+   time (DNS rebinding), so this layer cannot stop a determined attacker.
+3. **The connection** (opt-in, robust). `create_guarded_connection()`
+   resolves once, refuses the connection if any answer is disallowed,
+   connects only to a vetted address and re-checks the peer. It is a
+   drop-in for `socket.create_connection` and for urllib3's, which
+   `requests` uses:
+
+```python
+import functools
+
+import urllib3.util.connection
+
+from urlps import InvalidURLError, SecurityPolicy, create_guarded_connection
+
+
+def install_ssrf_guard(policy: SecurityPolicy) -> None:
+    """Make every urllib3/requests connection in this process go through the guard."""
+    urllib3.util.connection.create_connection = functools.partial(create_guarded_connection, policy=policy)
+
+
+# The guard on its own: refused before any packet is sent.
+try:
+    create_guarded_connection(("127.0.0.1", 9), timeout=1)
+except InvalidURLError as exc:
+    print(exc.code)  # ErrorCode.SSRF_RISK
+```
+
+If you pin connections yourself, `resolve_and_validate(url)` returns the
+vetted addresses to connect to (send the original host in `Host`/SNI):
+
+```python
+from urlps import resolve_and_validate
+
+addresses = resolve_and_validate("https://api.example.com/data")
+```
+
+Neither can see through an HTTP proxy -- with a proxy configured, the guard
+validates the connection to the proxy. For fleet-wide enforcement, an egress
+proxy that applies the same rules (e.g. Smokescreen) is the stronger option.
+
+### DNS checks and rate limiting
+
+`check_dns=True` resolutions are cached (30 s for an answer, 5 s for a
+failure) and only real lookups count against the rate limits, so checking a
+busy host repeatedly costs one lookup per TTL. A rate-limited check raises
+`DNSRateLimitError` with `retry_after` set. Each check is bounded by
+`SecurityPolicy.dns_deadline_seconds` (default 5 s) across retries.
+
+The default limiter is process-wide. In multi-tenant or concurrent
+applications, inject one per tenant so one tenant's traffic can never spend
+another's budget:
 
 ```python
 from urlps import DNSRateLimiter, DNSRateLimiterConfig, parse_url
 
 limiter = DNSRateLimiter(
-    DNSRateLimiterConfig(max_lookups_per_second=20, max_lookups_per_host=50)
+    DNSRateLimiterConfig(max_lookups_per_second=20, max_lookups_per_host=50, cache_ttl_seconds=60)
 )
 
 url = parse_url(
@@ -136,6 +231,25 @@ url = parse_url(
     check_dns=True,
     dns_rate_limiter=limiter,
 )
+```
+
+A limiter (or `check_dns=True`) set on the `SecurityPolicy` is honoured by
+`parse_url()`, `join()` and `build_secure()`; an explicit `check_dns=`
+argument overrides the policy.
+
+### Phishing checks
+
+`check_phishing=True` checks the host -- and its parent domains, so
+`login.evil.example` is caught when `evil.example` is listed -- against a
+downloaded feed (see `URLPS_PHISHING_DATABASE_*` below). The list is
+refreshed daily; a failed refresh keeps the previous list. If the feed cannot
+be loaded at all, the URL is accepted with a `phishing_db_unavailable`
+warning finding, unless the policy says otherwise:
+
+```python
+from urlps import SecurityPolicy
+
+policy = SecurityPolicy.strict(check_phishing=True, phishing_fail_closed=True)
 ```
 
 ## Core Features
@@ -216,7 +330,8 @@ try:
 except InvalidURLError as e:
     print(f"Rejected: {e}")
 
-# DNS rebinding detection (optional - rate-limited to prevent DoS)
+# Parse-time DNS check (optional; cached and rate-limited). This alone cannot
+# stop DNS rebinding -- see "What SSRF protection covers" for the connect-time guard.
 url_dns = parse_url("https://api.example.com/", check_dns=True)
 
 # URL canonicalization (policy="balanced": the raw non-canonical/credentialed
@@ -308,9 +423,16 @@ url = parse_url(
 )
 ```
 
-URLs are redacted before being passed to callbacks (credentials and sensitive
-query values are masked). Pass `AuditConfig(..., redact_urls=False)` to opt out.
-A callback that raises is recorded as a failure and never breaks the parse.
+URLs are redacted before being passed to callbacks: the userinfo password
+(or a bare token) is masked; query values are masked when the key *contains*
+`token`, `secret`, `key`, `sig`, `pass`, `auth`, `session`, `code`, `jwt`,
+`otp`, ... (so `client_secret`, `X-Amz-Signature` and `id_token` are all
+caught); every `key=value` value in the fragment is masked (OAuth
+implicit-flow tokens live there); and a URL that cannot even be split is
+logged as `[unparseable URL redacted]` rather than verbatim. Add your own key
+fragments with `AuditConfig(..., sensitive_keys=frozenset({"tenant"}))`, or
+opt out entirely with `redact_urls=False`. A callback that raises is recorded
+as a failure and never breaks the parse.
 
 The same `audit=` parameter is accepted by `parse_url_local()`, `join()` and
 `build_secure()`.
@@ -357,8 +479,15 @@ Supported variables:
   Must be an `http://` or `https://` URL; set this to self-host the list or
   point at a mirror you trust instead. Must be set before `import urlps`,
   same as the cache-size variables below.
+- `URLPS_PHISHING_DATABASE_REFRESH_SECONDS` -- how old the loaded list may
+  get before the next check re-downloads it (default 86400). A failed
+  refresh keeps the previous list.
+- `URLPS_PHISHING_DATABASE_SHA256` -- optional SHA-256 (hex) the downloaded
+  feed must match; for a self-hosted or mirrored snapshot (a live feed
+  changes too often to pin). A mismatch counts as a failed download.
 
-Internal `@lru_cache` sizes are also overridable this way -- see [Cache Sizing](#cache-sizing) below.
+Internal `@lru_cache` sizes, and the longest key a cache will retain, are
+also overridable this way -- see [Cache Sizing](#cache-sizing) below.
 
 ## API Reference
 
@@ -366,19 +495,30 @@ Internal `@lru_cache` sizes are also overridable this way -- see [Cache Sizing](
 
 | Function | Description |
 | --- | --- |
-| `parse_url(url, *, allow_custom_scheme=False, check_dns=False, check_phishing=False, dns_rate_limiter=None, policy=None, correlation_id=None, audit=None)` | Parse URL with policy-aware security checks (recommended) |
+| `parse_url(url, *, allow_custom_scheme=False, debug=False, check_dns=None, check_phishing=None, dns_rate_limiter=None, policy=None, correlation_id=None, audit=None)` | Parse URL with policy-aware security checks (recommended). `None` for `check_dns`/`check_phishing` defers to the policy. |
 | `parse_url_local(url, *, allow_custom_scheme=False, debug=False, check_dns=False, dns_rate_limiter=None, policy=None, correlation_id=None, audit=None)` | Parse URL for trusted/internal input with optional policy overrides |
 | `parse_url_unsafe(...)` | **Deprecated** alias for `parse_url_local()`; emits `DeprecationWarning` |
 | `join(base, reference, *, policy=None, strict_resolution=True, ...)` | Resolve a reference against a base URI (RFC 3986 §5), then validate |
+| `resolve_and_validate(url, *, policy=None, port=None, dns_timeout=2.0)` | Resolve the host once and return its addresses, all validated under the policy (for pinning connections) |
+| `create_guarded_connection(address, timeout=..., source_address=None, socket_options=None, *, policy=None)` | Drop-in for `socket.create_connection` / urllib3's that connects only to policy-permitted addresses |
 | `build(*scheme_and_host, port=None, path="/", query=None, fragment=None, userinfo=None)` | Build URL string from components |
-| `build_secure(*scheme_and_host, policy=None, check_dns=False, check_phishing=False, dns_rate_limiter=None, correlation_id=None, audit=None, ...)` | Build and then validate a URL under a selected security policy |
+| `build_secure(*scheme_and_host, policy=None, check_dns=None, check_phishing=None, dns_rate_limiter=None, correlation_id=None, audit=None, ...)` | Build and then validate a URL under a selected security policy |
 | `compose_url(components)` | Build URL from components dict |
 
 `build()`/`compose_url()` validate that `host` is a syntactically valid
 hostname, IPv4 literal, or bracketed IPv6 literal (raising
 `HostValidationError` otherwise), so their output always round-trips through
-`parse_url()`. This is structural validation only, not security policy --
-use `build_secure()` when the host isn't already trusted.
+`parse_url()`. `userinfo` is percent-encoded to the RFC 3986 grammar
+(`build("http", "example.com", userinfo="a@b:p#")` gives
+`http://a%40b:p%23@example.com/`), so no character in it can move the host.
+This is structural validation only, not security policy -- use
+`build_secure()` when the host isn't already trusted.
+
+`with_*()`/`copy()` follow the same rules as `parse_url()`: the scheme
+allowlist applies to `with_scheme()` (which also resets a default port),
+userinfo is percent-encoded, a raw `#` in `with_query()` is rejected, and
+every derived URL is re-parsed to confirm its string names the same scheme
+and authority before it is returned.
 
 Note: `get_dns_rate_limiter()` and `reset_dns_rate_limiter()` remain available for compatibility, but explicit `dns_rate_limiter=` injection is preferred.
 
@@ -433,6 +573,13 @@ import urlps  # cache sizes are now locked in for this process
 | `URLPS_CACHE_SIZE_BUILDER_QUERY_ENCODE` | 8192 | percent-encoding of query keys/values |
 | `URLPS_CACHE_SIZE_BUILDER_PATH_ENCODE` | 1024 | percent-encoding of path segments |
 | `URLPS_CACHE_SIZE_POLICY` | 16 | resolved named policies (`strict`/`balanced`/`internal` x overrides) -- rarely worth changing, the working set is inherently tiny |
+| `URLPS_CACHE_MAX_KEY_LENGTH` | 1024 | longest URL/path/component (in characters) a cache keeps; longer inputs are computed uncached |
+| `URLPS_CACHE_MAX_VALUE_KEY_LENGTH` | 128 | the same bound for the per-value query/path encoders |
+
+The key-length bounds exist because a cache keeps its key and result alive
+until evicted: without them, maximal-length distinct inputs pinned hundreds
+of megabytes for the life of the process. With the defaults, every cache
+full of worst-case keys stays around 50 MB in total.
 
 **Which value fits your workload?** A cache only helps when the *same* input
 (same host, same URL shape) is seen again within the cache's window --
@@ -488,7 +635,9 @@ Exits `0` and prints the canonical form of every URL if all pass; exits `1`
 and prints the rejection reason (to stderr) for each URL that fails,
 alongside the canonical form of the ones that passed. `--quiet` suppresses
 success output so only failures are printed. `--policy`, `--check-dns` and
-`--check-phishing` mirror `parse_url()`'s own options.
+`--check-phishing` mirror `parse_url()`'s own options. Non-printable
+characters in the output (terminal escape sequences, bidi controls) are
+escaped, since the URLs being checked are usually untrusted.
 
 ## Comparison with urllib.parse
 
@@ -497,7 +646,7 @@ success output so only failures are printed. `--policy`, `--check-dns` and
 | Basic URL parsing | ✓ | ✓ |
 | RFC 3986 strict compliance | Partial | ✓ |
 | SSRF protection | ✗ | ✓ |
-| DNS rebinding detection | ✗ | ✓ (with rate limiting) |
+| Connect-time SSRF guard (DNS rebinding) | ✗ | ✓ (`create_guarded_connection`) |
 | Path traversal detection | ✗ | ✓ |
 | Homograph detection | ✗ | ✓ |
 | URL parser confusion protection | ✗ | ✓ |
@@ -529,12 +678,18 @@ except InvalidURLError:
     print("Rejected by security policy")
 ```
 
+Exceptions carry the offending input as `exc.value`, and `str(exc)` includes
+it. Credentials and query/fragment values in it are **redacted by default**,
+since exception text routinely reaches logs and error responses; pass
+`debug=True` to `parse_url()`/`parse_url_local()` to keep the raw input.
+
 Exception hierarchy:
 - `InvalidURLError` — Base exception for all URL errors
 - `URLParseError` — Parsing errors
 - `URLBuildError` — Building errors
 - `HostValidationError` / `PortValidationError` — Component validation errors
 - `QueryParsingError`, `FragmentEncodingError`, `UserInfoParsingError`, `UnsupportedSchemeError` — Specific errors
+- `DNSRateLimitError` (a `DNSRebindingError`) — retryable; `retry_after` says when
 
 ## Running Tests
 

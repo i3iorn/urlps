@@ -6,12 +6,12 @@ neither of which had ever existed, and both examples raised ImportError. That
 was only caught because someone happened to run every block by hand. This
 test makes that check automatic instead of relying on a human doing it again.
 
-DNS resolution is mocked at the same level the rest of the suite already
-uses (`check_dns_rebinding_detailed`) so the `check_dns=True` examples stay
-deterministic and never touch the network, per CONTRIBUTING.md. Mocking only
-`socket.getaddrinfo` is not enough: under `policy="strict"` the DNS check
-also performs a real TCP connect to verify the peer, which still reaches out
-to the network even with resolution mocked.
+DNS is mocked so the examples stay deterministic and never touch the
+network, per CONTRIBUTING.md: the parse-time check at the level the rest of
+the suite uses (`check_dns_rebinding_detailed`), and the resolver itself
+(`_resolve_addr_info`) for the connect-time guard examples
+(`resolve_and_validate`, `create_guarded_connection`), which answers with a
+fixed public address.
 """
 
 from __future__ import annotations
@@ -61,6 +61,8 @@ _populate_expected_raises(_BLOCKS)
 # the rest of the suite already uses for this (see
 # tests/security/test_security_robustness.py).
 _DNS_CHECK_PATH = "urlps._security.check_dns_rebinding_detailed"
+_RESOLVER_PATH = "urlps._security.dns_guard._resolve_addr_info"
+_PUBLIC_ANSWER = [(2, 1, 6, "", ("93.184.216.34", 443))]
 
 
 def test_readme_has_python_examples():
@@ -89,7 +91,7 @@ def test_documented_raise_blocks_were_actually_found():
 def test_readme_example_executes(line_number, source):
     expected_exception = _EXPECTED_TO_RAISE.get(line_number)
 
-    with patch(_DNS_CHECK_PATH, return_value=(True, None)):
+    with patch(_DNS_CHECK_PATH, return_value=(True, None)), patch(_RESOLVER_PATH, return_value=_PUBLIC_ANSWER):
         try:
             exec(compile(source, f"<README.md:{line_number}>", "exec"), {"__name__": "__main__"})
         except Exception as exc:

@@ -23,7 +23,8 @@ constants.py, exceptions.py, _patterns.py, _components.py, _resolve.py
         |  (no dependencies on the rest of the package)
         v
 _validation.py, _builder.py, _relative.py, _normalize.py
-_security/ip_utils.py, _security/policy.py, _security/url_checks.py
+_security/ip_utils.py, _security/address_rules.py, _security/policy.py,
+_security/url_checks.py
 _security/_unicode/ (scripts.py, confusables.py, uts46.py)
 _security/host_analysis.py
         |
@@ -42,6 +43,9 @@ _audit.py                        (imports _security, for redact_url_for_logs)
         v
 url.py                           (the URL class; ties parser + security + audit together)
         |
+        v
+_egress.py                       (connect-time SSRF guard: resolve_and_validate,
+        |                          create_guarded_connection)
         v
 __init__.py                      (public API: parse_url, parse_url_local, join, build, ...)
 ```
@@ -120,7 +124,10 @@ exception of `dns_guard.DNSRateLimiter`/`DNSRateLimiterConfig`, which are
 also re-exported from the top-level `urlps` package for dependency
 injection). The submodules:
 
-- **`ip_utils.py`** — SSRF-relevant IP classification: private-range checks,
+- **`ip_utils.py`** — SSRF-relevant IP classification (`_is_ip_safe`: an
+  address is safe only if it is public, globally routable unicast by the
+  stdlib's predicates *and* outside the version-independent
+  `NON_PUBLIC_NETWORKS`, with any embedded IPv4 checked too): private-range checks,
   the obfuscated-IPv4 grammar (`_parse_inet_aton_ipv4`), IPv6 zone-ID
   validation. Every predicate here is expected to **fail closed**: an
   address that can't be parsed or verified is treated as unsafe, never as
@@ -145,9 +152,20 @@ injection). The submodules:
   design.
 - **`phishing_db.py`** — the phishing-domain database: lazy download,
   cooldown-gated retry, thread-safe refresh.
+- **`address_rules.py`** — the caller's `allowed_addresses`/
+  `denied_addresses`: IP, CIDR, hostname and `.domain` rules, matched on
+  what a host *is* (every IP spelling, embedded IPv4, IDNA/case/trailing
+  dot) rather than how it is written.
 - **`policy.py`** — `SecurityPolicy` and the `"strict"`/`"balanced"`/
   `"internal"`/`"local"` presets. This is the single place that decides
-  which checks across the other submodules actually run for a given parse.
+  which checks across the other submodules actually run for a given parse,
+  and (`host_is_ssrf_risk`, `ip_is_permitted`) how the caller's address
+  rules combine with the built-in classification.
+
+`_egress.py` sits *above* `url.py` because it is not part of parsing at all:
+it is the one piece that validates the address actually connected to, which
+is the only defence against DNS rebinding. Parse-time checks, including
+`check_dns`, run before the client resolves the host again.
 
 ## Public API surface
 
