@@ -13,7 +13,7 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         with:
           # A release created with the default GITHUB_TOKEN does not fire
           # other workflows' `release:` triggers (GitHub suppresses
