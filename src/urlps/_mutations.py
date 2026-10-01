@@ -10,9 +10,10 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from ._helpers import _normalize_port
+from ._normalize import normalize_fragment, normalize_percent_encoding, normalize_userinfo
 from ._parser import normalize_host
 from ._security._unicode.uts46 import to_ascii
-from .constants import DEFAULT_PORTS
+from .constants import DEFAULT_PORTS, OFFICIAL_SCHEMES
 from .exceptions import InvalidURLError
 
 if TYPE_CHECKING:
@@ -48,6 +49,27 @@ class _URLMutations:
         components.update(overrides)
         components["port"] = _normalize_port(components.get("port"))
 
+        # The overridable components are stored the way the parser would
+        # store them, so the copy means exactly what its string means.
+        scheme = components.get("scheme")
+        if isinstance(scheme, str):
+            components["scheme"] = scheme = scheme.lower()
+        if "scheme" in overrides and "port" not in overrides:
+            # The old scheme's default port is not an explicit choice; carrying
+            # it over turned https://h/ into http://h:443/.
+            old_default = DEFAULT_PORTS.get((url._scheme or "").lower())
+            if url._port is not None and url._port == old_default:
+                components["port"] = DEFAULT_PORTS.get(scheme or "")
+        if overrides.get("userinfo") is not None:
+            try:
+                components["userinfo"] = normalize_userinfo(overrides["userinfo"])
+            except UnicodeEncodeError as exc:
+                raise InvalidURLError("Userinfo is not valid Unicode.", component="userinfo") from exc
+        if overrides.get("query") is not None:
+            components["query"] = normalize_percent_encoding(overrides["query"])
+        if overrides.get("fragment") is not None:
+            components["fragment"] = normalize_percent_encoding(overrides["fragment"])
+
         # copy() does not go through the parser, so the RFC 3986 §6.2.2
         # host normalization applied there has to be re-applied here --
         # otherwise with_host("EXAMPLE.COM.") would hand back a URL whose
@@ -72,7 +94,7 @@ class _URLMutations:
         new_url = object.__new__(URLClass)
         # Same reason as in __init__: __setattr__ reads this on every write.
         object.__setattr__(new_url, "_frozen", False)
-        new_url.recognized_scheme = url.recognized_scheme
+        new_url.recognized_scheme = (scheme in OFFICIAL_SCHEMES) if scheme else None
         new_url._parser = url._parser
         new_url._builder = url._builder
         new_url._audit_manager = url._audit_manager
@@ -82,10 +104,55 @@ class _URLMutations:
         new_url._security_policy = url._security_policy
         new_url._correlation_id = url._correlation_id
         new_url._apply_parsed(components)
+        _URLMutations._assert_round_trip(new_url)
         new_url._security_findings = []
         new_url._security_findings = new_url.validate(raise_on_error=True)
         object.__setattr__(new_url, "_frozen", True)
         return new_url
+
+    @staticmethod
+    def _assert_round_trip(url: URL) -> None:
+        """Refuse a derived URL whose string would re-parse into different components.
+
+        A copy is assembled from components rather than parsed, so nothing
+        else guarantees that ``str(url)`` means what ``url`` reports -- and
+        when it does not, the security checks validated one URL and the
+        caller sends another. The path is not compared: it is always
+        percent-encoded on output and cannot move the authority. Scheme-less
+        URLs are skipped: they serialize without "//" by design (``build()``).
+        """
+        if not url._scheme:
+            return
+        from ._parser import Parser
+
+        parser = Parser()
+        parser.custom_scheme = url._parser.custom_scheme
+        try:
+            reparsed = parser.parse(url.as_string())
+        except InvalidURLError as exc:
+            raise InvalidURLError(f"Derived URL does not re-parse: {exc.message}", component="url") from exc
+
+        def effective_port(scheme: Any, port: Any) -> Any:
+            return port if port is not None else DEFAULT_PORTS.get(str(scheme or "").lower())
+
+        def canonical_fragment(fragment: Any) -> Any:
+            # An empty fragment is not serialized; "" and None mean the same.
+            return normalize_fragment(fragment) if fragment else None
+
+        comparisons = (
+            ("scheme", url._scheme, reparsed["scheme"]),
+            ("userinfo", url._userinfo, reparsed["userinfo"]),
+            ("host", url._host, reparsed["host"]),
+            ("port", effective_port(url._scheme, url._port), effective_port(reparsed["scheme"], reparsed["port"])),
+            ("query", url._query, reparsed["query"]),
+            ("fragment", canonical_fragment(url._fragment), canonical_fragment(reparsed["fragment"])),
+        )
+        changed = [name for name, ours, theirs in comparisons if ours != theirs]
+        if changed:
+            raise InvalidURLError(
+                f"Derived URL does not round-trip: re-parsing it would change {', '.join(changed)}.",
+                component=changed[0],
+            )
 
     @staticmethod
     def _reconcile_query_components(

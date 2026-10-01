@@ -9,7 +9,7 @@ from urllib.parse import unquote_plus
 from ._builder import Builder, QueryPairs
 from ._cache_config import PARSER_CACHE_SIZE
 from ._components import ParseResult
-from ._normalize import normalize_host, normalize_percent_encoding
+from ._normalize import normalize_host, normalize_percent_encoding, normalize_userinfo
 from ._security._unicode.uts46 import IdnaError, to_ascii
 from ._validation import Validator, is_valid_userinfo
 from .constants import (
@@ -128,7 +128,14 @@ def parse_userinfo(authority: str) -> tuple[str | None, str]:
     auth_segment, _, host = authority.partition("@")
     if not is_valid_userinfo(auth_segment):
         raise UserInfoParsingError("Invalid authentication section in URL.", value=auth_segment, component="userinfo")
-    return auth_segment, host
+    # Escape anything outside the RFC 3986 userinfo grammar, so str(url) can
+    # only ever be read with this host. "http://169.254.169.254\\@example.com/"
+    # is host example.com here but host 169.254.169.254 to a WHATWG parser
+    # (browsers, Node), which treats "\\" as "/"; "%5C" is unambiguous.
+    try:
+        return normalize_userinfo(auth_segment), host
+    except UnicodeEncodeError as exc:
+        raise UserInfoParsingError("Userinfo is not valid Unicode.", component="userinfo") from exc
 
 
 def parse_port(candidate: str) -> int:

@@ -482,3 +482,67 @@ class TestHostDifferential:
         assert url.host is not None
         assert url.host.isascii()
         assert not _security.is_ssrf_risk(url.host)
+
+
+def _components(url):
+    """Everything that decides where a URL goes, compared exactly; the fragment canonically.
+
+    The fragment is never sent to a server, and serializing "[" as "%5B" does
+    not change its meaning -- copy()'s own round-trip assertion compares it
+    the same way.
+    """
+    from urlps._normalize import normalize_fragment
+
+    fragment = normalize_fragment(url.fragment) if url.fragment else None
+    return (url.scheme, url.userinfo, url.host, url.effective_port, url.query, fragment)
+
+
+class TestDerivedUrlsRoundTrip:
+    """parse(str(u)) must reproduce every URL derived with copy()/with_*()."""
+
+    @given(st.text(max_size=40))
+    @settings(max_examples=400)
+    def test_with_userinfo_round_trips_and_keeps_the_host(self, userinfo):
+        from urllib.parse import urlsplit
+
+        base = parse_url("http://example.com/", policy="internal")
+        try:
+            derived = base.with_userinfo(userinfo)
+        except InvalidURLError:
+            return
+        assert derived.host == "example.com"
+        assert urlsplit(str(derived)).hostname == "example.com"
+        assert _components(parse_url(str(derived), policy="internal")) == _components(derived)
+
+    @given(st.text(max_size=40), st.text(max_size=40))
+    @settings(max_examples=400)
+    def test_with_query_and_fragment_round_trip(self, query, fragment):
+        base = parse_url("https://example.com/p", policy="internal")
+        try:
+            derived = base.with_query(query).with_fragment(fragment)
+        except InvalidURLError:
+            return
+        assert _components(parse_url(str(derived), policy="internal")) == _components(derived)
+
+    @given(st.text(max_size=30))
+    @settings(max_examples=300)
+    def test_with_netloc_round_trips(self, netloc):
+        base = parse_url("https://example.com/p", policy="internal")
+        try:
+            derived = base.with_netloc(netloc)
+        except InvalidURLError:
+            return
+        assert _components(parse_url(str(derived), policy="internal")) == _components(derived)
+
+    @given(
+        st.text(alphabet=st.sampled_from(list("ab%2F7e5B#[]?/=&+:@!$'()*,;~-._09AF\\")), max_size=30),
+        st.text(alphabet=st.sampled_from(list("ab%2F7e5B[]?/=&+:@!$'()*,;~-._09AF")), max_size=30),
+    )
+    @settings(max_examples=500)
+    def test_delimiter_dense_query_and_fragment_round_trip(self, query, fragment):
+        base = parse_url("https://example.com/p", policy="internal")
+        try:
+            derived = base.with_query(query).with_fragment(fragment)
+        except InvalidURLError:
+            return
+        assert _components(parse_url(str(derived), policy="internal")) == _components(derived)

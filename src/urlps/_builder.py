@@ -6,7 +6,7 @@ from typing import Any
 from urllib.parse import quote, quote_plus, unquote_plus
 
 from ._cache_config import BUILDER_PATH_ENCODE_CACHE_SIZE, BUILDER_QUERY_ENCODE_CACHE_SIZE
-from ._normalize import normalize_host
+from ._normalize import normalize_fragment, normalize_host, normalize_userinfo
 from ._patterns import PATTERNS
 from ._validation import Validator
 from .constants import DEFAULT_PORTS, OfficialSchemes
@@ -127,7 +127,13 @@ class Builder:
         if serialized_query is not None:
             url += f"?{serialized_query}"
         if fragment:
-            url += f"#{self.percent_encode(str(fragment), safe=self.FRAGMENT_SAFE)}"
+            # Escape-preserving: percent_encode() would re-encode the "%" of
+            # an existing escape, turning "#a%2Fb" into "#a%252Fb" on every
+            # serialization.
+            try:
+                url += f"#{normalize_fragment(str(fragment))}"
+            except UnicodeEncodeError as exc:
+                raise URLBuildError("Fragment is not valid Unicode.", component="fragment") from exc
         return url
 
     def compose_secure(
@@ -184,7 +190,12 @@ class Builder:
             return userinfo or ""
         parts = []
         if userinfo:
-            parts.append(f"{userinfo}@")
+            # Escaped to the RFC 3986 userinfo grammar so no "/", "?", "#",
+            # "@" or "\\" in it can move where any parser thinks the host is.
+            try:
+                parts.append(f"{normalize_userinfo(userinfo)}@")
+            except UnicodeEncodeError as exc:
+                raise URLBuildError("Userinfo is not valid Unicode.", component="userinfo") from exc
         # build()/compose_url() never go through the parser, so the RFC 3986
         # §6.2.2 host normalization has to be applied here too -- otherwise
         # the same host would canonicalize differently depending on whether

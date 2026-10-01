@@ -167,14 +167,26 @@ def test_with_host_stores_the_ascii_form() -> None:
     assert idn.host == "xn--mnchen-3ya.de"
 
 
-@pytest.mark.parametrize("policy", ["internal", "local"])
-def test_userinfo_override_cannot_smuggle_a_metadata_authority(policy: str) -> None:
-    """str(url) here reads as host 169.254.169.254 to every other parser."""
+@pytest.mark.parametrize("policy", ["strict", "internal", "local"])
+@pytest.mark.parametrize("userinfo", ["169.254.169.254#", "169.254.169.254?", "169.254.169.254/", "169.254.169.254\\"])
+def test_userinfo_override_cannot_smuggle_a_metadata_authority(policy: str, userinfo: str) -> None:
+    """str(url) must name the same host as url.host for every parser.
+
+    The userinfo is percent-encoded to the RFC 3986 grammar, so the
+    authority-ending character cannot reach the serialized URL raw.
+    """
+    from urllib.parse import urlsplit
+
     base = parse_url("http://example.com/", policy=policy)
-    with pytest.raises(InvalidURLError):
-        base.with_userinfo("169.254.169.254#")
-    with pytest.raises(InvalidURLError):
-        base.with_netloc("169.254.169.254?@example.com")
+    for derived in (lambda: base.with_userinfo(userinfo), lambda: base.with_netloc(f"{userinfo}@example.com")):
+        try:
+            url = derived()
+        except InvalidURLError:
+            continue
+        assert url.host == "example.com"
+        assert urlsplit(str(url)).hostname == "example.com"
+        authority = str(url).split("://", 1)[1].split("/", 1)[0]
+        assert not any(char in authority for char in "#?\\")
 
 
 # ---------------------------------------------------------------------------

@@ -411,6 +411,13 @@ class _URLValidation:
             if value is not None and not Validator.is_url_safe_string(value):
                 raise InvalidURLError(f"{key} contains invalid control characters.", value=value, component=key)
 
+        # A raw "#" in a query override would be emitted as-is and re-parse as
+        # the start of a fragment, so the URL's .query and what str(url)
+        # means would disagree. Encode it as %23, or use with_query_param().
+        query = overrides.get("query")
+        if query is not None and "#" in query:
+            raise InvalidURLError("query must not contain '#'; encode it as %23.", value=query, component="query")
+
     @staticmethod
     def _is_valid_host_override(host: str) -> bool:
         """Return True if host is a valid hostname, IPv4 literal, or IPv6 literal."""

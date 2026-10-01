@@ -34,6 +34,52 @@ UNRESERVED = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123
 
 _PERCENT_ESCAPE = re.compile(r"%([0-9A-Fa-f]{2})")
 
+#: RFC 3986 §3.2.1: userinfo = *( unreserved / pct-encoded / sub-delims / ":" ).
+#: Anything else -- notably "/", "?", "#", "@", "[", "]" and "\\" -- ends or
+#: confuses the authority for *some* parser, so it must be escaped.
+USERINFO_SAFE = UNRESERVED | frozenset("!$&'()*+,;=:")
+
+#: RFC 3986 §3.5: fragment = *( pchar / "/" / "?" ).
+FRAGMENT_SAFE = UNRESERVED | frozenset("!$&'()*+,;=:@/?")
+
+
+def percent_encode_component(value: str, safe: frozenset[str]) -> str:
+    """Percent-encode every character of ``value`` outside ``safe``.
+
+    Existing well-formed escapes (``%2F``) are kept, never re-encoded --
+    re-encoding them is how a serializer turns ``a%2Fb`` into ``a%252Fb``
+    and drifts further on every round trip. A ``%`` that does not start a
+    valid escape is encoded as ``%25``. Non-ASCII is encoded as UTF-8;
+    a lone surrogate raises ``UnicodeEncodeError``.
+    """
+    if all(char in safe for char in value):
+        return value
+    out: list[str] = []
+    index = 0
+    length = len(value)
+    while index < length:
+        char = value[index]
+        if char == "%" and _PERCENT_ESCAPE.match(value, index):
+            out.append(value[index : index + 3])
+            index += 3
+            continue
+        if char in safe:
+            out.append(char)
+        else:
+            out.append("".join(f"%{byte:02X}" for byte in char.encode("utf-8")))
+        index += 1
+    return "".join(out)
+
+
+def normalize_userinfo(value: str) -> str:
+    """Encode ``value`` to the RFC 3986 userinfo grammar, then apply §6.2.2 normalization."""
+    return normalize_percent_encoding(percent_encode_component(value, USERINFO_SAFE))
+
+
+def normalize_fragment(value: str) -> str:
+    """Encode ``value`` to the RFC 3986 fragment grammar, then apply §6.2.2 normalization."""
+    return normalize_percent_encoding(percent_encode_component(value, FRAGMENT_SAFE))
+
 
 def _normalize_escape(match: re.Match[str]) -> str:
     """Decode an unreserved escape; otherwise upper-case its hex digits."""
