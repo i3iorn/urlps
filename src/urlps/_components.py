@@ -48,6 +48,8 @@ class SecurityFinding:
     message: str
     component: str | None = None
     remediation: str | None = None
+    #: For a retryable finding (DNS rate limiting), seconds until a retry can succeed.
+    retry_after: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -33,7 +33,7 @@ from .dns_guard import (
     reset_dns_rate_limiter,
 )
 from .host_analysis import analyze_host
-from .ip_utils import is_malicious_ipv6_zone_id, is_private_ip, is_ssrf_risk
+from .ip_utils import _strip_ipv6_brackets, is_malicious_ipv6_zone_id, is_private_ip, is_ssrf_risk
 from .phishing_db import (
     check_against_phishing_db,
     check_against_phishing_db_detailed,
@@ -79,6 +79,11 @@ _REMEDIATION_BY_CODE: dict[ErrorCode, str] = {
         'policy="balanced" or SecurityPolicy.strict(block_dangerous_ports=False) '
         "if this port is expected."
     ),
+    ErrorCode.DNS_RATE_LIMITED: (
+        "Retryable: see retry_after. The limiter only counts real lookups (cached "
+        "answers are free); inject a DNSRateLimiter per tenant so one tenant cannot "
+        "spend another's budget."
+    ),
     ErrorCode.CREDENTIALS_IN_URL: (
         "Credentials in a URL are legal but discouraged. Use "
         'policy="balanced" to allow them, and URL.redacted() or '
@@ -91,6 +96,19 @@ _REMEDIATION_BY_CODE: dict[ErrorCode, str] = {
         'If this domain is legitimate, use policy="internal" or set enforce_confusable_host=False.'
     ),
 }
+
+
+_DNS_MESSAGES: dict[ErrorCode, str] = {
+    ErrorCode.SSRF_RISK: "Host resolves to a disallowed address.",
+    ErrorCode.DNS_RATE_LIMITED: "DNS lookup rate limit reached; the host was not checked.",
+    ErrorCode.DNS_RESOLUTION_FAILED: "Host could not be resolved.",
+    ErrorCode.DNS_CONNECTION_FAILED: "DNS resolution timed out or failed.",
+}
+
+
+def _dns_host(host: str) -> str:
+    """The key the DNS check uses for ``host`` (brackets and zone stripped)."""
+    return _strip_ipv6_brackets(host.strip())
 
 
 def _finding(severity: str, code: ErrorCode, message: str, component: str | None) -> SecurityFinding:
@@ -320,9 +338,23 @@ def collect_security_findings(
             backoff_jitter_seconds=effective_policy.dns_backoff_jitter_seconds,
             fail_open_on_connect_error=effective_policy.dns_fail_open_on_connect_error,
             limiter=effective_policy.dns_rate_limiter,
+            deadline_seconds=effective_policy.dns_deadline_seconds,
         )
         if not safe and dns_error is not None:
-            findings.append(_finding("critical", dns_error, "DNS rebinding validation failed.", "host"))
+            retry_after = None
+            if dns_error is ErrorCode.DNS_RATE_LIMITED:
+                limiter = effective_policy.dns_rate_limiter or get_dns_rate_limiter()
+                retry_after = limiter.retry_after(_dns_host(host))
+            findings.append(
+                SecurityFinding(
+                    severity="critical",
+                    code=dns_error.value,
+                    message=_DNS_MESSAGES.get(dns_error, "DNS validation failed."),
+                    component="host",
+                    remediation=_REMEDIATION_BY_CODE.get(dns_error),
+                    retry_after=retry_after,
+                )
+            )
 
     effective_check_phishing = effective_policy.check_phishing
     if effective_check_phishing and host:
@@ -403,6 +435,10 @@ def validate_url_security(
                 message = finding.message
                 if finding.remediation:
                     message = f"{message} {finding.remediation}"
+                if exception_type is DNSRateLimitError:
+                    raise DNSRateLimitError(
+                        message, component=finding.component, value=url, code=code, retry_after=finding.retry_after
+                    )
                 raise exception_type(message, component=finding.component, value=url, code=code)
     return findings
 

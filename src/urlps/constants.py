@@ -233,6 +233,13 @@ DEFAULT_DNS_LOOKUPS_PER_SECOND: Final[float] = 10.0  # Global rate limit
 DEFAULT_DNS_LOOKUPS_PER_HOST: Final[int] = 3  # Per-hostname limit
 DEFAULT_DNS_TIME_WINDOW_SECONDS: Final[float] = 60.0  # Time window for per-host tracking
 DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS: Final[float] = 300.0  # Cleanup old tracking data
+DEFAULT_DNS_CACHE_TTL_SECONDS: Final[float] = 30.0  # Reuse a successful resolution this long
+DEFAULT_DNS_NEGATIVE_CACHE_TTL_SECONDS: Final[float] = 5.0  # Reuse a failed resolution this long
+DEFAULT_DNS_MAX_CACHED_HOSTS: Final[int] = 4096  # Bound on the resolution cache
+# Upper bound on the wall-clock time one DNS check may take across all
+# retries and backoff, so a slow or black-holed resolver cannot hold a
+# request thread for (timeout x attempts) + backoff.
+DEFAULT_DNS_DEADLINE_SECONDS: Final[float] = 5.0
 
 # Phishing Database Configuration
 # Overridable via URLPS_PHISHING_DATABASE_URL so callers can self-host or
@@ -252,9 +259,13 @@ PASSWORD_MASK: Final[str] = "***"
 __all__ = [
     "BLOCKED_HOSTNAMES",
     "DANGEROUS_PORTS",
+    "DEFAULT_DNS_CACHE_TTL_SECONDS",
     "DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS",
+    "DEFAULT_DNS_DEADLINE_SECONDS",
     "DEFAULT_DNS_LOOKUPS_PER_HOST",
     "DEFAULT_DNS_LOOKUPS_PER_SECOND",
+    "DEFAULT_DNS_MAX_CACHED_HOSTS",
+    "DEFAULT_DNS_NEGATIVE_CACHE_TTL_SECONDS",
     "DEFAULT_DNS_TIMEOUT",
     "DEFAULT_DNS_TIME_WINDOW_SECONDS",
     "DEFAULT_PHISHING_DATABASE_MAX_BYTES",

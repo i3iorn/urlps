@@ -12,16 +12,20 @@ import secrets
 import socket
 import threading
 import time
-from collections import defaultdict, deque
+from collections import OrderedDict, defaultdict, deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 
 from ..constants import (
+    DEFAULT_DNS_CACHE_TTL_SECONDS,
     DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS,
+    DEFAULT_DNS_DEADLINE_SECONDS,
     DEFAULT_DNS_LOOKUPS_PER_HOST,
     DEFAULT_DNS_LOOKUPS_PER_SECOND,
+    DEFAULT_DNS_MAX_CACHED_HOSTS,
+    DEFAULT_DNS_NEGATIVE_CACHE_TTL_SECONDS,
     DEFAULT_DNS_TIME_WINDOW_SECONDS,
     DEFAULT_DNS_TIMEOUT,
 )
@@ -50,6 +54,16 @@ class DNSRateLimiterConfig:
     max_lookups_per_host: int = DEFAULT_DNS_LOOKUPS_PER_HOST
     time_window_seconds: float = DEFAULT_DNS_TIME_WINDOW_SECONDS
     cleanup_interval_seconds: float = DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS
+    # Resolutions are cached so that checking the same host repeatedly costs
+    # one lookup per TTL rather than one per check. Without this, the
+    # per-host limit rejected the 4th legitimate check of a host within a
+    # minute, and anyone could lock a host out by submitting it 3 times.
+    # 0 disables a cache. The parse-time check is advisory either way (see
+    # create_guarded_connection for the connect-time guarantee), so caching a
+    # positive answer briefly costs no protection.
+    cache_ttl_seconds: float = DEFAULT_DNS_CACHE_TTL_SECONDS
+    negative_cache_ttl_seconds: float = DEFAULT_DNS_NEGATIVE_CACHE_TTL_SECONDS
+    max_cached_hosts: int = DEFAULT_DNS_MAX_CACHED_HOSTS
 
     def __post_init__(self):
         if self.max_lookups_per_second <= 0:
@@ -60,10 +74,25 @@ class DNSRateLimiterConfig:
             raise DNSRateLimiterError("time_window_seconds must be positive")
         if self.cleanup_interval_seconds <= 0:
             raise DNSRateLimiterError("cleanup_interval_seconds must be positive")
+        if self.cache_ttl_seconds < 0 or self.negative_cache_ttl_seconds < 0:
+            raise DNSRateLimiterError("cache TTLs must not be negative")
+        if self.max_cached_hosts <= 0:
+            raise DNSRateLimiterError("max_cached_hosts must be positive")
+
+
+@dataclass(frozen=True)
+class _CachedResolution:
+    expires_at: float
+    addr_info: tuple[tuple[int, int, int, str, tuple], ...] | None
+    error: ErrorCode | None
 
 
 class DNSRateLimiter:
-    """Token-bucket DNS rate limiter with per-host tracking.
+    """Token-bucket DNS rate limiter with per-host tracking and a resolution cache.
+
+    Only lookups that actually reach the resolver are rate limited; a cached
+    answer is free. The cache holds raw resolutions, not verdicts, so each
+    policy still applies its own address rules to a cached answer.
 
     The limiter is deterministic, side-effect free outside its own state,
     and uses an injected time provider for testability.
@@ -92,6 +121,7 @@ class DNSRateLimiter:
         self._last_update_seconds: float = now
         self._host_lookups: dict[str, deque[float]] = defaultdict(deque)
         self._last_cleanup_seconds: float = now
+        self._cache: OrderedDict[str, _CachedResolution] = OrderedDict()
         # A rate limit is a security control, so its read-modify-write cycles
         # must be atomic. The GIL happens to mask most interleavings today, but
         # it is not a synchronisation primitive and does not exist at all on
@@ -187,14 +217,60 @@ class DNSRateLimiter:
             self._host_lookups[host].append(now)
             self._cleanup_old_entries()
 
+    def retry_after(self, host: str) -> float:
+        """Seconds until a lookup for ``host`` would no longer be rate limited."""
+        with self._lock:
+            self._refill_tokens()
+            now = self._now()
+            wait = 0.0
+            if self._tokens < 1.0:
+                wait = (1.0 - self._tokens) / self._config.max_lookups_per_second
+            timestamps = self._host_lookups.get(host)
+            if timestamps and len(timestamps) >= self._config.max_lookups_per_host:
+                wait = max(wait, timestamps[0] + self._config.time_window_seconds - now)
+            return max(0.0, wait)
+
+    def cached_resolution(self, host: str) -> _CachedResolution | None:
+        """Return the unexpired cached resolution for ``host``, if any."""
+        with self._lock:
+            entry = self._cache.get(host)
+            if entry is None:
+                return None
+            if entry.expires_at <= self._now():
+                del self._cache[host]
+                return None
+            self._cache.move_to_end(host)
+            return entry
+
+    def store_resolution(
+        self,
+        host: str,
+        addr_info: AddrInfo | None,
+        error: ErrorCode | None = None,
+    ) -> None:
+        """Cache a successful resolution, or a failed one (``addr_info=None``)."""
+        ttl = self._config.cache_ttl_seconds if addr_info is not None else self._config.negative_cache_ttl_seconds
+        if ttl <= 0:
+            return
+        with self._lock:
+            self._cache[host] = _CachedResolution(
+                expires_at=self._now() + ttl,
+                addr_info=tuple(addr_info) if addr_info is not None else None,
+                error=error,
+            )
+            self._cache.move_to_end(host)
+            while len(self._cache) > self._config.max_cached_hosts:
+                self._cache.popitem(last=False)
+
     def reset(self) -> None:
-        """Reset limiter state to initial configuration."""
+        """Reset limiter state, including the resolution cache, to initial configuration."""
         with self._lock:
             now = self._now()
             self._tokens = self._config.max_lookups_per_second
             self._last_update_seconds = now
             self._host_lookups.clear()
             self._last_cleanup_seconds = now
+            self._cache.clear()
 
     def stats(self) -> dict[str, float]:
         """Return current limiter statistics.
@@ -209,6 +285,7 @@ class DNSRateLimiter:
                 "tokens": float(self._tokens),
                 "tracked_hosts": float(len(self._host_lookups)),
                 "total_recent_lookups": float(total_recent_lookups),
+                "cached_hosts": float(len(self._cache)),
             }
 
 
@@ -335,6 +412,7 @@ def check_dns_rebinding_detailed(
     fail_open_on_connect_error: bool = True,
     limiter: DNSRateLimiter | None = None,
     ip_filter: Callable[[IpAddress], bool] | None = None,
+    deadline_seconds: float | None = None,
 ) -> tuple[bool, ErrorCode | None]:
     """Check that ``host`` currently resolves only to permitted addresses.
 
@@ -363,6 +441,12 @@ def check_dns_rebinding_detailed(
         ip_filter: Decides whether an address is acceptable; defaults to the
             built-in public-unicast classification. ``collect_security_findings``
             passes the policy's, so allowed/denied address rules apply here too.
+        deadline_seconds: Wall-clock bound across all attempts and backoff;
+            defaults to DEFAULT_DNS_DEADLINE_SECONDS.
+
+    The limiter (the injected one, or the process-global one when rate
+    limiting is on) also caches resolutions: a cached answer is used without
+    a lookup and without spending rate-limit budget.
 
     Returns:
         (is_safe, error_code) where error_code is None on success.
@@ -380,37 +464,59 @@ def check_dns_rebinding_detailed(
     if direct_result is not None:
         return direct_result, None if direct_result else ErrorCode.SSRF_RISK
 
-    if enforce_rate_limit:
-        effective_limiter = get_dns_rate_limiter() if limiter is None else limiter
-        if not effective_limiter.is_allowed(normalized_host):
-            logger.warning(
-                "dns_check_blocked_rate_limit",
-                extra={"event": "dns_check_blocked_rate_limit", "host": normalized_host},
-            )
-            return False, ErrorCode.DNS_RATE_LIMITED
+    effective_limiter = limiter if limiter is not None else (get_dns_rate_limiter() if enforce_rate_limit else None)
+    if effective_limiter is not None:
+        cached = effective_limiter.cached_resolution(normalized_host)
+        if cached is not None:
+            if cached.addr_info is None:
+                return False, cached.error or ErrorCode.DNS_RESOLUTION_FAILED
+            if not _check_resolved_ips_safe(cached.addr_info, ip_filter):
+                return False, ErrorCode.SSRF_RISK
+            return True, None
 
+    if enforce_rate_limit and effective_limiter is not None and not effective_limiter.is_allowed(normalized_host):
+        logger.warning(
+            "dns_check_blocked_rate_limit",
+            extra={"event": "dns_check_blocked_rate_limit", "host": normalized_host},
+        )
+        return False, ErrorCode.DNS_RATE_LIMITED
+
+    effective_deadline = DEFAULT_DNS_DEADLINE_SECONDS if deadline_seconds is None else deadline_seconds
+    deadline = time.monotonic() + max(0.0, effective_deadline)
     last_error: ErrorCode | None = None
     max_attempts = max(1, retries + 1)
 
     for attempt_index in range(max_attempts):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            last_error = last_error or ErrorCode.DNS_CONNECTION_FAILED
+            break
         try:
-            addr_info: AddrInfo = _resolve_addr_info(normalized_host, effective_timeout_seconds)
-            if not _check_resolved_ips_safe(addr_info, ip_filter):
-                return False, ErrorCode.SSRF_RISK
-            return True, None
+            addr_info: AddrInfo = _resolve_addr_info(normalized_host, min(effective_timeout_seconds, remaining))
         except socket.gaierror:
             last_error = ErrorCode.DNS_RESOLUTION_FAILED
         except (TimeoutError, OSError):
             last_error = ErrorCode.DNS_CONNECTION_FAILED
+        else:
+            if effective_limiter is not None:
+                effective_limiter.store_resolution(normalized_host, addr_info)
+            if not _check_resolved_ips_safe(addr_info, ip_filter):
+                return False, ErrorCode.SSRF_RISK
+            return True, None
 
         is_last_attempt = attempt_index + 1 >= max_attempts
         if not is_last_attempt:
             backoff_seconds = (backoff_base_seconds * (2**attempt_index)) + _secure_jitter_seconds(
                 backoff_jitter_seconds
             )
+            backoff_seconds = min(backoff_seconds, max(0.0, deadline - time.monotonic()))
             if backoff_seconds > 0:
                 time.sleep(backoff_seconds)
 
+    if last_error == ErrorCode.DNS_RESOLUTION_FAILED and effective_limiter is not None:
+        # Timeouts are not cached: they are transient, and caching one would
+        # turn a brief resolver hiccup into a TTL-long outage for the host.
+        effective_limiter.store_resolution(normalized_host, None, ErrorCode.DNS_RESOLUTION_FAILED)
     return False, last_error or ErrorCode.DNS_RESOLUTION_FAILED
 
 
@@ -425,6 +531,7 @@ def check_dns_rebinding(
     fail_open_on_connect_error: bool = True,
     limiter: DNSRateLimiter | None = None,
     ip_filter: Callable[[IpAddress], bool] | None = None,
+    deadline_seconds: float | None = None,
 ) -> bool:
     """Boolean wrapper around detailed DNS rebinding checks.
 
@@ -442,6 +549,7 @@ def check_dns_rebinding(
         fail_open_on_connect_error=fail_open_on_connect_error,
         limiter=limiter,
         ip_filter=ip_filter,
+        deadline_seconds=deadline_seconds,
     )
     return is_safe
 

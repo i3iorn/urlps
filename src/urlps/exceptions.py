@@ -183,7 +183,15 @@ class DNSRebindingError(InvalidURLError):
 
 
 class DNSRateLimitError(DNSRebindingError):
-    """Raised when DNS checks exceed rate limits."""
+    """Raised when DNS checks exceed rate limits.
+
+    Retryable: ``retry_after`` is the number of seconds until the limiter
+    would allow a lookup for this host again (``None`` if unknown).
+    """
+
+    def __init__(self, message: str, *, retry_after: float | None = None, **kwargs: Any) -> None:
+        super().__init__(message, **kwargs)
+        self.retry_after: float | None = retry_after
 
 
 class DNSResolutionError(DNSRebindingError):

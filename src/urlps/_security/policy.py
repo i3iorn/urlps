@@ -7,6 +7,7 @@ from functools import lru_cache
 from typing import Any, Literal, Union, cast
 
 from .._cache_config import POLICY_CACHE_SIZE
+from ..constants import DEFAULT_DNS_DEADLINE_SECONDS
 from ..exceptions import SecurityPolicyError
 from .address_rules import NO_RULES, AddressList, AddressRule
 from .ip_utils import IpAddress, _is_ip_safe, is_metadata_address, is_permitted_private_ip, is_ssrf_risk
@@ -86,6 +87,8 @@ class SecurityPolicy:
     dns_retries: int = 2
     dns_backoff_base_seconds: float = 0.05
     dns_backoff_jitter_seconds: float = 0.02
+    # Wall-clock bound on one DNS check across retries and backoff.
+    dns_deadline_seconds: float = DEFAULT_DNS_DEADLINE_SECONDS
     dns_rate_limiter: Any | None = None
     # Caller-supplied address rules, applied to the host and to every
     # DNS-resolved address. Each rule is an IP, a CIDR network, a hostname, or
@@ -308,7 +311,13 @@ def _apply_overrides(
     """Return a new policy if overrides differ; otherwise return base."""
     effective_dns = base.check_dns if check_dns is None else bool(check_dns)
     effective_phishing = base.check_phishing if check_phishing is None else bool(check_phishing)
-    effective_dns_rate_limiter = base.dns_rate_limiter if dns_rate_limiter is _UNSET else dns_rate_limiter
+    # None means "not provided", like check_dns=None: the entry points pass
+    # their own dns_rate_limiter=None default through here, and treating it as
+    # an override silently dropped a limiter injected on the policy, moving
+    # that caller onto the shared process-global limiter.
+    effective_dns_rate_limiter = (
+        base.dns_rate_limiter if dns_rate_limiter is _UNSET or dns_rate_limiter is None else dns_rate_limiter
+    )
 
     if (
         effective_dns == base.check_dns
