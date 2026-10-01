@@ -22,6 +22,9 @@ EXPECTED_ALL = {
     "build",
     "build_secure",
     "compose_url",
+    # Connect-time SSRF guard
+    "resolve_and_validate",
+    "create_guarded_connection",
     # Policy / config
     "SecurityPolicy",
     "PolicyInput",

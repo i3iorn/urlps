@@ -233,8 +233,7 @@ def _resolves_to(address: str):
 
 def _dns_accepted(url: str, **policy_kwargs) -> bool:
     policy = SecurityPolicy.strict(check_dns=True, dns_rate_limiter=DNSRateLimiter(), **policy_kwargs)
-    with patch("urlps._security.dns_guard._verify_connection_safe", return_value=True, create=True):
-        return _accepted(url, policy)
+    return _accepted(url, policy)
 
 
 def test_resolution_into_allowed_network_is_accepted() -> None:

@@ -74,6 +74,7 @@ __version__ = "1.1.4"
 from ._audit import AuditCallback, AuditConfig, AuditEventCallback, AuditManager
 from ._components import SecurityFinding
 from ._diagnostics import clear_all_caches, get_cache_info
+from ._egress import create_guarded_connection, resolve_and_validate
 from ._entrypoints import (
     build,
     build_secure,
@@ -145,9 +146,11 @@ __all__ = [
     "build_secure",
     "clear_all_caches",
     "compose_url",
+    "create_guarded_connection",
     "get_cache_info",
     "join",
     "parse_url",
     "parse_url_local",
     "parse_url_unsafe",
+    "resolve_and_validate",
 ]

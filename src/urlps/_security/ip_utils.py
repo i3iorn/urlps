@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ipaddress
-import socket
 from collections.abc import Callable, Iterable, Sequence
 from functools import lru_cache
 
@@ -276,39 +275,6 @@ def _check_resolved_ips_safe(
     return checked_any
 
 
-def _verify_connection_safe(
-    addr_info: Iterable[tuple[int, int, int, str, tuple]],
-    timeout: float,
-    *,
-    fail_open_on_error: bool = True,
-) -> bool:
-    """Verify connection peer IP safety to mitigate DNS rebinding.
-
-    Only transport failures honour ``fail_open_on_error`` -- that is a
-    deliberate, policy-driven availability tradeoff. Being unable to
-    *determine* the peer is not a transport failure and always fails closed:
-    an empty address list or an unparseable peer address means the check did
-    not run, which is not the same as the check passing.
-    """
-    addresses = list(addr_info)
-    if not addresses:
-        return False
-
-    family, socktype, proto, _canonname, sockaddr = addresses[0]
-    test_socket = socket.socket(family, socktype, proto)
-    try:
-        test_socket.settimeout(timeout)
-        test_socket.connect(sockaddr)
-        try:
-            return _is_ip_safe(ipaddress.ip_address(test_socket.getpeername()[0]))
-        except (ValueError, IndexError, TypeError):
-            return False
-    except (TimeoutError, OSError):
-        return bool(fail_open_on_error)
-    finally:
-        test_socket.close()
-
-
 @lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def is_private_ip(host: str) -> bool:
     """Check if host is a private/reserved IP address."""
@@ -330,6 +296,11 @@ def _resolve_host_to_ip(host: str) -> IpAddress | None:
             continue
     # Decimal / octal / hex / short-form inet_aton spellings.
     return _parse_inet_aton_ipv4(host)
+
+
+def is_permitted_private_ip(ip: IpAddress) -> bool:
+    """Whether the ``local`` policy permits connecting to ``ip``."""
+    return _is_permitted_private_host(str(ip), str(ip))
 
 
 def _is_permitted_private_host(host: str, host_lower: str) -> bool:

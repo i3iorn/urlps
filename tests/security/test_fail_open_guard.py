@@ -80,18 +80,6 @@ _ALLOWLIST = {
         "`continue` that let unparseable-only results read as safe."
     ),
     (
-        "ip_utils.py",
-        "_verify_connection_safe",
-        False,
-    ): (
-        "The non-fail_open_on_error except branch (getpeername() "
-        "unparseable) is fail-closed by design -- see the function's own "
-        "docstring: 'Being unable to determine the peer... always fails "
-        "closed.' The other except branch in this same function already "
-        "routes through fail_open_on_error explicitly and isn't a bare "
-        "literal, so it doesn't appear in this scan."
-    ),
-    (
         "url_checks.py",
         "has_suspicious_punycode",
         True,

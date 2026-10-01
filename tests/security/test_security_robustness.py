@@ -21,7 +21,6 @@ from urlps import DNSRateLimiter, DNSRateLimiterConfig, InvalidURLError, parse_u
 from urlps._security.ip_utils import (
     _check_resolved_ips_safe,
     _parse_inet_aton_ipv4,
-    _verify_connection_safe,
     is_ssrf_risk,
 )
 
@@ -200,9 +199,6 @@ class TestFailClosed:
             (2, 1, 6, "", ("10.0.0.1", 80)),
         ]
         assert _check_resolved_ips_safe(addr_info) is False
-
-    def test_empty_addr_info_cannot_verify_connection(self):
-        assert _verify_connection_safe([], 1.0) is False
 
 
 class TestPhishingDegradation:

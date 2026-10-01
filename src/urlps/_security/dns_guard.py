@@ -32,7 +32,6 @@ from .ip_utils import (
     _check_direct_ip_safe,
     _check_resolved_ips_safe,
     _strip_ipv6_brackets,
-    _verify_connection_safe,
 )
 
 logger = logging.getLogger(__name__)
@@ -234,7 +233,9 @@ def _validate_host(host: str) -> str | None:
     return _strip_ipv6_brackets(stripped)
 
 
-def _resolve_addr_info(host: str, timeout_seconds: float | None = None) -> list[tuple[int, int, int, str, tuple]]:
+def _resolve_addr_info(
+    host: str, timeout_seconds: float | None = None, port: int = 80
+) -> list[tuple[int, int, int, str, tuple]]:
     """Resolve host to address info, raising socket.gaierror on failure.
 
     ``socket.getaddrinfo`` takes no timeout argument and is bounded only by the
@@ -261,9 +262,9 @@ def _resolve_addr_info(host: str, timeout_seconds: float | None = None) -> list[
     trading that durability for.
     """
 
-    # Port 80 is arbitrary here; we only care about address resolution.
+    # The port only shapes the returned sockaddrs; resolution ignores it.
     def _lookup() -> list[tuple[int, int, int, str, tuple]]:
-        return list(socket.getaddrinfo(host, 80, socket.AF_UNSPEC, socket.SOCK_STREAM))
+        return list(socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM))
 
     if timeout_seconds is None or timeout_seconds <= 0:
         return _lookup()
@@ -335,7 +336,13 @@ def check_dns_rebinding_detailed(
     limiter: DNSRateLimiter | None = None,
     ip_filter: Callable[[IpAddress], bool] | None = None,
 ) -> tuple[bool, ErrorCode | None]:
-    """Check DNS rebinding risk and return deterministic status.
+    """Check that ``host`` currently resolves only to permitted addresses.
+
+    This is a parse-time check: it rejects hosts that resolve to internal
+    addresses *now*. It cannot prevent DNS rebinding, because the HTTP client
+    resolves the name again when it connects; use
+    :func:`urlps.create_guarded_connection` or
+    :func:`urlps.resolve_and_validate` for that.
 
     Args:
         host: Hostname or IP string to validate.
@@ -344,8 +351,12 @@ def check_dns_rebinding_detailed(
         retries: Number of retry attempts after the initial attempt.
         backoff_base_seconds: Base backoff duration for exponential backoff.
         backoff_jitter_seconds: Maximum jitter added to backoff.
-        fail_open_on_connect_error: If True, treat transport/connect verification
-            errors as safe (availability-first). If False, fail closed.
+        fail_open_on_connect_error: Deprecated and ignored. It governed a
+            post-resolution "verification connect" that re-checked the address
+            just resolved -- it could not detect rebinding (the HTTP client
+            resolves again later) and only added an outbound connection to an
+            attacker-chosen host. Use urlps.create_guarded_connection() for
+            protection at connect time.
         limiter: Optional DNSRateLimiter instance. Prefer passing an explicit
             limiter for request/application isolation. If omitted and rate
             limiting is enabled, a process-global compatibility limiter is used.
@@ -386,12 +397,6 @@ def check_dns_rebinding_detailed(
             addr_info: AddrInfo = _resolve_addr_info(normalized_host, effective_timeout_seconds)
             if not _check_resolved_ips_safe(addr_info, ip_filter):
                 return False, ErrorCode.SSRF_RISK
-            if not _verify_connection_safe(
-                addr_info,
-                effective_timeout_seconds,
-                fail_open_on_error=fail_open_on_connect_error,
-            ):
-                return False, ErrorCode.DNS_CONNECTION_FAILED
             return True, None
         except socket.gaierror:
             last_error = ErrorCode.DNS_RESOLUTION_FAILED

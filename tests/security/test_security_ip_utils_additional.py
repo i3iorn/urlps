@@ -84,12 +84,6 @@ class TestSecurityPrivateChecks:
         addr_info = [(2, 1, 6, "", ("93.184.215.14", 80))]
         assert _check_resolved_ips_safe(addr_info) is True
 
-    def test_verify_connection_safe_empty_addr_info_fails_closed(self):
-        """Being unable to determine the peer is not the same as it being safe."""
-        from urlps._security.ip_utils import _verify_connection_safe
-
-        assert _verify_connection_safe([], 1.0) is False
-
     def test_is_private_ip_non_string(self):
         """Line 197: is_private_ip with non-string returns False."""
         from urlps._security import is_private_ip

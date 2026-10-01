@@ -110,40 +110,24 @@ class TestDnsConnectPolicyBehavior:
         policy = SecurityPolicy.balanced(check_dns=True)
         assert policy.dns_fail_open_on_connect_error is True
 
-    def test_dns_connect_can_fail_open_when_configured(self) -> None:
+    def test_dns_check_makes_no_connection(self) -> None:
+        """The verification connect is gone: it re-checked the address just
+        resolved, so it could not detect rebinding, and only added an outbound
+        connection to an attacker-chosen host."""
         fake_addrinfo = [(2, 1, 6, "", ("93.184.216.34", 80))]
         with (
             patch("urlps._security.dns_guard._resolve_addr_info", return_value=fake_addrinfo),
-            patch("urlps._security.dns_guard._check_resolved_ips_safe", return_value=True),
-            patch(
-                "urlps._security.dns_guard._verify_connection_safe",
-                side_effect=lambda *args, **kwargs: kwargs.get("fail_open_on_error", False),
-            ),
+            patch("socket.socket", side_effect=AssertionError("check_dns must not open a socket")),
         ):
-            is_safe, error = check_dns_rebinding_detailed(
-                host="example.com",
-                enforce_rate_limit=False,
-                fail_open_on_connect_error=True,
-            )
+            for fail_open in (True, False):
+                is_safe, error = check_dns_rebinding_detailed(
+                    host="example.com",
+                    enforce_rate_limit=False,
+                    fail_open_on_connect_error=fail_open,
+                )
+                assert is_safe is True
+                assert error is None
 
-        assert is_safe is True
-        assert error is None
-
-    def test_dns_connect_fails_closed_when_configured(self) -> None:
-        fake_addrinfo = [(2, 1, 6, "", ("93.184.216.34", 80))]
-        with (
-            patch("urlps._security.dns_guard._resolve_addr_info", return_value=fake_addrinfo),
-            patch("urlps._security.dns_guard._check_resolved_ips_safe", return_value=True),
-            patch(
-                "urlps._security.dns_guard._verify_connection_safe",
-                side_effect=lambda *args, **kwargs: kwargs.get("fail_open_on_error", False),
-            ),
-        ):
-            is_safe, error = check_dns_rebinding_detailed(
-                host="example.com",
-                enforce_rate_limit=False,
-                fail_open_on_connect_error=False,
-            )
-
-        assert is_safe is False
-        assert error == ErrorCode.DNS_CONNECTION_FAILED
+    def test_passing_the_fail_open_flag_to_a_preset_is_deprecated(self) -> None:
+        with pytest.warns(DeprecationWarning, match="dns_fail_open_on_connect_error"):
+            SecurityPolicy.strict(dns_fail_open_on_connect_error=True)

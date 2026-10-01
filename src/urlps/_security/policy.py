@@ -9,7 +9,7 @@ from typing import Any, Literal, Union, cast
 from .._cache_config import POLICY_CACHE_SIZE
 from ..exceptions import SecurityPolicyError
 from .address_rules import NO_RULES, AddressList, AddressRule
-from .ip_utils import IpAddress, _is_ip_safe, is_metadata_address, is_ssrf_risk
+from .ip_utils import IpAddress, _is_ip_safe, is_metadata_address, is_permitted_private_ip, is_ssrf_risk
 
 PolicyName = Literal["strict", "balanced", "internal", "local"]
 PolicyInput = Union[None, PolicyName, "SecurityPolicy"]
@@ -19,6 +19,20 @@ _UNSET = object()
 #: What ``allowed_addresses``/``denied_addresses`` accept: a compiled
 #: AddressList, or any iterable of rules (see :mod:`.address_rules`).
 AddressListInput = AddressList | Iterable[AddressRule]
+
+
+def _deprecated_fail_open(value: bool | None, preset_default: bool) -> bool:
+    """Resolve the deprecated dns_fail_open_on_connect_error preset argument."""
+    if value is None:
+        return preset_default
+    warnings.warn(
+        "dns_fail_open_on_connect_error is deprecated and has no effect: the DNS check no "
+        "longer makes a verification connection. Use urlps.create_guarded_connection() "
+        "for connect-time SSRF protection. The argument will be removed in a future major release.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    return value
 
 
 @dataclass(frozen=True)
@@ -65,6 +79,9 @@ class SecurityPolicy:
     check_dns: bool = False
     check_phishing: bool = False
     enforce_dns_rate_limit: bool = True
+    # Deprecated: gates nothing. It governed a post-resolution "verification
+    # connect" that has been removed (it re-checked the address just resolved,
+    # so it could not detect rebinding). See urlps.create_guarded_connection.
     dns_fail_open_on_connect_error: bool = True
     dns_retries: int = 2
     dns_backoff_base_seconds: float = 0.05
@@ -125,12 +142,17 @@ class SecurityPolicy:
             return False
         return is_ssrf_risk(host, allow_private=self.allow_private_hosts)
 
-    def ip_is_permitted(self, ip: IpAddress, *, host_allowed_by_name: bool = False) -> bool:
+    def ip_is_permitted(
+        self, ip: IpAddress, *, host_allowed_by_name: bool = False, allow_private: bool = False
+    ) -> bool:
         """Whether a resolved/peer address may be connected to under this policy.
 
         ``host_allowed_by_name`` is True when the hostname being resolved
         matched an allowed rule: its addresses are then trusted, except
-        cloud metadata addresses and anything denied.
+        cloud metadata addresses and anything denied. ``allow_private``
+        applies the ``local`` policy's narrowing (loopback/private permitted,
+        metadata and link-local never) -- the connect-time guard passes
+        ``allow_private_hosts``; the parse-time DNS check deliberately does not.
         """
         if self._denied.matches_ip(ip):
             return False
@@ -138,6 +160,8 @@ class SecurityPolicy:
             return True
         if host_allowed_by_name:
             return not is_metadata_address(ip)
+        if allow_private and is_permitted_private_ip(ip):
+            return True
         return _is_ip_safe(ip)
 
     @classmethod
@@ -146,7 +170,7 @@ class SecurityPolicy:
         *,
         check_dns: bool = False,
         check_phishing: bool = False,
-        dns_fail_open_on_connect_error: bool = False,
+        dns_fail_open_on_connect_error: bool | None = None,
         dns_rate_limiter: Any | None = None,
         allowed_addresses: AddressListInput = (),
         denied_addresses: AddressListInput = (),
@@ -155,7 +179,7 @@ class SecurityPolicy:
             name="strict",
             check_dns=check_dns,
             check_phishing=check_phishing,
-            dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
+            dns_fail_open_on_connect_error=_deprecated_fail_open(dns_fail_open_on_connect_error, False),
             dns_rate_limiter=dns_rate_limiter,
             allowed_addresses=allowed_addresses,
             denied_addresses=denied_addresses,
@@ -167,7 +191,7 @@ class SecurityPolicy:
         *,
         check_dns: bool = False,
         check_phishing: bool = False,
-        dns_fail_open_on_connect_error: bool = True,
+        dns_fail_open_on_connect_error: bool | None = None,
         dns_rate_limiter: Any | None = None,
         allowed_addresses: AddressListInput = (),
         denied_addresses: AddressListInput = (),
@@ -176,7 +200,7 @@ class SecurityPolicy:
             name="balanced",
             check_dns=check_dns,
             check_phishing=check_phishing,
-            dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
+            dns_fail_open_on_connect_error=_deprecated_fail_open(dns_fail_open_on_connect_error, True),
             dns_rate_limiter=dns_rate_limiter,
             block_dangerous_ports=False,
             reject_credentials=False,
@@ -190,7 +214,7 @@ class SecurityPolicy:
         cls,
         *,
         check_dns: bool = False,
-        dns_fail_open_on_connect_error: bool = True,
+        dns_fail_open_on_connect_error: bool | None = None,
         dns_rate_limiter: Any | None = None,
         allowed_addresses: AddressListInput = (),
         denied_addresses: AddressListInput = (),
@@ -218,7 +242,7 @@ class SecurityPolicy:
             check_dns=check_dns,
             check_phishing=False,
             enforce_dns_rate_limit=True,
-            dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
+            dns_fail_open_on_connect_error=_deprecated_fail_open(dns_fail_open_on_connect_error, True),
             dns_rate_limiter=dns_rate_limiter,
             allowed_addresses=allowed_addresses,
             denied_addresses=denied_addresses,
@@ -230,7 +254,7 @@ class SecurityPolicy:
         *,
         check_dns: bool = False,
         enforce_ssrf: bool = True,
-        dns_fail_open_on_connect_error: bool = True,
+        dns_fail_open_on_connect_error: bool | None = None,
         dns_rate_limiter: Any | None = None,
         allowed_addresses: AddressListInput = (),
         denied_addresses: AddressListInput = (),
@@ -259,7 +283,7 @@ class SecurityPolicy:
             check_dns=check_dns,
             check_phishing=False,
             enforce_dns_rate_limit=True,
-            dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
+            dns_fail_open_on_connect_error=_deprecated_fail_open(dns_fail_open_on_connect_error, True),
             dns_rate_limiter=dns_rate_limiter,
             allowed_addresses=allowed_addresses,
             denied_addresses=denied_addresses,
