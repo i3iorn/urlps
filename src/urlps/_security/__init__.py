@@ -85,6 +85,10 @@ _REMEDIATION_BY_CODE: dict[ErrorCode, str] = {
         "answers are free); inject a DNSRateLimiter per tenant so one tenant cannot "
         "spend another's budget."
     ),
+    ErrorCode.PHISHING_DB_UNAVAILABLE: (
+        "The phishing feed could not be downloaded; see get_phishing_db_info()['last_error']. "
+        "A policy with phishing_fail_closed=True rejects the URL in this case; otherwise it is a warning."
+    ),
     ErrorCode.CREDENTIALS_IN_URL: (
         "Credentials in a URL are legal but discouraged. Use "
         'policy="balanced" to allow them, and URL.redacted() or '
@@ -377,7 +381,7 @@ def collect_security_findings(
             # callers that require the check can treat it as fatal.
             findings.append(
                 _finding(
-                    "warning",
+                    "critical" if effective_policy.phishing_fail_closed else "warning",
                     ErrorCode.PHISHING_DB_UNAVAILABLE,
                     "Phishing database unavailable; host was not checked.",
                     "host",

@@ -124,6 +124,26 @@ def _get_url_from_env(env_name: str, default: str) -> str:
     return raw_value
 
 
+def _get_sha256_from_env(env_name: str) -> str | None:
+    """Return a lowercase hex SHA-256 from environment, or None.
+
+    An invalid value is ignored with a warning rather than silently treated
+    as "no pin" -- the warning is the point.
+    """
+    raw_value = os.getenv(env_name)
+    if raw_value is None or not raw_value.strip():
+        return None
+    candidate = raw_value.strip().lower()
+    if len(candidate) != 64 or any(char not in "0123456789abcdef" for char in candidate):
+        warnings.warn(
+            f"Environment variable {env_name} must be a 64-character hex SHA-256; ignoring value.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return None
+    return candidate
+
+
 # Component length limits for security (tuned for 99.99% of URLs)
 # These are intentionally conservative to reduce attack surface while
 # still accommodating real-world usage (tracking, long query strings, etc.).
@@ -248,6 +268,16 @@ PHISHING_DATABASE_URL: Final[str] = _get_url_from_env(
     "URLPS_PHISHING_DATABASE_URL", "https://phish.co.za/latest/ALL-phishing-domains.lst"
 )
 DEFAULT_PHISHING_DATABASE_MAX_BYTES: Final[int] = 25 * 1024 * 1024
+# How old a successfully loaded phishing list may get before the next check
+# triggers a re-download. A list loaded once used to be kept for the life of
+# the process, so a long-running service checked against an ever older feed.
+DEFAULT_PHISHING_DATABASE_REFRESH_SECONDS: Final[int] = _get_positive_int_from_env(
+    "URLPS_PHISHING_DATABASE_REFRESH_SECONDS", 24 * 60 * 60
+)
+# Optional integrity pin: the SHA-256 (hex) the downloaded feed must match.
+# Useful for a self-hosted or mirrored snapshot; a live third-party feed
+# changes too often to pin.
+PHISHING_DATABASE_SHA256: Final[str | None] = _get_sha256_from_env("URLPS_PHISHING_DATABASE_SHA256")
 # Minimum time between download retries after a failed refresh, so a check_phishing=True
 # caller doesn't pay a synchronous network round trip on every single parse_url() call
 # while the phishing feed is unreachable.
@@ -269,6 +299,7 @@ __all__ = [
     "DEFAULT_DNS_TIMEOUT",
     "DEFAULT_DNS_TIME_WINDOW_SECONDS",
     "DEFAULT_PHISHING_DATABASE_MAX_BYTES",
+    "DEFAULT_PHISHING_DATABASE_REFRESH_SECONDS",
     "DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS",
     "DEFAULT_PORTS",
     "LOOPBACK_HOSTNAMES",
@@ -285,6 +316,7 @@ __all__ = [
     "NON_PUBLIC_NETWORKS",
     "OFFICIAL_SCHEMES",
     "PASSWORD_MASK",
+    "PHISHING_DATABASE_SHA256",
     "PHISHING_DATABASE_URL",
     "SCHEMES_NO_PORT",
     "STANDARD_PORTS",

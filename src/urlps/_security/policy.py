@@ -79,6 +79,9 @@ class SecurityPolicy:
     enforce_host_unicode_safety: bool = True
     check_dns: bool = False
     check_phishing: bool = False
+    # When check_phishing is on and the database cannot be loaded, reject the
+    # URL instead of accepting it with a warning finding.
+    phishing_fail_closed: bool = False
     enforce_dns_rate_limit: bool = True
     # Deprecated: gates nothing. It governed a post-resolution "verification
     # connect" that has been removed (it re-checked the address just resolved,
@@ -173,6 +176,7 @@ class SecurityPolicy:
         *,
         check_dns: bool = False,
         check_phishing: bool = False,
+        phishing_fail_closed: bool = False,
         dns_fail_open_on_connect_error: bool | None = None,
         dns_rate_limiter: Any | None = None,
         allowed_addresses: AddressListInput = (),
@@ -182,6 +186,7 @@ class SecurityPolicy:
             name="strict",
             check_dns=check_dns,
             check_phishing=check_phishing,
+            phishing_fail_closed=phishing_fail_closed,
             dns_fail_open_on_connect_error=_deprecated_fail_open(dns_fail_open_on_connect_error, False),
             dns_rate_limiter=dns_rate_limiter,
             allowed_addresses=allowed_addresses,
@@ -194,6 +199,7 @@ class SecurityPolicy:
         *,
         check_dns: bool = False,
         check_phishing: bool = False,
+        phishing_fail_closed: bool = False,
         dns_fail_open_on_connect_error: bool | None = None,
         dns_rate_limiter: Any | None = None,
         allowed_addresses: AddressListInput = (),
@@ -203,6 +209,7 @@ class SecurityPolicy:
             name="balanced",
             check_dns=check_dns,
             check_phishing=check_phishing,
+            phishing_fail_closed=phishing_fail_closed,
             dns_fail_open_on_connect_error=_deprecated_fail_open(dns_fail_open_on_connect_error, True),
             dns_rate_limiter=dns_rate_limiter,
             block_dangerous_ports=False,
