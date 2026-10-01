@@ -136,11 +136,14 @@ class URL:
         self._builder = builder if builder is not None else Builder()
         self._audit_manager = AuditManager(audit) if audit is not None else NO_OP_AUDIT_MANAGER
         self._debug = debug
-        self._check_dns = check_dns
-        self._check_phishing = check_phishing
         self._security_policy = (
             security_policy if security_policy is not None else SecurityPolicy.strict(check_dns=check_dns)
         )
+        # A check enabled on either the argument or the policy runs. These
+        # flags are passed on as explicit overrides at validation time, so a
+        # plain False here used to switch off a policy's check_dns=True.
+        self._check_dns = check_dns or self._security_policy.check_dns
+        self._check_phishing = check_phishing or self._security_policy.check_phishing
         self._security_findings: list[SecurityFinding] = []
         self._correlation_id = correlation_id
         self.recognized_scheme: bool | None = None

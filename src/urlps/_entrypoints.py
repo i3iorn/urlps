@@ -22,8 +22,8 @@ def parse_url(
     url: str,
     *,
     allow_custom_scheme: bool = False,
-    check_dns: bool = False,
-    check_phishing: bool = False,
+    check_dns: bool | None = None,
+    check_phishing: bool | None = None,
     dns_rate_limiter: DNSRateLimiter | None = None,
     policy: PolicyInput = None,
     correlation_id: str | None = None,
@@ -73,10 +73,12 @@ def parse_url(
             Standard schemes: http, https, ftp, ftps, sftp, file, ws, wss
         check_dns: If True, perform DNS lookup to verify host resolves to safe IP.
             WARNING: Has performance impact and is rate-limited to prevent DoS.
-            Use only when DNS rebinding is a concern (default: False)
+            ``None`` (the default) defers to the policy's own ``check_dns``;
+            an explicit True/False overrides it.
         check_phishing: If True, check hostname against known phishing database.
             Downloads database on first use. Best for user-facing applications
-            where phishing is a concern (default: False)
+            where phishing is a concern. ``None`` (the default) defers to the
+            policy's own ``check_phishing``; an explicit True/False overrides it.
         dns_rate_limiter: Optional DNSRateLimiter instance to enforce DNS lookup
             rate limits with dependency injection (recommended for isolation).
             If omitted, DNS checks use the process-global compatibility limiter.
@@ -331,8 +333,8 @@ def join(
     reference: str | URL,
     *,
     allow_custom_scheme: bool = False,
-    check_dns: bool = False,
-    check_phishing: bool = False,
+    check_dns: bool | None = None,
+    check_phishing: bool | None = None,
     dns_rate_limiter: DNSRateLimiter | None = None,
     policy: PolicyInput = None,
     correlation_id: str | None = None,
@@ -424,8 +426,8 @@ def compose_url(components: Mapping[str, Any]) -> str:
 def build_secure(
     *scheme_and_host: str,
     policy: PolicyInput = None,
-    check_dns: bool = False,
-    check_phishing: bool = False,
+    check_dns: bool | None = None,
+    check_phishing: bool | None = None,
     dns_rate_limiter: DNSRateLimiter | None = None,
     correlation_id: str | None = None,
     audit: AuditConfig | None = None,
