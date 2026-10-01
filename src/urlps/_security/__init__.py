@@ -69,8 +69,9 @@ from .url_checks import (
 _REMEDIATION_BY_CODE: dict[ErrorCode, str] = {
     ErrorCode.SSRF_RISK: (
         "If this is an intentional local or internal URL, use parse_url_local() "
-        'or policy="local", which still blocks cloud metadata endpoints. To turn '
-        "SSRF enforcement off entirely, pass "
+        'or policy="local", which still blocks cloud metadata endpoints. To permit '
+        "specific hosts or networks, add them to the policy's allowed_addresses. To "
+        "turn SSRF enforcement off entirely, pass "
         "SecurityPolicy.internal(enforce_ssrf=False)."
     ),
     ErrorCode.DANGEROUS_PORT: (
@@ -219,9 +220,19 @@ def collect_security_findings(
                     "host",
                 )
             )
-        if effective_policy.enforce_ssrf and any(
-            is_ssrf_risk(h, allow_private=effective_policy.allow_private_hosts) for h in host_spellings
-        ):
+        # A denied rule is the caller saying "never this host", so it applies
+        # whether or not built-in SSRF enforcement is on.
+        if any(effective_policy.host_is_denied(h) for h in host_spellings):
+            findings.append(
+                SecurityFinding(
+                    severity="critical",
+                    code=ErrorCode.SSRF_RISK.value,
+                    message="Host matches a denied address rule.",
+                    component="host",
+                    remediation="The policy's denied_addresses covers this host.",
+                )
+            )
+        elif effective_policy.enforce_ssrf and any(effective_policy.host_is_ssrf_risk(h) for h in host_spellings):
             findings.append(
                 _finding("critical", ErrorCode.SSRF_RISK, "Host poses SSRF risk and is disallowed.", "host")
             )
@@ -299,8 +310,10 @@ def collect_security_findings(
     # that URL.host and HTTP clients use.
     effective_check_dns = effective_policy.check_dns
     if effective_check_dns and host:
+        host_allowed_by_name = effective_policy.host_is_allowed(host)
         safe, dns_error = check_dns_rebinding_detailed(
             host,
+            ip_filter=lambda ip: effective_policy.ip_is_permitted(ip, host_allowed_by_name=host_allowed_by_name),
             enforce_rate_limit=effective_policy.enforce_dns_rate_limit,
             retries=effective_policy.dns_retries,
             backoff_base_seconds=effective_policy.dns_backoff_base_seconds,

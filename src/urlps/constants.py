@@ -176,6 +176,53 @@ METADATA_HOSTNAMES: Final[frozenset[str]] = frozenset(
     }
 )
 
+#: Cloud metadata / credential endpoints by *address*, so they are recognized
+#: in every spelling (decimal, hex, IPv4-mapped, ...) rather than only the one
+#: literal string in METADATA_HOSTNAMES. Like that set, these stay blocked
+#: under ``local`` -- including fd00:ec2::254, which is otherwise an ordinary
+#: ULA that ``local`` permits.
+METADATA_ADDRESSES: Final[tuple[str, ...]] = (
+    "169.254.169.254/32",  # AWS/GCP/Azure/OCI/DigitalOcean instance metadata
+    "169.254.170.2/32",  # AWS ECS task metadata / credentials
+    "169.254.170.23/32",  # AWS EKS Pod Identity agent
+    "100.100.100.200/32",  # Alibaba Cloud ECS metadata (RAM role STS credentials)
+    "fd00:ec2::254/128",  # AWS instance metadata over IPv6
+    "fd00:ec2::23/128",  # AWS EKS Pod Identity agent over IPv6
+)
+
+#: Ranges that are never a legitimate outbound target. Checked explicitly in
+#: addition to ``ipaddress``'s own predicates because those tables have
+#: changed across CPython patch releases (e.g. 100.64.0.0/10 is neither
+#: ``is_private`` nor ``is_global``, and was treated as public for that
+#: reason), and an SSRF verdict must not depend on the interpreter version.
+NON_PUBLIC_NETWORKS: Final[tuple[str, ...]] = (
+    "0.0.0.0/8",  # "this network"
+    "10.0.0.0/8",  # RFC 1918
+    "100.64.0.0/10",  # shared address space / CGNAT (Alibaba metadata, Tailscale, pod CIDRs)
+    "127.0.0.0/8",  # loopback
+    "169.254.0.0/16",  # link-local (cloud metadata)
+    "172.16.0.0/12",  # RFC 1918
+    "192.0.0.0/24",  # IETF protocol assignments
+    "192.0.2.0/24",  # TEST-NET-1
+    "192.168.0.0/16",  # RFC 1918
+    "198.18.0.0/15",  # benchmarking
+    "198.51.100.0/24",  # TEST-NET-2
+    "203.0.113.0/24",  # TEST-NET-3
+    "224.0.0.0/4",  # multicast
+    "240.0.0.0/4",  # reserved, includes 255.255.255.255
+    "::/8",  # unspecified, loopback, IPv4-mapped/-compatible, NAT64 64:ff9b::/96 and /48
+    "100::/64",  # discard-only
+    "2001::/23",  # IETF protocol assignments, includes Teredo 2001::/32
+    "2001:db8::/32",  # documentation
+    "2002::/16",  # 6to4 (deprecated, RFC 7526)
+    "3fff::/20",  # documentation
+    "5f00::/16",  # SRv6 SIDs
+    "fc00::/7",  # unique local
+    "fe80::/10",  # link-local
+    "fec0::/10",  # site-local (deprecated, still routed internally by some stacks)
+    "ff00::/8",  # multicast
+)
+
 BLOCKED_HOSTNAMES: Final[frozenset[str]] = LOOPBACK_HOSTNAMES | METADATA_HOSTNAMES
 
 DEFAULT_DNS_TIMEOUT: Final[float] = 2.0
@@ -222,7 +269,9 @@ __all__ = [
     "MAX_SCHEME_LENGTH",
     "MAX_URL_LENGTH",
     "MAX_USERINFO_LENGTH",
+    "METADATA_ADDRESSES",
     "METADATA_HOSTNAMES",
+    "NON_PUBLIC_NETWORKS",
     "OFFICIAL_SCHEMES",
     "PASSWORD_MASK",
     "PHISHING_DATABASE_URL",

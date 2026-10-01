@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from functools import lru_cache
-from typing import Any, Literal, Union
+from typing import Any, Literal, Union, cast
 
 from .._cache_config import POLICY_CACHE_SIZE
 from ..exceptions import SecurityPolicyError
+from .address_rules import NO_RULES, AddressList, AddressRule
+from .ip_utils import IpAddress, _is_ip_safe, is_metadata_address, is_ssrf_risk
 
 PolicyName = Literal["strict", "balanced", "internal", "local"]
 PolicyInput = Union[None, PolicyName, "SecurityPolicy"]
 _POLICY_NAMES: tuple[str, ...] = ("strict", "balanced", "internal", "local")
 _UNSET = object()
+
+#: What ``allowed_addresses``/``denied_addresses`` accept: a compiled
+#: AddressList, or any iterable of rules (see :mod:`.address_rules`).
+AddressListInput = AddressList | Iterable[AddressRule]
 
 
 @dataclass(frozen=True)
@@ -63,8 +70,22 @@ class SecurityPolicy:
     dns_backoff_base_seconds: float = 0.05
     dns_backoff_jitter_seconds: float = 0.02
     dns_rate_limiter: Any | None = None
+    # Caller-supplied address rules, applied to the host and to every
+    # DNS-resolved address. Each rule is an IP, a CIDR network, a hostname, or
+    # a ".domain" (the domain and all its subdomains); see
+    # urlps._security.address_rules. A denied match always rejects -- even
+    # with enforce_ssrf=False -- and wins over an allowed match. An allowed
+    # match exempts the host from the built-in SSRF classification; allowing
+    # a hostname also trusts what it resolves to, except cloud metadata
+    # addresses, which only an explicit IP/network rule can allow.
+    allowed_addresses: AddressListInput = NO_RULES
+    denied_addresses: AddressListInput = NO_RULES
 
     def __post_init__(self) -> None:
+        # Compile here so an invalid rule fails at policy construction, not on
+        # the first URL that happens to reach it.
+        object.__setattr__(self, "allowed_addresses", AddressList.from_rules(self.allowed_addresses))
+        object.__setattr__(self, "denied_addresses", AddressList.from_rules(self.denied_addresses))
         if self.enforce_suspicious_punycode:
             warnings.warn(
                 "SecurityPolicy.enforce_suspicious_punycode is deprecated and "
@@ -75,6 +96,50 @@ class SecurityPolicy:
                 stacklevel=2,
             )
 
+    @property
+    def _allowed(self) -> AddressList:
+        return cast(AddressList, self.allowed_addresses)
+
+    @property
+    def _denied(self) -> AddressList:
+        return cast(AddressList, self.denied_addresses)
+
+    def host_is_denied(self, host: str) -> bool:
+        """Whether ``host`` (in any spelling) matches a ``denied_addresses`` rule."""
+        return self._denied.matches_host(host)
+
+    def host_is_allowed(self, host: str) -> bool:
+        """Whether ``host`` matches an ``allowed_addresses`` rule and no denied one."""
+        return not self.host_is_denied(host) and self._allowed.matches_host(host)
+
+    def host_is_ssrf_risk(self, host: str) -> bool:
+        """The SSRF verdict for ``host`` under this policy's rules.
+
+        Denied rules first, then allowed rules, then the built-in
+        classification (narrowed by ``allow_private_hosts``). Does not consult
+        ``enforce_ssrf``; callers decide whether the built-in verdict applies.
+        """
+        if self.host_is_denied(host):
+            return True
+        if self._allowed.matches_host(host):
+            return False
+        return is_ssrf_risk(host, allow_private=self.allow_private_hosts)
+
+    def ip_is_permitted(self, ip: IpAddress, *, host_allowed_by_name: bool = False) -> bool:
+        """Whether a resolved/peer address may be connected to under this policy.
+
+        ``host_allowed_by_name`` is True when the hostname being resolved
+        matched an allowed rule: its addresses are then trusted, except
+        cloud metadata addresses and anything denied.
+        """
+        if self._denied.matches_ip(ip):
+            return False
+        if self._allowed.matches_ip(ip):
+            return True
+        if host_allowed_by_name:
+            return not is_metadata_address(ip)
+        return _is_ip_safe(ip)
+
     @classmethod
     def strict(
         cls,
@@ -83,6 +148,8 @@ class SecurityPolicy:
         check_phishing: bool = False,
         dns_fail_open_on_connect_error: bool = False,
         dns_rate_limiter: Any | None = None,
+        allowed_addresses: AddressListInput = (),
+        denied_addresses: AddressListInput = (),
     ) -> SecurityPolicy:
         return cls(
             name="strict",
@@ -90,6 +157,8 @@ class SecurityPolicy:
             check_phishing=check_phishing,
             dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
             dns_rate_limiter=dns_rate_limiter,
+            allowed_addresses=allowed_addresses,
+            denied_addresses=denied_addresses,
         )
 
     @classmethod
@@ -100,6 +169,8 @@ class SecurityPolicy:
         check_phishing: bool = False,
         dns_fail_open_on_connect_error: bool = True,
         dns_rate_limiter: Any | None = None,
+        allowed_addresses: AddressListInput = (),
+        denied_addresses: AddressListInput = (),
     ) -> SecurityPolicy:
         return cls(
             name="balanced",
@@ -110,6 +181,8 @@ class SecurityPolicy:
             block_dangerous_ports=False,
             reject_credentials=False,
             enforce_suspicious_punycode=False,
+            allowed_addresses=allowed_addresses,
+            denied_addresses=denied_addresses,
         )
 
     @classmethod
@@ -119,6 +192,8 @@ class SecurityPolicy:
         check_dns: bool = False,
         dns_fail_open_on_connect_error: bool = True,
         dns_rate_limiter: Any | None = None,
+        allowed_addresses: AddressListInput = (),
+        denied_addresses: AddressListInput = (),
     ) -> SecurityPolicy:
         """Local development: like ``internal``, but loopback/private hosts are allowed.
 
@@ -145,6 +220,8 @@ class SecurityPolicy:
             enforce_dns_rate_limit=True,
             dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
             dns_rate_limiter=dns_rate_limiter,
+            allowed_addresses=allowed_addresses,
+            denied_addresses=denied_addresses,
         )
 
     @classmethod
@@ -155,6 +232,8 @@ class SecurityPolicy:
         enforce_ssrf: bool = True,
         dns_fail_open_on_connect_error: bool = True,
         dns_rate_limiter: Any | None = None,
+        allowed_addresses: AddressListInput = (),
+        denied_addresses: AddressListInput = (),
     ) -> SecurityPolicy:
         """Trusted/internal input: heuristics off, but SSRF still enforced.
 
@@ -182,6 +261,8 @@ class SecurityPolicy:
             enforce_dns_rate_limit=True,
             dns_fail_open_on_connect_error=dns_fail_open_on_connect_error,
             dns_rate_limiter=dns_rate_limiter,
+            allowed_addresses=allowed_addresses,
+            denied_addresses=denied_addresses,
         )
 
     def __str__(self) -> str:
@@ -290,4 +371,4 @@ def resolve_security_policy(
     raise SecurityPolicyError(f"Unsupported security policy: {policy!r}")
 
 
-__all__ = ["PolicyInput", "SecurityPolicy", "resolve_security_policy"]
+__all__ = ["AddressListInput", "PolicyInput", "SecurityPolicy", "resolve_security_policy"]

@@ -28,6 +28,7 @@ from ..constants import (
 from ..exceptions import DNSRateLimiterError, ErrorCode
 from .ip_utils import (
     AddrInfo,
+    IpAddress,
     _check_direct_ip_safe,
     _check_resolved_ips_safe,
     _strip_ipv6_brackets,
@@ -332,6 +333,7 @@ def check_dns_rebinding_detailed(
     backoff_jitter_seconds: float = 0.02,
     fail_open_on_connect_error: bool = True,
     limiter: DNSRateLimiter | None = None,
+    ip_filter: Callable[[IpAddress], bool] | None = None,
 ) -> tuple[bool, ErrorCode | None]:
     """Check DNS rebinding risk and return deterministic status.
 
@@ -347,6 +349,9 @@ def check_dns_rebinding_detailed(
         limiter: Optional DNSRateLimiter instance. Prefer passing an explicit
             limiter for request/application isolation. If omitted and rate
             limiting is enabled, a process-global compatibility limiter is used.
+        ip_filter: Decides whether an address is acceptable; defaults to the
+            built-in public-unicast classification. ``collect_security_findings``
+            passes the policy's, so allowed/denied address rules apply here too.
 
     Returns:
         (is_safe, error_code) where error_code is None on success.
@@ -360,7 +365,7 @@ def check_dns_rebinding_detailed(
     if effective_timeout_seconds <= 0:
         return False, ErrorCode.DNS_CONNECTION_FAILED
 
-    direct_result = _check_direct_ip_safe(normalized_host)
+    direct_result = _check_direct_ip_safe(normalized_host, ip_filter)
     if direct_result is not None:
         return direct_result, None if direct_result else ErrorCode.SSRF_RISK
 
@@ -379,7 +384,7 @@ def check_dns_rebinding_detailed(
     for attempt_index in range(max_attempts):
         try:
             addr_info: AddrInfo = _resolve_addr_info(normalized_host, effective_timeout_seconds)
-            if not _check_resolved_ips_safe(addr_info):
+            if not _check_resolved_ips_safe(addr_info, ip_filter):
                 return False, ErrorCode.SSRF_RISK
             if not _verify_connection_safe(
                 addr_info,
@@ -414,6 +419,7 @@ def check_dns_rebinding(
     backoff_jitter_seconds: float = 0.02,
     fail_open_on_connect_error: bool = True,
     limiter: DNSRateLimiter | None = None,
+    ip_filter: Callable[[IpAddress], bool] | None = None,
 ) -> bool:
     """Boolean wrapper around detailed DNS rebinding checks.
 
@@ -430,6 +436,7 @@ def check_dns_rebinding(
         backoff_jitter_seconds=backoff_jitter_seconds,
         fail_open_on_connect_error=fail_open_on_connect_error,
         limiter=limiter,
+        ip_filter=ip_filter,
     )
     return is_safe
 
