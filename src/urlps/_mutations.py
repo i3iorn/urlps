@@ -43,7 +43,7 @@ class _URLMutations:
         """
         from ._validation import _URLValidation
 
-        _URLValidation.validate_copy_overrides(overrides)
+        _URLValidation.validate_copy_overrides(overrides, allow_custom_scheme=url._parser.custom_scheme)
         components = url._to_dict()
         components.update(overrides)
         components["port"] = _normalize_port(components.get("port"))

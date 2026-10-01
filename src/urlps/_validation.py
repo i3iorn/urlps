@@ -33,9 +33,11 @@ from .constants import (
     MAX_IPV6_STRING_LENGTH,
     MAX_SCHEME_LENGTH,
     MAX_USERINFO_LENGTH,
+    OFFICIAL_SCHEMES,
     STANDARD_PORTS,
+    UNSAFE_SCHEMES,
 )
-from .exceptions import InvalidURLError
+from .exceptions import InvalidURLError, UnsupportedSchemeError
 
 if TYPE_CHECKING:
     from ._components import SecurityFinding
@@ -354,7 +356,7 @@ class _URLValidation:
     __slots__ = ()
 
     @staticmethod
-    def validate_copy_overrides(overrides: dict[str, Any]) -> None:
+    def validate_copy_overrides(overrides: dict[str, Any], *, allow_custom_scheme: bool = False) -> None:
         """Validate copy() override arguments.
 
         Overrides are checked against the same component validators the parser
@@ -382,6 +384,19 @@ class _URLValidation:
         scheme = overrides.get("scheme")
         if scheme is not None and not Validator.is_valid_scheme(scheme.lower()):
             raise InvalidURLError(f"Invalid scheme: {scheme!r}", value=scheme, component="scheme")
+        # The same allowlist parse_url() applies: with_scheme("gopher") or
+        # with_scheme("file") must not be a way around it.
+        if (
+            scheme is not None
+            and not allow_custom_scheme
+            and (scheme.lower() not in OFFICIAL_SCHEMES or scheme.lower() in UNSAFE_SCHEMES)
+        ):
+            raise UnsupportedSchemeError(
+                f"Scheme {scheme!r} is not a standard scheme; the URL must be parsed with "
+                "allow_custom_scheme=True to switch to it.",
+                value=scheme,
+                component="scheme",
+            )
 
         host = overrides.get("host")
         if host is not None and not _URLValidation._is_valid_host_override(host):

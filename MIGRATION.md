@@ -1,5 +1,28 @@
 # Migration Guide
 
+## 1.1.x → 1.2.0
+
+A security release. Several checks now do what the documentation always
+said they did, which means some input that used to be accepted is now
+rejected. Each row says how to get the old behaviour back on purpose.
+
+### You will notice these
+
+| Change | Who it affects | What to do |
+|---|---|---|
+| Non-standard schemes (`smb://`, `redis://`, `mailto:`, `ms-msdt:`, `x-custom://`, ...) now raise `UnsupportedSchemeError` unless `allow_custom_scheme=True` | Anyone parsing non-`http(s)`/`ftp(s)`/`sftp`/`ws(s)` URLs | Pass `allow_custom_scheme=True`, as the parameter's documentation always said was required. `with_scheme()` follows the same rule, based on how the URL was parsed. |
+| `100.64.0.0/10` (shared address space / CGNAT, which includes Alibaba Cloud's metadata endpoint `100.100.100.200`), IPv6 site-local `fec0::/10`, and the rest of `NON_PUBLIC_NETWORKS` are now SSRF risks | Anyone fetching Tailscale (`100.x`) or CGNAT-range hosts | Add them to `SecurityPolicy(..., allowed_addresses=["100.64.0.0/10"])` (every preset accepts it). |
+| The `local` policy never permits a cloud metadata address, in any spelling, including the AWS IPv6 endpoint `fd00:ec2::254` (otherwise an ordinary ULA) | Nobody legitimate | Nothing. |
+| `parse_url(url, policy=SecurityPolicy.strict(check_dns=True))` now actually runs the DNS check (it silently did not), and a `dns_rate_limiter` set on the policy is now actually used | Anyone who configured DNS checks on the policy | Nothing, unless your tests relied on no lookups happening. Pass `check_dns=False` explicitly to override a policy. |
+| The DNS check no longer makes a "verification connection" to the resolved address | Nobody legitimate | Use `create_guarded_connection()` / `resolve_and_validate()` for connect-time protection; see the README. |
+| DNS lookups are cached (30s positive, 5s negative) and the per-host limit counts only real lookups | Anyone relying on every `check_dns=True` parse hitting the resolver | Configure `DNSRateLimiterConfig(cache_ttl_seconds=0)` to disable caching. |
+
+### Renamed and deprecated
+
+| Old | New | Status |
+|---|---|---|
+| `dns_fail_open_on_connect_error=` on the policy presets | nothing (it governed the removed verification connect) | Passing it emits `DeprecationWarning` and has no effect. Removed in 2.0. |
+
 ## 1.0.x → 1.1.0
 
 No breaking changes. Two things are worth knowing about before you upgrade.

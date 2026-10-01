@@ -82,8 +82,20 @@ def parse_scheme(url: str, allow_custom: bool = False) -> tuple[str | None, str,
         )
     if scheme_lower in OFFICIAL_SCHEMES:
         return scheme_lower, remainder, True, has_authority
-    if Validator.is_valid_scheme(scheme_lower) or allow_custom:
+    if allow_custom:
         return scheme_lower, remainder, False, has_authority
+    if Validator.is_valid_scheme(scheme_lower):
+        # Syntactically fine, but not one of the standard schemes. Accepting
+        # it by default (as this used to) let parse_url() vet links such as
+        # ms-msdt:, search-ms: or smb:// that hand the URL to an OS protocol
+        # handler; the allowlist is what allow_custom_scheme documents.
+        raise UnsupportedSchemeError(
+            f"Scheme '{scheme_candidate}' is not a standard scheme "
+            f"({', '.join(sorted(OFFICIAL_SCHEMES - UNSAFE_SCHEMES))}); "
+            "pass allow_custom_scheme=True to accept it.",
+            value=scheme_candidate,
+            component="scheme",
+        )
     raise URLParseError(f"Invalid URL scheme: {scheme_candidate}", value=scheme_candidate, component="scheme")
 
 
