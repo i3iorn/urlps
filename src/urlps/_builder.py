@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import quote, quote_plus, unquote_plus
 
@@ -139,28 +139,6 @@ class Builder:
             except UnicodeEncodeError as exc:
                 raise URLBuildError("Fragment is not valid Unicode.", component="fragment") from exc
         return url
-
-    def compose_secure(
-        self,
-        components: Mapping[str, Any],
-        *,
-        policy: Any = None,
-        check_dns: bool = False,
-        check_phishing: bool = False,
-        correlation_id: str | None = None,
-    ) -> str:
-        """Compose then validate a URL under a security policy."""
-        from . import parse_url
-
-        url = self.compose(components)
-        validated = parse_url(
-            url,
-            policy=policy,
-            check_dns=check_dns,
-            check_phishing=check_phishing,
-            correlation_id=correlation_id,
-        )
-        return validated.as_string()
 
     def build_netloc(self, userinfo: str | None, host: str | None, port: int | None, scheme: str | None) -> str:
         """Build the network location (authority) component of a URL.
@@ -420,38 +398,6 @@ class Builder:
             'a=1&b=2'
         """
         pairs = [(k, v) for k, v in self.parse_query(query) if k != key]
-        return self.serialize_query(pairs)
-
-    def merge_params(self, query: str | None, updates: Mapping[str, Any]) -> str:
-        """Merge new parameters into a query string.
-
-        Adds new key-value pairs from the updates mapping. Does not remove
-        or replace existing parameters with the same keys.
-
-        Args:
-            query: The existing query string (without '?'), or None.
-            updates: A mapping of keys to values. Values can be:
-                - str: Added as a single parameter
-                - None: Added as a value-less key
-                - Iterable (not str/bytes): Each item added as separate parameter
-
-        Returns:
-            The new query string with merged parameters.
-
-        Example:
-            >>> builder = Builder()
-            >>> builder.merge_params('a=1', {'b': '2', 'c': '3'})
-            'a=1&b=2&c=3'
-            >>> builder.merge_params('a=1', {'arr': ['x', 'y']})
-            'a=1&arr=x&arr=y'
-        """
-        pairs = self.parse_query(query)
-        for key, value in updates.items():
-            if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
-                for child in value:
-                    pairs.append((key, None if child is None else str(child)))
-            else:
-                pairs.append((key, None if value is None else str(value)))
         return self.serialize_query(pairs)
 
 

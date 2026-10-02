@@ -13,15 +13,6 @@ QueryPairs = list[tuple[str, str | None]]
 
 
 # ---------------------------------------------------------------------------
-# Exceptions
-# ---------------------------------------------------------------------------
-
-
-class URLComponentError(Exception):
-    """Raised when invalid URL component data is provided."""
-
-
-# ---------------------------------------------------------------------------
 # Data Models
 # ---------------------------------------------------------------------------
 
@@ -94,88 +85,8 @@ class ParseResult:
         }
 
 
-@dataclass(frozen=True, slots=True)
-class URLComponents:
-    """Immutable URL components for construction or manipulation.
-
-    Attributes mirror ParseResult but are intended for building URLs.
-    """
-
-    scheme: str | None = None
-    userinfo: str | None = None
-    host: str | None = None
-    port: int | None = None
-    path: str = ""
-    query: str | None = None
-    fragment: str | None = None
-    query_pairs: QueryPairs = field(default_factory=list)
-
-    # -----------------------------------------------------------------------
-    # Public API
-    # -----------------------------------------------------------------------
-
-    def with_updates(self, **updates: Any) -> URLComponents:
-        """Return a new URLComponents with validated updates applied.
-
-        Raises:
-            URLComponentError: If an update contains invalid data.
-        """
-        # Constructed field-by-field rather than via **dict so each argument
-        # keeps its own type; a dict of mixed value types erases them.
-        return URLComponents(
-            scheme=self._validated_str(updates.get("scheme", self.scheme)),
-            userinfo=self._validated_str(updates.get("userinfo", self.userinfo)),
-            host=self._validated_str(updates.get("host", self.host)),
-            port=self._validated_port(updates.get("port", self.port)),
-            path=self._validated_str(updates.get("path", self.path), allow_empty=True) or "",
-            query=self._validated_str(updates.get("query", self.query)),
-            fragment=self._validated_str(updates.get("fragment", self.fragment)),
-            query_pairs=self._validated_query_pairs(updates.get("query_pairs", self.query_pairs)),
-        )
-
-    # -----------------------------------------------------------------------
-    # Validation Helpers
-    # -----------------------------------------------------------------------
-
-    @staticmethod
-    def _validated_str(value: Any, allow_empty: bool = False) -> str | None:
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            raise URLComponentError("Expected string or None for text fields.")
-        if not allow_empty and value == "":
-            raise URLComponentError("Empty string not allowed for this field.")
-        return value
-
-    @staticmethod
-    def _validated_port(value: Any) -> int | None:
-        if value is None:
-            return None
-        if isinstance(value, int) and 0 < value <= 65535:
-            return value
-        raise URLComponentError("Port must be an integer in range 1–65535.")
-
-    @staticmethod
-    def _validated_query_pairs(value: Any) -> QueryPairs:
-        if not isinstance(value, list):
-            raise URLComponentError("query_pairs must be a list of (key, value) tuples.")
-        validated_pairs: QueryPairs = []
-        for pair in value:
-            if (
-                not isinstance(pair, tuple)
-                or len(pair) != 2
-                or not isinstance(pair[0], str)
-                or (pair[1] is not None and not isinstance(pair[1], str))
-            ):
-                raise URLComponentError("Invalid query pair structure.")
-            validated_pairs.append(pair)
-        return validated_pairs
-
-
 __all__ = [
     "ParseResult",
     "QueryPairs",
     "SecurityFinding",
-    "URLComponentError",
-    "URLComponents",
 ]

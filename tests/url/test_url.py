@@ -244,33 +244,3 @@ def test_without_query() -> None:
     assert clean.query is None
     assert clean.fragment is None
     assert clean.path == "/path"
-
-
-def test_url_components_with_updates() -> None:
-    """Test URLComponents.with_updates() works with partial kwargs."""
-    from urlps._components import URLComponents
-
-    # Create initial components
-    components = URLComponents(
-        scheme="https",
-        host="example.com",
-        port=443,
-        path="/original",
-    )
-
-    # Update only some fields - should not raise KeyError
-    updated = components.with_updates(path="/updated")
-    assert updated.scheme == "https"
-    assert updated.host == "example.com"
-    assert updated.port == 443
-    assert updated.path == "/updated"
-
-    # Update multiple fields
-    updated2 = components.with_updates(host="other.com", port=8080)
-    assert updated2.host == "other.com"
-    assert updated2.port == 8080
-    assert updated2.path == "/original"
-
-    # Update with None port
-    updated3 = components.with_updates(port=None)
-    assert updated3.port is None

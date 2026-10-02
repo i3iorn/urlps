@@ -199,10 +199,6 @@ class URL:
             self._audit_manager.invoke(raw_url=url, parsed_url=None, exception=exc, correlation_id=self._correlation_id)
             raise
 
-    def _security_checks(self) -> None:
-        """Run security validations on parsed URL."""
-        self.validate(raise_on_error=True)
-
     def _apply_parsed(self, components: Mapping[str, Any | None]) -> None:
         """Apply parsed components to instance."""
         scheme_component = components.get("scheme")
@@ -348,20 +344,6 @@ class URL:
             InvalidURLError: If overrides are invalid.
         """
         return _URLMutations.copy(self, **overrides)
-
-    def _reconcile_query_components(
-        self,
-        components: dict[str, Any],
-        overrides: Mapping[str, Any],
-    ) -> None:
-        """Keep ``query`` and ``query_pairs`` from disagreeing after an override.
-
-        They are two representations of one value. Overriding only one of them
-        would otherwise leave the copy carrying the *previous* value in the
-        other, so the stale one has to be re-derived from whichever the caller
-        actually supplied.
-        """
-        _URLMutations._reconcile_query_components(components, overrides)
 
     def with_scheme(self, scheme: str | None) -> URL:
         """Return new URL with different scheme.
@@ -534,26 +516,6 @@ class URL:
         """Compare URLs (or a URL and a string) lexicographically for sorting."""
         return _URLComparison.compare_ge(self, other)
 
-    @classmethod
-    def _validate_copy_overrides(cls, overrides: dict[str, Any]) -> None:
-        """Validate copy() override arguments.
-
-        Overrides are checked against the same component validators the parser
-        uses. Previously this only verified that values were strings, so
-        ``with_host("not a valid host!")`` succeeded and produced a URL object
-        that ``parse_url`` would have rejected -- component validation on the
-        mutation path was strictly weaker than on the parse path.
-        """
-        _URLValidation.validate_copy_overrides(overrides)
-
-    @staticmethod
-    def _is_valid_host_override(host: str) -> bool:
-        """Return True if host is a valid hostname, IPv4 literal, or IPv6 literal."""
-        return _URLValidation._is_valid_host_override(host)
-
-
-# For backward compatibility with tests that import this private function
-_validate_copy_overrides = _URLValidation.validate_copy_overrides
 
 __all__ = [
     "URL",

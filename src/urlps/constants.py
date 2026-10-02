@@ -48,8 +48,6 @@ UNSAFE_SCHEMES: Final[frozenset[str]] = frozenset(
     }
 )
 
-STANDARD_PORTS: Final[frozenset[int]] = frozenset([80, 443, 21, 22, 25, 110, 143, 53])
-
 DANGEROUS_PORTS: Final[frozenset[int]] = frozenset(
     {
         22,  # SSH
@@ -319,7 +317,6 @@ __all__ = [
     "PHISHING_DATABASE_SHA256",
     "PHISHING_DATABASE_URL",
     "SCHEMES_NO_PORT",
-    "STANDARD_PORTS",
     "UNSAFE_SCHEMES",
     "OfficialSchemes",
 ]

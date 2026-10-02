@@ -47,8 +47,6 @@ def test_query_mutators_round_trip() -> None:
     assert query == "foo=bar&flag"
     query = builder.remove_param(query, "foo")
     assert query == "flag"
-    query = builder.merge_params(query, {"multi": [1, 2], "plain": "x"})
-    assert query == "flag&multi=1&multi=2&plain=x"
 
 
 def test_normalize_path_collapses_dot_segments() -> None:

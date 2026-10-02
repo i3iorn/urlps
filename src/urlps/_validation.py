@@ -35,7 +35,6 @@ from .constants import (
     MAX_SCHEME_LENGTH,
     MAX_USERINFO_LENGTH,
     OFFICIAL_SCHEMES,
-    STANDARD_PORTS,
     UNSAFE_SCHEMES,
 )
 from .exceptions import InvalidURLError, UnsupportedSchemeError
@@ -204,20 +203,6 @@ class Validator:
             return False
 
     @staticmethod
-    def is_standard_port(port: int) -> bool:
-        """Check if port is a standard well-known port.
-
-        Args:
-            port: The port number.
-        Returns:
-            True if standard, False otherwise.
-        """
-        try:
-            return int(port) in STANDARD_PORTS
-        except (TypeError, ValueError):
-            return False
-
-    @staticmethod
     @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_url_safe_string(url: str) -> bool:
         """Check if string contains only URL-safe characters (no control characters).
@@ -233,32 +218,6 @@ class Validator:
         if not isinstance(url, str):
             return False
         return not compiled_regex["control_chars"].search(url)
-
-    @staticmethod
-    def is_valid_path(path: str) -> bool:
-        """Check if URL path contains only safe characters.
-
-        This delegates to is_url_safe_string() for consistency.
-
-        Args:
-            path: The path string.
-        Returns:
-            True if path contains only safe characters, False otherwise.
-        """
-        return Validator.is_url_safe_string(path)
-
-    @staticmethod
-    def is_valid_query_param(param: str) -> bool:
-        """Check if query parameter contains only safe characters.
-
-        This delegates to is_url_safe_string() for consistency.
-
-        Args:
-            param: The query parameter string.
-        Returns:
-            True if parameter contains only safe characters, False otherwise.
-        """
-        return Validator.is_url_safe_string(param)
 
     @staticmethod
     @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)

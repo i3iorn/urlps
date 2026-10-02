@@ -6,14 +6,6 @@ import pytest
 
 
 class TestBuilder:
-    def test_compose_secure(self):
-        """Lines 123-133: compose_secure() builds and validates URL."""
-        from urlps._builder import Builder
-
-        builder = Builder()
-        result = builder.compose_secure({"scheme": "https", "host": "example.com", "path": "/secure"})
-        assert "example.com" in result
-
     def test_compose_scheme_none_no_host_raises(self):
         """Lines 97->99 / 102-103: compose() with scheme but no valid netloc raises."""
         from urlps._builder import Builder

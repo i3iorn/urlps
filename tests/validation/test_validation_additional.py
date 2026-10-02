@@ -38,13 +38,6 @@ class TestValidation:
         result = Validator._validate_ipv4_octets("192.168.1.abc")
         assert result is False
 
-    def test_is_standard_port_type_error(self):
-        """Lines 211-212: TypeError returns False in is_standard_port."""
-        from urlps._validation import Validator
-
-        result = Validator.is_standard_port("not_a_port_int")
-        assert result is False
-
     def test_is_url_safe_string_non_string(self):
         """Line 228: non-string returns False in is_url_safe_string."""
         from urlps._validation import Validator

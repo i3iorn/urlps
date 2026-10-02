@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import unquote, unquote_plus
 
-from ._builder import Builder, QueryPairs
+from ._builder import QueryPairs
 from ._cache_config import PARSER_CACHE_SIZE, bounded_lru_cache
 from ._components import ParseResult
 from ._normalize import normalize_host, normalize_percent_encoding, normalize_userinfo
@@ -32,8 +32,6 @@ from .exceptions import (
     URLParseError,
     UserInfoParsingError,
 )
-
-_builder_singleton = Builder()
 
 
 def parse_scheme(url: str, allow_custom: bool = False) -> tuple[str | None, str, bool | None, bool]:
