@@ -45,7 +45,7 @@ class TestHasCredentials:
         assert has_credentials("") is False
 
     def test_malformed_url_returns_false(self):
-        with patch("urlps._security.url_checks.urlsplit", side_effect=ValueError("bad")):
+        with patch("urlps._redaction.urlsplit", side_effect=ValueError("bad")):
             assert has_credentials("https://example.com/") is False
 
 
@@ -59,7 +59,7 @@ class TestRedactUrlForLogs:
 
     def test_malformed_url_fails_closed(self):
         """Returning the input unredacted leaked exactly the malformed URLs that reach error logs."""
-        with patch("urlps._security.url_checks.urlsplit", side_effect=ValueError("bad")):
+        with patch("urlps._redaction.urlsplit", side_effect=ValueError("bad")):
             assert redact_url_for_logs("https://user:hunter2@example.com/") == "[unparseable URL redacted]"
 
 

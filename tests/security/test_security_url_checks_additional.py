@@ -6,14 +6,14 @@ from __future__ import annotations
 class TestSecurityMixedScripts:
     def test_has_mixed_scripts_non_string(self):
         """Line 397: has_mixed_scripts with non-string returns False."""
-        from urlps._security import has_mixed_scripts
+        from urlps._security.url_checks import _has_mixed_scripts as has_mixed_scripts
 
         result = has_mixed_scripts.__wrapped__(123)
         assert result is False
 
     def test_has_mixed_scripts_none(self):
         """has_mixed_scripts with None returns False."""
-        from urlps._security import has_mixed_scripts
+        from urlps._security.url_checks import _has_mixed_scripts as has_mixed_scripts
 
         result = has_mixed_scripts.__wrapped__(None)
         assert result is False

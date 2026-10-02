@@ -28,7 +28,7 @@ class TestSecurityAdditional:
 
     def test_has_mixed_scripts_value_error_returns_false(self):
         """Lines 417-418: ValueError in unicodedata.name → returns False."""
-        from urlps._security import has_mixed_scripts
+        from urlps._security.url_checks import _has_mixed_scripts as has_mixed_scripts
 
         with patch.object(unicodedata, "name", side_effect=ValueError("bad char")):
             result = has_mixed_scripts.__wrapped__("αβγ")

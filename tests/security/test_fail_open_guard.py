@@ -28,7 +28,9 @@ import pathlib
 
 SECURITY_DIR = pathlib.Path(__file__).parent.parent.parent / "src" / "urlps" / "_security"
 
-_PREDICATE_PREFIXES = ("is_", "has_", "check_", "_check_", "_verify_")
+# Private predicates too: moving a detector's body into a "_has_x" helper
+# must not take it out of this guard's view.
+_PREDICATE_PREFIXES = ("is_", "has_", "check_", "_is_", "_has_", "_check_", "_verify_")
 
 # (filename, function_name, literal) -> why this is safe, not a fail-open bug.
 #
@@ -36,6 +38,33 @@ _PREDICATE_PREFIXES = ("is_", "has_", "check_", "_check_", "_verify_")
 # explicitly what makes it safe (fails closed despite the literal, or is a
 # documented/policy-gated tradeoff), not just "it's fine".
 _ALLOWLIST = {
+    (
+        "ip_utils.py",
+        "_is_decimal_ip_private",
+        False,
+    ): (
+        "Not the terminal verdict: one of the OR'd representation checks in "
+        "is_ssrf_risk(), like _check_ipv4_private. False means 'not this "
+        "spelling', and _is_obfuscated_ip_private covers every inet_aton "
+        "spelling anyway."
+    ),
+    (
+        "ip_utils.py",
+        "_is_octal_hex_ip_private",
+        False,
+    ): (
+        "Same as _is_decimal_ip_private: an OR'd representation check whose "
+        "False means 'not this spelling', subsumed by _is_obfuscated_ip_private."
+    ),
+    (
+        "phishing_db.py",
+        "_is_ip_literal",
+        False,
+    ): (
+        "Not a safety verdict: it only chooses exact matching (IP literals) "
+        "over parent-domain matching. Misjudging an IP as a name widens the "
+        "match, which errs toward detection."
+    ),
     (
         "ip_utils.py",
         "is_malicious_ipv6_zone_id",
@@ -91,7 +120,7 @@ _ALLOWLIST = {
     ),
     (
         "url_checks.py",
-        "has_mixed_scripts",
+        "_has_mixed_scripts",
         False,
     ): (
         "Empty/malformed script-category lookup input can't exhibit mixed "

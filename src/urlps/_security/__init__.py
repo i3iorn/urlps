@@ -8,6 +8,7 @@ from urllib.parse import SplitResult, urlsplit
 from .._cache_config import cache_info
 from .._cache_config import clear_caches as clear_registered_caches
 from .._components import SecurityFinding
+from .._redaction import redact_component, redact_url_for_logs
 from .._validation import scheme_rejection
 from ..exceptions import (
     DNSConnectionError,
@@ -61,8 +62,6 @@ from .url_checks import (
     is_dangerous_port,
     is_open_redirect_risk,
     normalize_url_unicode,
-    redact_component,
-    redact_url_for_logs,
 )
 
 #: Per-code hint naming the way out, for the rejections a caller is most

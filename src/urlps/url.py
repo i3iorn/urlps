@@ -30,32 +30,21 @@ from ._components import SecurityFinding, URLParts
 from ._helpers import _check_type, _normalize_port
 from ._parser import Parser
 from ._parser import parse_url as parse_components
+from ._redaction import redact_exception, redact_url_for_logs
 from ._relative import build_relative_reference, parse_relative_reference, round_trip_relative
 from ._security import (
     DEFAULT_SERVICES,
     ParsedComponents,
     SecurityPolicy,
     SecurityServices,
-    redact_component,
-    redact_url_for_logs,
     reject_ambiguous_url,
     validate_url_security,
 )
 from ._validation import Validator
 from .constants import DEFAULT_PORTS, MAX_URL_LENGTH
-from .exceptions import InvalidURLError, URLParseError, URLpError
+from .exceptions import InvalidURLError, URLParseError
 
 _DEFAULT_BUILDER = Builder()
-
-
-def _redact_exception(exc: BaseException) -> None:
-    """Redact the offending value an exception carries, in place.
-
-    ``str(exc)`` includes ``value``, and both end up in logs and error
-    responses; the raw input is only kept with ``debug=True``.
-    """
-    if isinstance(exc, URLpError):
-        exc.value = redact_component(exc.value, exc.component)
 
 
 def _audit_manager(audit: AuditConfig | AuditManager | None) -> AuditManager:
@@ -299,7 +288,7 @@ class URL:
             )
         except Exception as exc:
             if not context.debug:
-                _redact_exception(exc)
+                redact_exception(exc)
             context.audit_manager.invoke(
                 raw_url=url, parsed_url=None, exception=exc, correlation_id=context.correlation_id
             )
@@ -443,7 +432,7 @@ class URL:
             return _mutations.derive(self, make_overrides())
         except Exception as exc:
             if not self._context.debug:
-                _redact_exception(exc)
+                redact_exception(exc)
             raise
 
     def copy(self, **overrides: Any) -> URL:
