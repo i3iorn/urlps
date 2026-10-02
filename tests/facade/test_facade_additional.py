@@ -170,3 +170,20 @@ class TestInitAdditional:
         services = fakes.services(feed=fakes.Feed(listed=("example.com",)))
         with pytest.raises(InvalidURLError):
             parse_url_unsafe("https://example.com/", policy=policy, services=services)
+
+
+def test_parse_url_local_check_dns_overrides_an_explicit_policy_like_parse_url(fakes) -> None:
+    """It used to be silently ignored whenever a policy was passed."""
+    from urlps import parse_url_local
+
+    resolver = fakes.Resolver()
+    parse_url_local(
+        "https://api.example.com/", policy="strict", check_dns=True, services=fakes.services(resolver=resolver)
+    )
+    assert resolver.calls == ["api.example.com"]
+
+
+def test_build_secure_accepts_custom_schemes() -> None:
+    from urlps import build_secure
+
+    assert build_secure("myapp", "open", path="/item", allow_custom_scheme=True) == "myapp://open/item"

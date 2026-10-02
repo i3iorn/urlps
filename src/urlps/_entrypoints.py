@@ -10,12 +10,36 @@ import warnings
 from collections.abc import Mapping
 from typing import Any
 
-from . import url as _url
 from ._audit import AuditConfig, AuditManager
+from ._builder import Builder
+from ._resolve import resolve_reference
 from ._security.dns_guard import DNSRateLimiter
 from ._security.policy import PolicyInput, SecurityPolicy, resolve_security_policy
 from ._security.services import SecurityServices
+from .exceptions import URLBuildError
 from .url import URL
+
+
+def _make_url(
+    url: str,
+    policy: SecurityPolicy,
+    *,
+    debug: bool,
+    correlation_id: str | None,
+    audit: AuditConfig | AuditManager | None,
+    services: SecurityServices | None,
+) -> URL:
+    """The one way the entry points build a URL: everything the checks need is in ``policy``."""
+    return URL(
+        url,
+        debug=debug,
+        check_dns=policy.check_dns,
+        check_phishing=policy.check_phishing,
+        security_policy=policy,
+        correlation_id=correlation_id,
+        audit=audit,
+        services=services,
+    )
 
 
 def parse_url(
@@ -119,16 +143,7 @@ def parse_url(
         dns_rate_limiter=dns_rate_limiter,
         allow_custom_scheme=allow_custom_scheme,
     )
-    return _url.URL(
-        url,
-        debug=debug,
-        check_dns=resolved_policy.check_dns,
-        check_phishing=resolved_policy.check_phishing,
-        security_policy=resolved_policy,
-        correlation_id=correlation_id,
-        audit=audit,
-        services=services,
-    )
+    return _make_url(url, resolved_policy, debug=debug, correlation_id=correlation_id, audit=audit, services=services)
 
 
 def parse_url_local(
@@ -136,7 +151,7 @@ def parse_url_local(
     *,
     allow_custom_scheme: bool = False,
     debug: bool = False,
-    check_dns: bool = False,
+    check_dns: bool | None = None,
     dns_rate_limiter: DNSRateLimiter | None = None,
     policy: PolicyInput = None,
     correlation_id: str | None = None,
@@ -171,8 +186,9 @@ def parse_url_local(
         check_dns: If True, resolve the host and reject it if any address is one
             the policy disallows -- under ``local`` that is cloud metadata and
             link-local, not loopback/private (the same rule as for a literal
-            address and for create_guarded_connection). Default: False.
-            Ignored when an explicit policy is provided.
+            address and for create_guarded_connection). ``None`` (the
+            default) defers to the policy; True/False overrides it, as in
+            parse_url().
         dns_rate_limiter: Optional DNSRateLimiter instance to use when DNS checks
             are enabled. Prefer explicit injection for deterministic behavior.
         policy: Optional policy to apply instead of the default ``local``
@@ -202,25 +218,15 @@ def parse_url_local(
     Security Note:
         For production use with untrusted input, always use parse_url() instead.
     """
-    resolved_policy = (
-        resolve_security_policy(policy, dns_rate_limiter=dns_rate_limiter, allow_custom_scheme=allow_custom_scheme)
-        if policy is not None
-        else resolve_security_policy(
-            SecurityPolicy.local(check_dns=check_dns, dns_rate_limiter=dns_rate_limiter),
-            allow_custom_scheme=allow_custom_scheme,
-        )
+    # The same override rules as parse_url(): None defers to the policy, an
+    # explicit value overrides it -- with or without an explicit policy.
+    resolved_policy = resolve_security_policy(
+        policy if policy is not None else SecurityPolicy.local(),
+        check_dns=check_dns,
+        dns_rate_limiter=dns_rate_limiter,
+        allow_custom_scheme=allow_custom_scheme,
     )
-
-    return _url.URL(
-        url,
-        debug=debug,
-        check_dns=resolved_policy.check_dns,
-        check_phishing=resolved_policy.check_phishing,
-        security_policy=resolved_policy,
-        correlation_id=correlation_id,
-        audit=audit,
-        services=services,
-    )
+    return _make_url(url, resolved_policy, debug=debug, correlation_id=correlation_id, audit=audit, services=services)
 
 
 def parse_url_unsafe(
@@ -228,7 +234,7 @@ def parse_url_unsafe(
     *,
     allow_custom_scheme: bool = False,
     debug: bool = False,
-    check_dns: bool = False,
+    check_dns: bool | None = None,
     dns_rate_limiter: DNSRateLimiter | None = None,
     policy: PolicyInput = None,
     correlation_id: str | None = None,
@@ -316,19 +322,15 @@ def build(
         For building URLs from dictionaries or with query parameter lists,
         see compose_url() which provides a dict-based interface.
     """
-    from . import _builder as _builder
-
     if len(scheme_and_host) == 1:
         scheme = None
         host = scheme_and_host[0]
     elif len(scheme_and_host) >= 2:
         scheme, host, *_ = scheme_and_host
     else:
-        from .exceptions import URLBuildError
-
         raise URLBuildError("At least host must be provided to build a URL.")
 
-    return _builder.Builder().compose(
+    return Builder().compose(
         {
             "scheme": scheme,
             "host": host,
@@ -399,8 +401,6 @@ def join(
         InvalidURLError: If the resolved target fails security validation.
         URLParseError: If the resolved target is structurally invalid.
     """
-    from ._resolve import resolve_reference
-
     base_str = base.as_string() if isinstance(base, URL) else base
     reference_str = reference.as_string() if isinstance(reference, URL) else reference
 
@@ -433,14 +433,13 @@ def compose_url(components: Mapping[str, Any]) -> str:
     Returns:
         The composed URL string.
     """
-    from . import _builder as _builder
-
-    return _builder.Builder().compose(components)
+    return Builder().compose(components)
 
 
 def build_secure(
     *scheme_and_host: str,
     policy: PolicyInput = None,
+    allow_custom_scheme: bool = False,
     check_dns: bool | None = None,
     check_phishing: bool | None = None,
     dns_rate_limiter: DNSRateLimiter | None = None,
@@ -471,6 +470,7 @@ def build_secure(
     )
     parsed = parse_url(
         composed,
+        allow_custom_scheme=allow_custom_scheme,
         check_dns=check_dns,
         check_phishing=check_phishing,
         dns_rate_limiter=dns_rate_limiter,
