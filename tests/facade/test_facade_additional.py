@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import pytest
 
 
@@ -162,17 +160,13 @@ class TestInitAdditional:
         assert parsed.host == "localhost"
         assert parsed.path == "/admin"
 
-    def test_parse_url_unsafe_honors_explicit_policy_exactly(self):
+    def test_parse_url_unsafe_honors_explicit_policy_exactly(self, fakes):
         """Explicit policy should keep phishing checks instead of being silently overridden."""
         from urlps import parse_url_unsafe
         from urlps._security import SecurityPolicy
         from urlps.exceptions import InvalidURLError
 
         policy = SecurityPolicy.strict(check_phishing=True)
-        # (is_phishing, database_available)
-        with patch(
-            "urlps._security.check_against_phishing_db_detailed",
-            return_value=(True, True),
-        ):
-            with pytest.raises(InvalidURLError):
-                parse_url_unsafe("https://example.com/", policy=policy)
+        services = fakes.services(feed=fakes.Feed(listed=("example.com",)))
+        with pytest.raises(InvalidURLError):
+            parse_url_unsafe("https://example.com/", policy=policy, services=services)

@@ -8,59 +8,59 @@ no DNS check at all. ``None`` now means "defer to the policy".
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import pytest
 
 from urlps import URL, SecurityPolicy, build_secure, join, parse_url
 
-DNS_CHECK = "urlps._security.check_dns_rebinding_detailed"
-PHISHING_CHECK = "urlps._security.check_against_phishing_db_detailed"
+
+@pytest.fixture
+def resolver(fakes):
+    return fakes.Resolver()
 
 
 @pytest.fixture
-def dns_check():
-    with patch(DNS_CHECK, return_value=(True, None)) as mocked:
-        yield mocked
+def feed(fakes):
+    return fakes.Feed()
 
 
 @pytest.fixture
-def phishing_check():
-    with patch(PHISHING_CHECK, return_value=(False, True)) as mocked:
-        yield mocked
+def services(fakes, resolver, feed):
+    return fakes.services(resolver=resolver, feed=feed)
 
 
-def test_policy_check_dns_runs_through_parse_url(dns_check) -> None:
-    parse_url("https://api.example.com/", policy=SecurityPolicy.strict(check_dns=True))
-    dns_check.assert_called_once()
+def test_policy_check_dns_runs_through_parse_url(services, resolver) -> None:
+    parse_url("https://api.example.com/", policy=SecurityPolicy.strict(check_dns=True), services=services)
+    assert resolver.calls == ["api.example.com"]
 
 
-def test_policy_check_dns_runs_through_join_and_build_secure(dns_check) -> None:
+def test_policy_check_dns_runs_through_join_and_build_secure(services, resolver) -> None:
     policy = SecurityPolicy.balanced(check_dns=True)
-    join("https://example.com/a", "/b", policy=policy)
-    build_secure("https", "api.example.com", policy=policy)
-    assert dns_check.call_count == 2
+    join("https://example.com/a", "/b", policy=policy, services=services)
+    build_secure("https", "api.example.com", policy=policy, services=services)
+    assert resolver.calls == ["example.com", "api.example.com"]
 
 
-def test_policy_check_dns_runs_through_url_constructor_and_mutations(dns_check) -> None:
-    url = URL("https://api.example.com/", security_policy=SecurityPolicy.strict(check_dns=True))
+def test_policy_check_dns_runs_through_url_constructor_and_mutations(services, resolver) -> None:
+    url = URL("https://api.example.com/", security_policy=SecurityPolicy.strict(check_dns=True), services=services)
     url.with_path("/other")
-    assert dns_check.call_count == 2
+    assert len(resolver.calls) == 2
 
 
-def test_explicit_argument_still_overrides_the_policy(dns_check) -> None:
-    parse_url("https://api.example.com/", policy=SecurityPolicy.strict(check_dns=True), check_dns=False)
-    dns_check.assert_not_called()
-    parse_url("https://api.example.com/", policy="strict", check_dns=True)
-    dns_check.assert_called_once()
+def test_explicit_argument_still_overrides_the_policy(services, resolver) -> None:
+    parse_url(
+        "https://api.example.com/", policy=SecurityPolicy.strict(check_dns=True), check_dns=False, services=services
+    )
+    assert resolver.calls == []
+    parse_url("https://api.example.com/", policy="strict", check_dns=True, services=services)
+    assert len(resolver.calls) == 1
 
 
-def test_default_still_runs_no_network_checks(dns_check, phishing_check) -> None:
-    parse_url("https://api.example.com/")
-    dns_check.assert_not_called()
-    phishing_check.assert_not_called()
+def test_default_still_runs_no_network_checks(services, resolver, feed) -> None:
+    parse_url("https://api.example.com/", services=services)
+    assert resolver.calls == []
+    assert feed.calls == []
 
 
-def test_policy_check_phishing_runs_through_parse_url(phishing_check) -> None:
-    parse_url("https://api.example.com/", policy=SecurityPolicy.strict(check_phishing=True))
-    phishing_check.assert_called_once_with("api.example.com")
+def test_policy_check_phishing_runs_through_parse_url(services, feed) -> None:
+    parse_url("https://api.example.com/", policy=SecurityPolicy.strict(check_phishing=True), services=services)
+    assert feed.calls == ["api.example.com"]

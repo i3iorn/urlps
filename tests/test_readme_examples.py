@@ -56,11 +56,8 @@ def _populate_expected_raises(blocks: list[tuple[int, str]]) -> None:
 _BLOCKS = _extract_python_blocks()
 _populate_expected_raises(_BLOCKS)
 
-# A safe, deterministic stand-in for check_dns_rebinding_detailed -- the
-# function collect_security_findings calls, mocked at the same import path
-# the rest of the suite already uses for this (see
-# tests/security/test_security_robustness.py).
-_DNS_CHECK_PATH = "urlps._security.check_dns_rebinding_detailed"
+# A safe, deterministic stand-in for getaddrinfo: the default resolver
+# looks this up at call time.
 _RESOLVER_PATH = "urlps._security.dns_guard._resolve_addr_info"
 _PUBLIC_ANSWER = [(2, 1, 6, "", ("93.184.216.34", 443))]
 
@@ -91,7 +88,7 @@ def test_documented_raise_blocks_were_actually_found():
 def test_readme_example_executes(line_number, source):
     expected_exception = _EXPECTED_TO_RAISE.get(line_number)
 
-    with patch(_DNS_CHECK_PATH, return_value=(True, None)), patch(_RESOLVER_PATH, return_value=_PUBLIC_ANSWER):
+    with patch(_RESOLVER_PATH, return_value=_PUBLIC_ANSWER):
         try:
             exec(compile(source, f"<README.md:{line_number}>", "exec"), {"__name__": "__main__"})
         except Exception as exc:

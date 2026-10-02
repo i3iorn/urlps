@@ -35,6 +35,13 @@ EXPECTED_ALL = {
     "AuditEventCallback",
     "DNSRateLimiter",
     "DNSRateLimiterConfig",
+    # Injectable I/O for the security checks
+    "SecurityServices",
+    "DNSResolutionCache",
+    "DNSCacheConfig",
+    "PhishingFeed",
+    "PhishingDatabaseManager",
+    "PhishingFeedConfig",
     # Caches
     "get_cache_info",
     "clear_all_caches",

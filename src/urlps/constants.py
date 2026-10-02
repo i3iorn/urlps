@@ -270,6 +270,9 @@ PHISHING_DATABASE_URL: Final[str] = _get_url_from_env(
     "URLPS_PHISHING_DATABASE_URL", "https://phish.co.za/latest/ALL-phishing-domains.lst"
 )
 DEFAULT_PHISHING_DATABASE_MAX_BYTES: Final[int] = 25 * 1024 * 1024
+# Socket timeout for the feed download. It used to borrow DEFAULT_DNS_TIMEOUT,
+# coupling two unrelated settings; the value is unchanged.
+DEFAULT_PHISHING_DATABASE_TIMEOUT_SECONDS: Final[float] = 2.0
 # How old a successfully loaded phishing list may get before the next check
 # triggers a re-download. A list loaded once used to be kept for the life of
 # the process, so a long-running service checked against an ever older feed.
@@ -303,6 +306,7 @@ __all__ = [
     "DEFAULT_PHISHING_DATABASE_MAX_BYTES",
     "DEFAULT_PHISHING_DATABASE_REFRESH_SECONDS",
     "DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS",
+    "DEFAULT_PHISHING_DATABASE_TIMEOUT_SECONDS",
     "DEFAULT_PORTS",
     "LOOPBACK_HOSTNAMES",
     "MAX_FRAGMENT_LENGTH",

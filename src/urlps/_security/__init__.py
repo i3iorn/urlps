@@ -8,7 +8,6 @@ from urllib.parse import SplitResult, urlsplit
 from .._cache_config import cache_info
 from .._cache_config import clear_caches as clear_registered_caches
 from .._components import SecurityFinding
-from .._host import ip_literal_text
 from .._validation import scheme_rejection
 from ..exceptions import (
     DNSConnectionError,
@@ -21,11 +20,16 @@ from ..exceptions import (
 )
 from ._unicode import canonical_host
 from .dns_guard import (
+    DNSCacheConfig,
+    DNSCheckOptions,
+    DNSCheckResult,
     DNSRateLimiter,
     DNSRateLimiterConfig,
+    DNSResolutionCache,
     check_dns_rate_limit,
     check_dns_rebinding,
     check_dns_rebinding_detailed,
+    check_host_resolution,
     get_dns_rate_limiter,
     reset_dns_rate_limiter,
 )
@@ -42,6 +46,7 @@ from .policy import (
     SecurityPolicy,
     resolve_security_policy,
 )
+from .services import DEFAULT_SERVICES, PhishingFeed, SecurityServices
 from .url_checks import (
     extract_host_and_path,
     get_canonical_url,
@@ -107,11 +112,6 @@ _DNS_MESSAGES: dict[ErrorCode, str] = {
 }
 
 
-def _dns_host(host: str) -> str:
-    """The key the DNS check uses for ``host`` (brackets and zone stripped)."""
-    return ip_literal_text(host.strip())
-
-
 def _finding(severity: str, code: ErrorCode, message: str, component: str | None) -> SecurityFinding:
     """Create a normalized security finding object."""
     return SecurityFinding(
@@ -167,6 +167,8 @@ class _CheckContext(NamedTuple):
     """What every check reads: the policy, and each component in every spelling that matters."""
 
     policy: SecurityPolicy
+    #: Resolver, caches, limiter and phishing feed.
+    services: SecurityServices
     #: The raw URL, NFC-normalized.
     url: str
     #: Whether the URL has an authority at all (otherwise only the
@@ -186,7 +188,9 @@ class _CheckContext(NamedTuple):
     encoded_target: str
 
 
-def _build_context(url: str, policy: SecurityPolicy, parsed: ParsedComponents | None) -> _CheckContext:
+def _build_context(
+    url: str, policy: SecurityPolicy, parsed: ParsedComponents | None, services: SecurityServices
+) -> _CheckContext:
     # NFC-normalizing a pure-ASCII string is always a no-op (Unicode
     # Normalization Form C only recomposes sequences involving combining
     # marks, none of which exist in ASCII), and str.isascii() is a dedicated
@@ -221,6 +225,7 @@ def _build_context(url: str, policy: SecurityPolicy, parsed: ParsedComponents | 
     parsed_path = parsed.path if parsed is not None else None
     return _CheckContext(
         policy=policy,
+        services=services,
         url=normalized_url,
         has_authority=has_authority_syntax or bool(parsed is not None and parsed.host),
         scheme=scheme,
@@ -364,35 +369,30 @@ def _dns_findings(ctx: _CheckContext) -> list[SecurityFinding]:
     "faß.de" to "fass.de" -- a different domain from the "xn--fa-hia.de"
     that URL.host and HTTP clients use.
     """
-    policy, host = ctx.policy, ctx.host
+    policy, host, services = ctx.policy, ctx.host, ctx.services
     if not (policy.check_dns and host):
         return []
     host_allowed_by_name = policy.host_is_allowed(host)
-    safe, dns_error = check_dns_rebinding_detailed(
+    result = check_host_resolution(
         host,
+        policy.dns_options,
         ip_filter=lambda ip: policy.ip_is_permitted(ip, host_allowed_by_name=host_allowed_by_name),
-        enforce_rate_limit=policy.enforce_dns_rate_limit,
-        retries=policy.dns_retries,
-        backoff_base_seconds=policy.dns_backoff_base_seconds,
-        backoff_jitter_seconds=policy.dns_backoff_jitter_seconds,
-        fail_open_on_connect_error=policy.dns_fail_open_on_connect_error,
-        limiter=policy.dns_rate_limiter,
-        deadline_seconds=policy.dns_deadline_seconds,
+        limiter=services.dns_rate_limiter or policy.dns_rate_limiter,
+        cache=services.resolution_cache,
+        resolver=services.resolver,
+        clock=services.clock,
+        sleep=services.sleep,
     )
-    if safe or dns_error is None:
+    if result.error is None:
         return []
-    retry_after = None
-    if dns_error is ErrorCode.DNS_RATE_LIMITED:
-        limiter = policy.dns_rate_limiter or get_dns_rate_limiter()
-        retry_after = limiter.retry_after(_dns_host(host))
     return [
         SecurityFinding(
             severity="critical",
-            code=dns_error.value,
-            message=_DNS_MESSAGES.get(dns_error, "DNS validation failed."),
+            code=result.error.value,
+            message=_DNS_MESSAGES.get(result.error, "DNS validation failed."),
             component="host",
-            remediation=_REMEDIATION_BY_CODE.get(dns_error),
-            retry_after=retry_after,
+            remediation=_REMEDIATION_BY_CODE.get(result.error),
+            retry_after=result.retry_after,
         )
     ]
 
@@ -401,10 +401,10 @@ def _phishing_findings(ctx: _CheckContext) -> list[SecurityFinding]:
     policy, host = ctx.policy, ctx.host
     if not (policy.check_phishing and host):
         return []
-    is_phishing, db_available = check_against_phishing_db_detailed(host)
-    if is_phishing:
+    listed = ctx.services.feed().lookup(host)
+    if listed:
         return [_finding("critical", ErrorCode.PHISHING_DOMAIN, "Host is identified as a phishing domain.", "host")]
-    if not db_available:
+    if listed is None:
         # The caller opted into phishing checking and received none. Reporting
         # a clean result would be a lie, so it is surfaced: as a warning (a
         # degraded check, not a detected threat), or as a rejection when the
@@ -442,6 +442,7 @@ def collect_security_findings(
     check_dns: bool | None = None,
     check_phishing: bool | None = None,
     parsed: ParsedComponents | None = None,
+    services: SecurityServices | None = None,
 ) -> list[SecurityFinding]:
     """Collect policy-aware security findings without raising exceptions.
 
@@ -456,9 +457,12 @@ def collect_security_findings(
     in ``url`` -- a finding on either spelling rejects, so the raw text can
     only add findings, never mask one. Without ``parsed``, the components
     are extracted from ``url`` and canonicalized the way the parser would.
+
+    ``services`` supplies the resolver, caches, limiter and phishing feed
+    (default: the process-global ones).
     """
     effective_policy = resolve_security_policy(policy, check_dns=check_dns, check_phishing=check_phishing)
-    ctx = _build_context(url, effective_policy, parsed)
+    ctx = _build_context(url, effective_policy, parsed, services if services is not None else DEFAULT_SERVICES)
     checks = _CHECKS_WITHOUT_AUTHORITY + (_CHECKS_WITH_AUTHORITY if ctx.has_authority else ())
     return [finding for check in checks for finding in check(ctx)]
 
@@ -511,6 +515,7 @@ def validate_url_security(
     raise_on_error: bool = True,
     parsed: ParsedComponents | None = None,
     debug: bool = False,
+    services: SecurityServices | None = None,
 ) -> list[SecurityFinding]:
     """Run policy-based security validation, raising on the first blocking finding.
 
@@ -525,7 +530,7 @@ def validate_url_security(
     unless ``debug=True``.
     """
     findings = collect_security_findings(
-        url, policy=policy, check_dns=check_dns, check_phishing=check_phishing, parsed=parsed
+        url, policy=policy, check_dns=check_dns, check_phishing=check_phishing, parsed=parsed, services=services
     )
     if raise_on_error:
         for finding in findings:
@@ -557,12 +562,19 @@ def clear_caches() -> dict:
 
 
 __all__ = [
+    "DEFAULT_SERVICES",
+    "DNSCacheConfig",
+    "DNSCheckOptions",
+    "DNSCheckResult",
     "DNSRateLimiter",
     "DNSRateLimiterConfig",
+    "DNSResolutionCache",
     "ParsedComponents",
+    "PhishingFeed",
     "PolicyInput",
     "SecurityPolicy",
     "SecurityPolicyError",
+    "SecurityServices",
     "check_against_phishing_db",
     "check_against_phishing_db_detailed",
     "check_dns_rate_limit",

@@ -26,9 +26,11 @@ from collections.abc import Iterable
 from typing import Any
 
 from ._host import ip_literal_text
-from ._security import _canonical_host, dns_guard
+from ._security import _canonical_host
+from ._security.dns_guard import Resolver
 from ._security.ip_utils import AddrInfo, IpAddress
 from ._security.policy import PolicyInput, SecurityPolicy, resolve_security_policy
+from ._security.services import DEFAULT_SERVICES, SecurityServices
 from .constants import DEFAULT_DNS_TIMEOUT
 from .exceptions import DNSResolutionError, ErrorCode, InvalidURLError
 from .url import URL
@@ -55,7 +57,9 @@ def _ssrf_error(message: str, host: str) -> InvalidURLError:
     return InvalidURLError(message, component="host", value=host, code=ErrorCode.SSRF_RISK)
 
 
-def _vetted_addrinfo(host: str, port: int, policy: SecurityPolicy, dns_timeout: float | None) -> AddrInfo:
+def _vetted_addrinfo(
+    host: str, port: int, policy: SecurityPolicy, dns_timeout: float | None, resolver: Resolver
+) -> AddrInfo:
     """Resolve ``host`` once and return its address info, every entry validated.
 
     Fails closed: if *any* resolved address is disallowed the whole lookup is
@@ -68,8 +72,7 @@ def _vetted_addrinfo(host: str, port: int, policy: SecurityPolicy, dns_timeout: 
     host_allowed_by_name = policy.host_is_allowed(host)
 
     try:
-        # Through the module so the resolver can be substituted in tests.
-        addr_info = dns_guard._resolve_addr_info(ip_literal_text(host), dns_timeout, port=port)
+        addr_info = resolver(ip_literal_text(host), dns_timeout, port=port)
     except socket.gaierror as exc:
         raise DNSResolutionError(
             f"Could not resolve host: {exc}", component="host", value=host, code=ErrorCode.DNS_RESOLUTION_FAILED
@@ -99,6 +102,7 @@ def resolve_and_validate(
     policy: PolicyInput = None,
     port: int | None = None,
     dns_timeout: float | None = DEFAULT_DNS_TIMEOUT,
+    services: SecurityServices | None = None,
 ) -> list[IpAddress]:
     """Resolve a URL's host and return its addresses, all validated under ``policy``.
 
@@ -114,6 +118,8 @@ def resolve_and_validate(
         port: Port for the returned address info; defaults to the URL's
             effective port.
         dns_timeout: Bound on the resolution itself, in seconds.
+        services: Supplies the resolver. Defaults to the URL's own for a
+            ``URL``, and to the process-global defaults for a string.
 
     Raises:
         InvalidURLError: The URL is invalid, or any address is disallowed
@@ -124,16 +130,15 @@ def resolve_and_validate(
         parsed = url
         effective_policy = resolve_security_policy(policy) if policy is not None else url.security_policy
     else:
-        from ._entrypoints import parse_url
-
-        parsed = parse_url(url, policy=policy)
+        parsed = URL(url, security_policy=resolve_security_policy(policy), services=services)
         effective_policy = parsed.security_policy
+    effective_services = services if services is not None else parsed._context.services
     if not parsed.host:
         raise InvalidURLError("URL has no host to resolve.", component="host")
 
     target_port = port if port is not None else (parsed.effective_port or 0)
     addresses: dict[IpAddress, None] = {}
-    for entry in _vetted_addrinfo(parsed.host, target_port, effective_policy, dns_timeout):
+    for entry in _vetted_addrinfo(parsed.host, target_port, effective_policy, dns_timeout, effective_services.resolver):
         addresses[_sockaddr_ip(entry[4])] = None
     return list(addresses)
 
@@ -153,6 +158,7 @@ def create_guarded_connection(
     *,
     policy: PolicyInput = None,
     dns_timeout: float | None = DEFAULT_DNS_TIMEOUT,
+    services: SecurityServices | None = None,
 ) -> socket.socket:
     """Like :func:`socket.create_connection`, but only to addresses ``policy`` permits.
 
@@ -179,7 +185,8 @@ def create_guarded_connection(
     # the policy checks want the host as the parser would store it.
     checked_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
     checked_host = _canonical_host(checked_host)
-    addr_info = _vetted_addrinfo(checked_host, port, effective_policy, dns_timeout)
+    resolver = (services if services is not None else DEFAULT_SERVICES).resolver
+    addr_info = _vetted_addrinfo(checked_host, port, effective_policy, dns_timeout, resolver)
     host_allowed_by_name = effective_policy.host_is_allowed(checked_host)
 
     last_error: OSError | None = None

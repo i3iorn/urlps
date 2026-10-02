@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from urlps import InvalidURLError, SecurityPolicy, parse_url
+from urlps import InvalidURLError, PhishingDatabaseManager, PhishingFeedConfig, SecurityPolicy, parse_url
 from urlps._security import phishing_db
 from urlps._security.phishing_db import (
     check_against_phishing_db,
@@ -147,20 +147,48 @@ def test_explicit_refresh_failure_with_nothing_loaded_reports_zero() -> None:
 
 
 def test_pinned_hash_accepts_the_matching_feed() -> None:
-    pin = hashlib.sha256(FEED).hexdigest()
-    with patch.object(phishing_db, "PHISHING_DATABASE_SHA256", pin), patch(URLOPEN, return_value=_response()):
-        assert refresh_phishing_db() == 4
-        assert get_phishing_db_info()["sha256_pinned"] is True
+    manager = PhishingDatabaseManager(PhishingFeedConfig(sha256=hashlib.sha256(FEED).hexdigest()))
+    with patch(URLOPEN, return_value=_response()):
+        assert manager.refresh() == 4
+    assert manager.info()["sha256_pinned"] is True
 
 
 def test_pinned_hash_rejects_a_tampered_feed() -> None:
-    pin = hashlib.sha256(FEED).hexdigest()
-    with (
-        patch.object(phishing_db, "PHISHING_DATABASE_SHA256", pin),
-        patch(URLOPEN, return_value=_response(b"x.example\n")),
-    ):
-        assert refresh_phishing_db() == 0
-    assert get_phishing_db_info()["last_error"] == "hash_mismatch"
+    manager = PhishingDatabaseManager(PhishingFeedConfig(sha256=hashlib.sha256(FEED).hexdigest()))
+    with patch(URLOPEN, return_value=_response(b"x.example\n")):
+        assert manager.refresh() == 0
+    assert manager.info()["last_error"] == "hash_mismatch"
+
+
+def test_a_manager_can_be_pointed_anywhere_without_patching() -> None:
+    """The feed's source, clock and limits are arguments now, not module globals."""
+    fetched: list[tuple] = []
+
+    def fetch(url: str, timeout: float, max_bytes: int) -> bytes:
+        fetched.append((url, timeout, max_bytes))
+        return b"evil.example\n"
+
+    now = [1_000.0]
+    manager = PhishingDatabaseManager(
+        PhishingFeedConfig(url="https://mirror.internal/feed.txt", refresh_seconds=60, retry_cooldown_seconds=10),
+        fetch=fetch,
+        clock=lambda: now[0],
+    )
+    assert manager.lookup("login.evil.example") is True
+    assert manager.lookup("good.example") is False
+    assert fetched == [("https://mirror.internal/feed.txt", 2.0, 25 * 1024 * 1024)]
+    now[0] += 61
+    manager.lookup("good.example")
+    assert len(fetched) == 2
+
+
+def test_an_unloadable_feed_reports_nothing_checked() -> None:
+    def fetch(url: str, timeout: float, max_bytes: int) -> bytes:
+        raise OSError("unreachable")
+
+    manager = PhishingDatabaseManager(fetch=fetch)
+    assert manager.lookup("evil.example") is None
+    assert manager.info()["last_error"] == "download_error:OSError"
 
 
 @pytest.mark.parametrize("value,expected", [("A" * 64, "a" * 64), ("not-a-hash", "None"), ("", "None")])

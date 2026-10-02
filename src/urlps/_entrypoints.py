@@ -14,6 +14,7 @@ from . import url as _url
 from ._audit import AuditConfig
 from ._security.dns_guard import DNSRateLimiter
 from ._security.policy import PolicyInput, SecurityPolicy, resolve_security_policy
+from ._security.services import SecurityServices
 from .url import URL
 
 
@@ -28,6 +29,7 @@ def parse_url(
     policy: PolicyInput = None,
     correlation_id: str | None = None,
     audit: AuditConfig | None = None,
+    services: SecurityServices | None = None,
 ) -> URL:
     """Parse a URL with security checks applied (recommended entry point).
 
@@ -89,6 +91,8 @@ def parse_url(
             which checks are enforced.
         correlation_id: Optional identifier propagated to audit events.
         audit: Optional AuditConfig supplying audit callbacks for this parse.
+        services: Resolver, caches, DNS limiter and phishing feed for the
+            security checks (default: the process-global ones).
 
     Returns:
         URL: Immutable URL object with all parsed components
@@ -122,6 +126,7 @@ def parse_url(
         security_policy=resolved_policy,
         correlation_id=correlation_id,
         audit=audit,
+        services=services,
     )
 
 
@@ -135,6 +140,7 @@ def parse_url_local(
     policy: PolicyInput = None,
     correlation_id: str | None = None,
     audit: AuditConfig | None = None,
+    services: SecurityServices | None = None,
 ) -> URL:
     """Parse a local/development URL, with the heuristic checks turned off.
 
@@ -171,6 +177,8 @@ def parse_url_local(
             ``parse_url()`` rather than reaching for a separate flag.
         correlation_id: Optional identifier propagated to audit events.
         audit: Optional AuditConfig supplying audit callbacks for this parse.
+        services: Resolver, caches, DNS limiter and phishing feed for the
+            security checks (default: the process-global ones).
 
     Returns:
         URL: Immutable URL object with all parsed components
@@ -207,6 +215,7 @@ def parse_url_local(
         security_policy=resolved_policy,
         correlation_id=correlation_id,
         audit=audit,
+        services=services,
     )
 
 
@@ -220,6 +229,7 @@ def parse_url_unsafe(
     policy: PolicyInput = None,
     correlation_id: str | None = None,
     audit: AuditConfig | None = None,
+    services: SecurityServices | None = None,
 ) -> URL:
     """Deprecated alias for :func:`parse_url_local`.
 
@@ -242,6 +252,7 @@ def parse_url_unsafe(
         policy=policy,
         correlation_id=correlation_id,
         audit=audit,
+        services=services,
     )
 
 
@@ -338,6 +349,7 @@ def join(
     correlation_id: str | None = None,
     audit: AuditConfig | None = None,
     strict_resolution: bool = True,
+    services: SecurityServices | None = None,
 ) -> URL:
     """Resolve a URI reference against a base URI (RFC 3986 Section 5).
 
@@ -404,6 +416,7 @@ def join(
         policy=policy,
         correlation_id=correlation_id,
         audit=audit,
+        services=services,
     )
 
 
@@ -429,6 +442,7 @@ def build_secure(
     dns_rate_limiter: DNSRateLimiter | None = None,
     correlation_id: str | None = None,
     audit: AuditConfig | None = None,
+    services: SecurityServices | None = None,
     port: int | None = None,
     path: str = "/",
     query: str | None = None,
@@ -459,6 +473,7 @@ def build_secure(
         policy=policy,
         correlation_id=correlation_id,
         audit=audit,
+        services=services,
     )
     return parsed.as_string()
 

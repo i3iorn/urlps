@@ -15,7 +15,7 @@ rejected. Each row says how to get the old behaviour back on purpose.
 | The `local` policy never permits a cloud metadata address, in any spelling, including the AWS IPv6 endpoint `fd00:ec2::254` (otherwise an ordinary ULA) | Nobody legitimate | Nothing. |
 | `parse_url(url, policy=SecurityPolicy.strict(check_dns=True))` now actually runs the DNS check (it silently did not), and a `dns_rate_limiter` set on the policy is now actually used | Anyone who configured DNS checks on the policy | Nothing, unless your tests relied on no lookups happening. Pass `check_dns=False` explicitly to override a policy. |
 | The DNS check no longer makes a "verification connection" to the resolved address | Nobody legitimate | Use `create_guarded_connection()` / `resolve_and_validate()` for connect-time protection; see the README. |
-| DNS lookups are cached (30s positive, 5s negative) and the per-host limit counts only real lookups | Anyone relying on every `check_dns=True` parse hitting the resolver | Configure `DNSRateLimiterConfig(cache_ttl_seconds=0)` to disable caching. |
+| DNS lookups are cached (30s positive, 5s negative) and the per-host limit counts only real lookups | Anyone relying on every `check_dns=True` parse hitting the resolver | Pass `services=SecurityServices(resolution_cache=DNSResolutionCache(DNSCacheConfig(ttl_seconds=0, negative_ttl_seconds=0)))` to disable caching. |
 | Exception `value` (and so `str(exc)`) has credentials and query/fragment values redacted | Anyone parsing `str(exc)` for the original input | Pass `debug=True` (now also accepted by `parse_url()`) to keep the raw input. |
 | Userinfo is percent-encoded to the RFC 3986 grammar on parse, `with_userinfo()`/`with_netloc()` and `build()`: `a\b` becomes `a%5Cb`, a password `p#ss` becomes `p%23ss` | Anyone comparing `url.userinfo` to a raw string | Compare against the encoded form, or `urllib.parse.unquote()` it. Previously such characters were emitted raw and could move the host for other parsers. |
 | `with_scheme()` resets a *default* port (`https://h/` -> `with_scheme("http")` -> `http://h/`, not `http://h:443/`) and lowercases the scheme | Anyone relying on the old port carry-over | Pass `port=` explicitly via `copy(scheme=..., port=...)`. |
@@ -40,7 +40,7 @@ rejected. Each row says how to get the old behaviour back on purpose.
 | `SecurityPolicy(allowed_addresses=..., denied_addresses=...)` (and on every preset) | Your own IP/CIDR/hostname/`.domain` rules, applied to every spelling of a host and every resolved address. |
 | `create_guarded_connection()` | Connect-time SSRF protection; a drop-in for `socket.create_connection` and urllib3's. |
 | `resolve_and_validate()` | The vetted addresses for a URL, to pin a connection to. |
-| `DNSRateLimiterConfig(cache_ttl_seconds=, negative_cache_ttl_seconds=, max_cached_hosts=)`, `SecurityPolicy.dns_deadline_seconds`, `DNSRateLimitError.retry_after` | DNS check tuning. |
+| `DNSResolutionCache`/`DNSCacheConfig(ttl_seconds=, negative_ttl_seconds=, max_hosts=)`, `SecurityPolicy.dns_deadline_seconds`, `DNSRateLimitError.retry_after` | DNS check tuning. |
 | `SecurityPolicy.phishing_fail_closed`, `URLPS_PHISHING_DATABASE_REFRESH_SECONDS`, `URLPS_PHISHING_DATABASE_SHA256` | Phishing feed behaviour. |
 | `AuditConfig(sensitive_keys=...)` | Extra query-key fragments to redact in audit logs. |
 

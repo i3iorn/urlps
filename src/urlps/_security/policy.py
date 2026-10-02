@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Iterable
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Union, cast
 
 from .._cache_config import POLICY_CACHE_SIZE, lru_cache
@@ -11,6 +11,7 @@ from .._validation import Validator
 from ..constants import DEFAULT_DNS_DEADLINE_SECONDS, STANDARD_SCHEMES
 from ..exceptions import SecurityPolicyError
 from .address_rules import NO_RULES, AddressList, AddressRule
+from .dns_guard import DNSCheckOptions, DNSRateLimiter
 from .ip_utils import IpAddress, _is_ip_safe, is_metadata_address, is_permitted_private_ip, is_ssrf_risk
 
 PolicyName = Literal["strict", "balanced", "internal", "local"]
@@ -107,7 +108,11 @@ class SecurityPolicy:
     dns_backoff_jitter_seconds: float = 0.02
     # Wall-clock bound on one DNS check across retries and backoff.
     dns_deadline_seconds: float = DEFAULT_DNS_DEADLINE_SECONDS
-    dns_rate_limiter: Any | None = None
+    # The limiter charged for this policy's DNS lookups (None: the
+    # process-global one). A collaborator rather than a setting, so it is left
+    # out of equality and hashing; SecurityServices.dns_rate_limiter is the
+    # newer home for it and wins when both are set.
+    dns_rate_limiter: DNSRateLimiter | None = field(default=None, compare=False)
     # Caller-supplied address rules, applied to the host and to every
     # DNS-resolved address. Each rule is an IP, a CIDR network, a hostname, or
     # a ".domain" (the domain and all its subdomains); see
@@ -140,6 +145,17 @@ class SecurityPolicy:
                 DeprecationWarning,
                 stacklevel=2,
             )
+
+    @property
+    def dns_options(self) -> DNSCheckOptions:
+        """The DNS check settings above, as the one value the check takes."""
+        return DNSCheckOptions(
+            retries=self.dns_retries,
+            backoff_base_seconds=self.dns_backoff_base_seconds,
+            backoff_jitter_seconds=self.dns_backoff_jitter_seconds,
+            deadline_seconds=self.dns_deadline_seconds,
+            enforce_rate_limit=self.enforce_dns_rate_limit,
+        )
 
     @property
     def _allowed(self) -> AddressList:
@@ -200,7 +216,7 @@ class SecurityPolicy:
         check_phishing: bool = False,
         phishing_fail_closed: bool = False,
         dns_fail_open_on_connect_error: bool | None = None,
-        dns_rate_limiter: Any | None = None,
+        dns_rate_limiter: DNSRateLimiter | None = None,
         allowed_addresses: AddressListInput = (),
         denied_addresses: AddressListInput = (),
     ) -> SecurityPolicy:
@@ -223,7 +239,7 @@ class SecurityPolicy:
         check_phishing: bool = False,
         phishing_fail_closed: bool = False,
         dns_fail_open_on_connect_error: bool | None = None,
-        dns_rate_limiter: Any | None = None,
+        dns_rate_limiter: DNSRateLimiter | None = None,
         allowed_addresses: AddressListInput = (),
         denied_addresses: AddressListInput = (),
     ) -> SecurityPolicy:
@@ -247,7 +263,7 @@ class SecurityPolicy:
         *,
         check_dns: bool = False,
         dns_fail_open_on_connect_error: bool | None = None,
-        dns_rate_limiter: Any | None = None,
+        dns_rate_limiter: DNSRateLimiter | None = None,
         allowed_addresses: AddressListInput = (),
         denied_addresses: AddressListInput = (),
     ) -> SecurityPolicy:
@@ -287,7 +303,7 @@ class SecurityPolicy:
         check_dns: bool = False,
         enforce_ssrf: bool = True,
         dns_fail_open_on_connect_error: bool | None = None,
-        dns_rate_limiter: Any | None = None,
+        dns_rate_limiter: DNSRateLimiter | None = None,
         allowed_addresses: AddressListInput = (),
         denied_addresses: AddressListInput = (),
     ) -> SecurityPolicy:

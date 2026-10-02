@@ -32,8 +32,10 @@ from ._parser import Parser
 from ._parser import parse_url as parse_components
 from ._relative import build_relative_reference, parse_relative_reference, round_trip_relative
 from ._security import (
+    DEFAULT_SERVICES,
     ParsedComponents,
     SecurityPolicy,
+    SecurityServices,
     redact_component,
     redact_url_for_logs,
     reject_ambiguous_url,
@@ -72,6 +74,8 @@ class _URLContext:
     correlation_id: str | None
     audit_manager: AuditManager
     builder: Builder
+    #: Resolver, caches, limiter and phishing feed for the security checks.
+    services: SecurityServices = DEFAULT_SERVICES
     #: Deprecated ``URL(parser=...)`` injection; None means the module parser.
     parser: Parser | None = None
 
@@ -122,6 +126,9 @@ class URL:
             :func:`urlps.parse_url_local`) for development URLs.
         correlation_id: Optional identifier propagated to audit events.
         audit: Optional AuditConfig supplying audit callbacks.
+        services: Resolver, caches, DNS limiter and phishing feed for the
+            security checks (default: the process-global ones). Derived URLs
+            keep them.
         parser: Deprecated. A ``Parser`` instance; only its ``custom_scheme``
             setting was ever needed -- pass ``allow_custom_scheme`` instead.
         builder: Deprecated. A ``Builder`` used for serialization.
@@ -176,6 +183,7 @@ class URL:
         security_policy: SecurityPolicy | None = None,
         correlation_id: str | None = None,
         audit: AuditConfig | None = None,
+        services: SecurityServices | None = None,
     ) -> None:
         # Must be first: __setattr__ consults it on every assignment below.
         object.__setattr__(self, "_frozen", False)
@@ -218,6 +226,7 @@ class URL:
             correlation_id=correlation_id,
             audit_manager=AuditManager(audit) if audit is not None else NO_OP_AUDIT_MANAGER,
             builder=builder if builder is not None else _DEFAULT_BUILDER,
+            services=services if services is not None else DEFAULT_SERVICES,
             parser=parser,
         )
         self._parse_and_validate(url)
@@ -521,8 +530,8 @@ class URL:
 
     #: Context fields that are URL data. The rest -- the audit manager (a
     #: lock and user callbacks; a deserialized URL firing someone's audit
-    #: callbacks would be surprising), the builder and the deprecated parser
-    #: -- are machinery, rebuilt fresh on unpickle.
+    #: callbacks would be surprising), the builder, the services and the
+    #: deprecated parser -- are machinery, rebuilt as defaults on unpickle.
     _PICKLED_CONTEXT = ("policy", "check_dns", "check_phishing", "debug", "correlation_id")
 
     def __getstate__(self) -> dict[str, Any]:
@@ -624,6 +633,7 @@ class URL:
                 host=parts.host, port=parts.port, userinfo=parts.userinfo, path=parts.path, scheme=parts.scheme
             ),
             debug=context.debug,
+            services=context.services,
         )
         return list(findings)
 

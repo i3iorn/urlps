@@ -84,8 +84,10 @@ from ._entrypoints import (
     parse_url_local,
     parse_url_unsafe,
 )
-from ._security.dns_guard import DNSRateLimiter, DNSRateLimiterConfig
+from ._security.dns_guard import DNSCacheConfig, DNSRateLimiter, DNSRateLimiterConfig, DNSResolutionCache
+from ._security.phishing_db import PhishingDatabaseManager, PhishingFeedConfig
 from ._security.policy import PolicyInput, SecurityPolicy
+from ._security.services import PhishingFeed, SecurityServices
 from .exceptions import (
     DNSConnectionError,
     DNSRateLimiterError,
@@ -116,12 +118,14 @@ __all__ = [
     "AuditConfig",
     "AuditEventCallback",
     "AuditManager",
+    "DNSCacheConfig",
     "DNSConnectionError",
     "DNSRateLimitError",
     "DNSRateLimiter",
     "DNSRateLimiterConfig",
     "DNSRateLimiterError",
     "DNSRebindingError",
+    "DNSResolutionCache",
     "DNSResolutionError",
     "ErrorCode",
     "FragmentEncodingError",
@@ -129,6 +133,9 @@ __all__ = [
     "InvalidURLError",
     "MissingHostError",
     "PhishingDatabaseError",
+    "PhishingDatabaseManager",
+    "PhishingFeed",
+    "PhishingFeedConfig",
     "PolicyInput",
     "PortValidationError",
     "QueryParsingError",
@@ -136,6 +143,7 @@ __all__ = [
     "SecurityFinding",
     "SecurityPolicy",
     "SecurityPolicyError",
+    "SecurityServices",
     "URLBuildError",
     "URLParseError",
     "URLpError",
