@@ -186,25 +186,30 @@ class SecurityPolicy:
             return False
         return is_ssrf_risk(host, allow_private=self.allow_private_hosts)
 
-    def ip_is_permitted(
-        self, ip: IpAddress, *, host_allowed_by_name: bool = False, allow_private: bool = False
-    ) -> bool:
-        """Whether a resolved/peer address may be connected to under this policy.
+    def permits_address(self, ip: IpAddress, *, host_allowed_by_name: bool = False) -> bool:
+        """Whether a resolved or connected-to address is acceptable under this policy.
 
-        ``host_allowed_by_name`` is True when the hostname being resolved
-        matched an allowed rule: its addresses are then trusted, except
-        cloud metadata addresses and anything denied. ``allow_private``
-        applies the ``local`` policy's narrowing (loopback/private permitted,
-        metadata and link-local never) -- the connect-time guard passes
-        ``allow_private_hosts``; the parse-time DNS check deliberately does not.
+        The one rule for every consumer -- the parse-time DNS check and the
+        connect-time guard ask the same question and get the same answer:
+
+        1. a ``denied_addresses`` match rejects, always;
+        2. an ``allowed_addresses`` match accepts;
+        3. with ``enforce_ssrf`` off, nothing else is checked;
+        4. a host allowed by name trusts what it resolves to, except cloud
+           metadata addresses (only an explicit IP/network rule allows those);
+        5. ``allow_private_hosts`` (the ``local`` preset) accepts loopback and
+           private-use addresses, never metadata or link-local;
+        6. otherwise only public, globally routable unicast is accepted.
         """
         if self._denied.matches_ip(ip):
             return False
         if self._allowed.matches_ip(ip):
             return True
+        if not self.enforce_ssrf:
+            return True
         if host_allowed_by_name:
             return not is_metadata_address(ip)
-        if allow_private and is_permitted_private_ip(ip):
+        if self.allow_private_hosts and is_permitted_private_ip(ip):
             return True
         return _is_ip_safe(ip)
 

@@ -376,7 +376,7 @@ def _dns_findings(ctx: _CheckContext) -> list[SecurityFinding]:
     result = check_host_resolution(
         host,
         policy.dns_options,
-        ip_filter=lambda ip: policy.ip_is_permitted(ip, host_allowed_by_name=host_allowed_by_name),
+        ip_filter=lambda ip: policy.permits_address(ip, host_allowed_by_name=host_allowed_by_name),
         limiter=services.dns_rate_limiter or policy.dns_rate_limiter,
         cache=services.resolution_cache,
         resolver=services.resolver,

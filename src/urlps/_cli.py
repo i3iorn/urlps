@@ -93,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument(
         "--check-dns",
         action="store_true",
-        help="Also verify DNS resolution and block private/reserved resolved targets.",
+        help="Also resolve the host and reject addresses the policy disallows.",
     )
     check.add_argument(
         "--check-phishing",

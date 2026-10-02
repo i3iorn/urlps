@@ -167,8 +167,10 @@ def parse_url_local(
         url: The URL string to parse
         allow_custom_scheme: If True, allow non-standard URL schemes (default: False)
         debug: If True, include raw input in error traces for debugging (default: False)
-        check_dns: If True, verify hostname resolution and block private/reserved targets.
-            Useful for DNS rebinding protection in internal environments (default: False)
+        check_dns: If True, resolve the host and reject it if any address is one
+            the policy disallows -- under ``local`` that is cloud metadata and
+            link-local, not loopback/private (the same rule as for a literal
+            address and for create_guarded_connection). Default: False.
             Ignored when an explicit policy is provided.
         dns_rate_limiter: Optional DNSRateLimiter instance to use when DNS checks
             are enabled. Prefer explicit injection for deterministic behavior.

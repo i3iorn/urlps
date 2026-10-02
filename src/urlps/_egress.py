@@ -44,15 +44,6 @@ def _sockaddr_ip(sockaddr: tuple) -> IpAddress:
     return ipaddress.ip_address(str(sockaddr[0]).partition("%")[0])
 
 
-def _address_permitted(policy: SecurityPolicy, ip: IpAddress, *, host_allowed_by_name: bool) -> bool:
-    if not policy.enforce_ssrf:
-        # Built-in enforcement is off; only the caller's own deny rules apply.
-        return not policy.host_is_denied(str(ip))
-    return policy.ip_is_permitted(
-        ip, host_allowed_by_name=host_allowed_by_name, allow_private=policy.allow_private_hosts
-    )
-
-
 def _ssrf_error(message: str, host: str) -> InvalidURLError:
     return InvalidURLError(message, component="host", value=host, code=ErrorCode.SSRF_RISK)
 
@@ -91,7 +82,7 @@ def _vetted_addrinfo(
             ip = _sockaddr_ip(entry[4])
         except (ValueError, IndexError, TypeError):
             raise _ssrf_error("Host resolved to an address that could not be verified.", host) from None
-        if not _address_permitted(policy, ip, host_allowed_by_name=host_allowed_by_name):
+        if not policy.permits_address(ip, host_allowed_by_name=host_allowed_by_name):
             raise _ssrf_error(f"Host resolves to a disallowed address ({ip}).", host)
     return addr_info
 
@@ -201,7 +192,7 @@ def create_guarded_connection(
                 sock.bind(source_address)
             sock.connect(sockaddr)
             peer = _sockaddr_ip(sock.getpeername())
-            if not _address_permitted(effective_policy, peer, host_allowed_by_name=host_allowed_by_name):
+            if not effective_policy.permits_address(peer, host_allowed_by_name=host_allowed_by_name):
                 sock.close()
                 raise _ssrf_error(f"Connected peer {peer} is a disallowed address.", checked_host)
             return sock
