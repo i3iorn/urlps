@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Iterable
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from typing import Any, Literal, Union, cast
 
 from .._cache_config import POLICY_CACHE_SIZE, lru_cache
@@ -16,7 +16,6 @@ from .ip_utils import IpAddress, _is_ip_safe, is_metadata_address, is_permitted_
 
 PolicyName = Literal["strict", "balanced", "internal", "local"]
 PolicyInput = Union[None, PolicyName, "SecurityPolicy"]
-_POLICY_NAMES: tuple[str, ...] = ("strict", "balanced", "internal", "local")
 _UNSET = object()
 
 #: What ``allowed_addresses``/``denied_addresses`` accept: a compiled
@@ -47,9 +46,18 @@ def _deprecated_fail_open(value: bool | None, preset_default: bool) -> bool:
         "longer makes a verification connection. Use urlps.create_guarded_connection() "
         "for connect-time SSRF protection. The argument will be removed in a future major release.",
         DeprecationWarning,
-        stacklevel=3,
+        stacklevel=4,  # caller -> preset -> _preset -> here
     )
     return value
+
+
+def _heuristic() -> Any:
+    """A heuristic check: on by default, off in the internal and local presets.
+
+    Marked on the field, so a heuristic added later is turned off by those
+    presets automatically rather than only if someone remembers to list it.
+    """
+    return field(default=True, metadata={"heuristic": True})
 
 
 @dataclass(frozen=True)
@@ -66,11 +74,11 @@ class SecurityPolicy:
     # .internal, kubernetes service names, multicast, reserved and 0.0.0.0 stay
     # blocked. Only meaningful while enforce_ssrf is True.
     allow_private_hosts: bool = False
-    enforce_path_traversal: bool = True
-    enforce_open_redirect: bool = True
-    enforce_mixed_scripts: bool = True
-    enforce_parser_confusion: bool = True
-    enforce_double_encoding: bool = True
+    enforce_path_traversal: bool = _heuristic()
+    enforce_open_redirect: bool = _heuristic()
+    enforce_mixed_scripts: bool = _heuristic()
+    enforce_parser_confusion: bool = _heuristic()
+    enforce_double_encoding: bool = _heuristic()
     # Deployment policy, not a URL property: SSRF-to-internal-service is
     # already covered by enforce_ssrf, and blocking port 22/3306 on a *public*
     # host prevents nothing an attacker wants. Opt in when your egress policy
@@ -89,10 +97,10 @@ class SecurityPolicy:
     # whose characters are all Latin lookalikes ("раураӏ.com"). Distinct from
     # the mixed-script check, which by definition cannot see it -- nothing is
     # mixed.
-    enforce_confusable_host: bool = True
+    enforce_confusable_host: bool = _heuristic()
     # Bidi controls, zero-width characters and malformed Punycode in the host.
     # These have no legitimate use in a hostname.
-    enforce_host_unicode_safety: bool = True
+    enforce_host_unicode_safety: bool = _heuristic()
     check_dns: bool = False
     check_phishing: bool = False
     # When check_phishing is on and the database cannot be loaded, reject the
@@ -213,134 +221,53 @@ class SecurityPolicy:
             return True
         return _is_ip_safe(ip)
 
-    @classmethod
-    def strict(
-        cls,
-        *,
-        check_dns: bool = False,
-        check_phishing: bool = False,
-        phishing_fail_closed: bool = False,
-        dns_fail_open_on_connect_error: bool | None = None,
-        dns_rate_limiter: DNSRateLimiter | None = None,
-        allowed_addresses: AddressListInput = (),
-        denied_addresses: AddressListInput = (),
-    ) -> SecurityPolicy:
-        return cls(
-            name="strict",
-            check_dns=check_dns,
-            check_phishing=check_phishing,
-            phishing_fail_closed=phishing_fail_closed,
-            dns_fail_open_on_connect_error=_deprecated_fail_open(dns_fail_open_on_connect_error, False),
-            dns_rate_limiter=dns_rate_limiter,
-            allowed_addresses=allowed_addresses,
-            denied_addresses=denied_addresses,
-        )
+    # -- Presets ---------------------------------------------------------
+    #
+    # Each takes any field as a keyword override:
+    #     SecurityPolicy.strict(check_dns=True, dns_deadline_seconds=2.0)
+    #     SecurityPolicy.local(allowed_schemes={"http", "https", "ws"})
 
     @classmethod
-    def balanced(
-        cls,
-        *,
-        check_dns: bool = False,
-        check_phishing: bool = False,
-        phishing_fail_closed: bool = False,
-        dns_fail_open_on_connect_error: bool | None = None,
-        dns_rate_limiter: DNSRateLimiter | None = None,
-        allowed_addresses: AddressListInput = (),
-        denied_addresses: AddressListInput = (),
-    ) -> SecurityPolicy:
-        return cls(
-            name="balanced",
-            check_dns=check_dns,
-            check_phishing=check_phishing,
-            phishing_fail_closed=phishing_fail_closed,
-            dns_fail_open_on_connect_error=_deprecated_fail_open(dns_fail_open_on_connect_error, True),
-            dns_rate_limiter=dns_rate_limiter,
-            block_dangerous_ports=False,
-            reject_credentials=False,
-            enforce_suspicious_punycode=False,
-            allowed_addresses=allowed_addresses,
-            denied_addresses=denied_addresses,
-        )
+    def strict(cls, **overrides: Any) -> SecurityPolicy:
+        """Untrusted input (the default): every check on."""
+        return cls._preset("strict", {}, overrides, fail_open_default=False)
 
     @classmethod
-    def local(
-        cls,
-        *,
-        check_dns: bool = False,
-        dns_fail_open_on_connect_error: bool | None = None,
-        dns_rate_limiter: DNSRateLimiter | None = None,
-        allowed_addresses: AddressListInput = (),
-        denied_addresses: AddressListInput = (),
-    ) -> SecurityPolicy:
+    def balanced(cls, **overrides: Any) -> SecurityPolicy:
+        """The checks of ``strict``; differs only in the deprecated ``dns_fail_open_on_connect_error``."""
+        return cls._preset("balanced", {}, overrides, fail_open_default=True)
+
+    @classmethod
+    def internal(cls, **overrides: Any) -> SecurityPolicy:
+        """Trusted/internal input: heuristics off, but SSRF still enforced.
+
+        ``enforce_ssrf`` stays True: a preset whose name suggests "internal
+        network" must not silently permit a request to 169.254.169.254. Pass
+        ``enforce_ssrf=False`` to opt out explicitly, or use :meth:`local`
+        for the development case, which permits loopback and RFC1918 while
+        still blocking metadata endpoints.
+        """
+        return cls._preset("internal", _heuristics_off(), overrides, fail_open_default=True)
+
+    @classmethod
+    def local(cls, **overrides: Any) -> SecurityPolicy:
         """Local development: like ``internal``, but loopback/private hosts are allowed.
 
         SSRF enforcement stays *on* and is merely narrowed -- cloud metadata
         endpoints, the link-local range, ``.internal`` and kubernetes service
         names remain blocked, so this is not a blanket "turn security off".
         """
-        return cls(
-            name="local",
-            enforce_ssrf=True,
-            allow_private_hosts=True,
-            enforce_path_traversal=False,
-            enforce_open_redirect=False,
-            enforce_mixed_scripts=False,
-            enforce_parser_confusion=False,
-            enforce_double_encoding=False,
-            block_dangerous_ports=False,
-            reject_credentials=False,
-            enforce_suspicious_punycode=False,
-            enforce_confusable_host=False,
-            enforce_host_unicode_safety=False,
-            check_dns=check_dns,
-            check_phishing=False,
-            enforce_dns_rate_limit=True,
-            dns_fail_open_on_connect_error=_deprecated_fail_open(dns_fail_open_on_connect_error, True),
-            dns_rate_limiter=dns_rate_limiter,
-            allowed_addresses=allowed_addresses,
-            denied_addresses=denied_addresses,
-        )
+        return cls._preset("local", {**_heuristics_off(), "allow_private_hosts": True}, overrides, fail_open_default=True)
 
     @classmethod
-    def internal(
-        cls,
-        *,
-        check_dns: bool = False,
-        enforce_ssrf: bool = True,
-        dns_fail_open_on_connect_error: bool | None = None,
-        dns_rate_limiter: DNSRateLimiter | None = None,
-        allowed_addresses: AddressListInput = (),
-        denied_addresses: AddressListInput = (),
+    def _preset(
+        cls, name: str, base: dict[str, Any], overrides: dict[str, Any], *, fail_open_default: bool
     ) -> SecurityPolicy:
-        """Trusted/internal input: heuristics off, but SSRF still enforced.
-
-        ``enforce_ssrf`` defaults to True: a preset whose name suggests
-        "internal network" must not silently permit a request to
-        169.254.169.254. Pass ``enforce_ssrf=False`` to opt out explicitly, or
-        use :meth:`local` for the development case, which permits loopback and
-        RFC1918 while still blocking metadata endpoints.
-        """
-        return cls(
-            name="internal",
-            enforce_ssrf=enforce_ssrf,
-            enforce_path_traversal=False,
-            enforce_open_redirect=False,
-            enforce_mixed_scripts=False,
-            enforce_parser_confusion=False,
-            enforce_double_encoding=False,
-            block_dangerous_ports=False,
-            reject_credentials=False,
-            enforce_suspicious_punycode=False,
-            enforce_confusable_host=False,
-            enforce_host_unicode_safety=False,
-            check_dns=check_dns,
-            check_phishing=False,
-            enforce_dns_rate_limit=True,
-            dns_fail_open_on_connect_error=_deprecated_fail_open(dns_fail_open_on_connect_error, True),
-            dns_rate_limiter=dns_rate_limiter,
-            allowed_addresses=allowed_addresses,
-            denied_addresses=denied_addresses,
-        )
+        overrides = dict(overrides)
+        fail_open = _deprecated_fail_open(overrides.pop("dns_fail_open_on_connect_error", None), fail_open_default)
+        if "name" in overrides:
+            raise TypeError("a preset's name cannot be overridden; construct SecurityPolicy(name=...) instead")
+        return cls(name=name, **{**base, "dns_fail_open_on_connect_error": fail_open, **overrides})
 
     def __str__(self) -> str:
         return f"SecurityPolicy(name={self.name!r})"
@@ -393,29 +320,27 @@ def _apply_overrides(
     )
 
 
-@lru_cache(maxsize=POLICY_CACHE_SIZE, group="security")
-def _resolve_named_policy(
-    policy_name: PolicyName,
-    check_dns: bool | None,
-    check_phishing: bool | None,
-) -> SecurityPolicy:
-    """Resolve a named policy with optional overrides."""
-    if policy_name == "strict":
-        base = SecurityPolicy.strict()
-    elif policy_name == "balanced":
-        base = SecurityPolicy.balanced()
-    elif policy_name == "internal":
-        base = SecurityPolicy.internal()
-    elif policy_name == "local":
-        base = SecurityPolicy.local()
-    else:
-        raise SecurityPolicyError(f"Unsupported security policy: {policy_name!r}")
+def _heuristics_off() -> dict[str, bool]:
+    """Every field marked as a heuristic, switched off."""
+    return {f.name: False for f in fields(SecurityPolicy) if f.metadata.get("heuristic")}
 
-    return _apply_overrides(
-        base,
-        check_dns=check_dns,
-        check_phishing=check_phishing,
-    )
+
+#: The named presets, by the name ``policy="..."`` takes.
+_PRESETS = {
+    "strict": SecurityPolicy.strict,
+    "balanced": SecurityPolicy.balanced,
+    "internal": SecurityPolicy.internal,
+    "local": SecurityPolicy.local,
+}
+
+
+@lru_cache(maxsize=POLICY_CACHE_SIZE, group="security")
+def _resolve_named_policy(policy_name: str) -> SecurityPolicy:
+    """The named preset, built once."""
+    factory = _PRESETS.get(policy_name)
+    if factory is None:
+        raise SecurityPolicyError(f"Unsupported security policy: {policy_name!r}")
+    return factory()
 
 
 # ---------------------------------------------------------------------------
@@ -431,37 +356,22 @@ def resolve_security_policy(
     dns_rate_limiter: Any = _UNSET,
     allow_custom_scheme: bool | None = None,
 ) -> SecurityPolicy:
-    """Resolve a policy input into a concrete SecurityPolicy instance."""
+    """Resolve a policy input (a SecurityPolicy, a preset name, or None for strict) and apply overrides."""
     if isinstance(policy, SecurityPolicy):
-        return _apply_overrides(
-            policy,
-            check_dns=check_dns,
-            check_phishing=check_phishing,
-            dns_rate_limiter=dns_rate_limiter,
-            allow_custom_scheme=allow_custom_scheme,
-        )
-
-    if policy is None:
-        base = _resolve_named_policy("strict", None, None)
-        return _apply_overrides(
-            base,
-            check_dns=check_dns,
-            check_phishing=check_phishing,
-            dns_rate_limiter=dns_rate_limiter,
-            allow_custom_scheme=allow_custom_scheme,
-        )
-
-    if policy in _POLICY_NAMES:
-        base = _resolve_named_policy(cast(PolicyName, policy), None, None)
-        return _apply_overrides(
-            base,
-            check_dns=check_dns,
-            check_phishing=check_phishing,
-            dns_rate_limiter=dns_rate_limiter,
-            allow_custom_scheme=allow_custom_scheme,
-        )
-
-    raise SecurityPolicyError(f"Unsupported security policy: {policy!r}")
+        base = policy
+    elif policy is None:
+        base = _resolve_named_policy("strict")
+    elif isinstance(policy, str) and policy in _PRESETS:
+        base = _resolve_named_policy(policy)
+    else:
+        raise SecurityPolicyError(f"Unsupported security policy: {policy!r}")
+    return _apply_overrides(
+        base,
+        check_dns=check_dns,
+        check_phishing=check_phishing,
+        dns_rate_limiter=dns_rate_limiter,
+        allow_custom_scheme=allow_custom_scheme,
+    )
 
 
 __all__ = ["AddressListInput", "PolicyInput", "SecurityPolicy", "resolve_security_policy"]
