@@ -7,6 +7,7 @@ from urllib.parse import SplitResult, urlsplit
 
 from .._components import SecurityFinding
 from .._host import ip_literal_text
+from .._validation import scheme_rejection
 from ..exceptions import (
     DNSConnectionError,
     DNSRateLimitError,
@@ -14,6 +15,7 @@ from ..exceptions import (
     ErrorCode,
     InvalidURLError,
     SecurityPolicyError,
+    UnsupportedSchemeError,
 )
 from ._unicode import (
     canonical_host,
@@ -58,6 +60,7 @@ from .url_checks import (
     has_path_traversal,
     has_scheme_authority,
     has_suspicious_punycode,
+    is_commonly_abused_port,
     is_dangerous_port,
     is_open_redirect_risk,
     normalize_url_unicode,
@@ -146,6 +149,7 @@ class ParsedComponents(NamedTuple):
     port: int | None
     userinfo: str | None
     path: str | None = None
+    scheme: str | None = None
 
 
 def _canonical_host(raw_host: str) -> str:
@@ -167,6 +171,278 @@ def _explicit_port(split: SplitResult) -> int | None:
         return None
 
 
+class _CheckContext(NamedTuple):
+    """What every check reads: the policy, and each component in every spelling that matters."""
+
+    policy: SecurityPolicy
+    #: The raw URL, NFC-normalized.
+    url: str
+    #: Whether the URL has an authority at all (otherwise only the
+    #: scheme and encoding checks apply).
+    has_authority: bool
+    scheme: str | None
+    #: The authoritative host: the parser's when given, else extracted.
+    host: str
+    #: Every spelling of the host, authoritative one first.
+    host_spellings: tuple[str, ...]
+    port: int | None
+    #: The raw path (what the heuristics were written for) and the parsed one.
+    path_spellings: tuple[str, ...]
+    has_userinfo: bool
+    #: Path and query for the double-encoding check (the authority may
+    #: legitimately carry escapes of its own).
+    encoded_target: str
+
+
+def _build_context(url: str, policy: SecurityPolicy, parsed: ParsedComponents | None) -> _CheckContext:
+    # NFC-normalizing a pure-ASCII string is always a no-op (Unicode
+    # Normalization Form C only recomposes sequences involving combining
+    # marks, none of which exist in ASCII), and str.isascii() is a dedicated
+    # C-level scan, so this skips the normalize() pass for the common case.
+    normalized_url = url if url.isascii() else normalize_url_unicode(url)
+    has_authority_syntax = has_scheme_authority(normalized_url)
+    split = urlsplit(normalized_url) if has_authority_syntax else None
+    encoded_target = f"{split.path}?{split.query}" if split is not None else normalized_url
+
+    if parsed is not None:
+        scheme = parsed.scheme
+    else:
+        try:
+            scheme = urlsplit(normalized_url).scheme or None
+        except ValueError:
+            scheme = None
+
+    raw_host, raw_path = extract_host_and_path(normalized_url)
+    canonical_raw_host = _canonical_host(raw_host) if raw_host else ""
+    if parsed is not None:
+        host = parsed.host or ""
+        port = parsed.port
+    elif split is not None:
+        host = canonical_raw_host
+        port = _explicit_port(split)
+    else:
+        host, port = "", None
+    # The raw spelling stays in the set because some findings live only
+    # there: IDNA maps a zero-width space to nothing, so it survives in the
+    # text a user sees but not in the host the parser stores.
+    host_spellings = tuple(dict.fromkeys(h for h in (host, canonical_raw_host, raw_host) if h))
+    parsed_path = parsed.path if parsed is not None else None
+    return _CheckContext(
+        policy=policy,
+        url=normalized_url,
+        has_authority=has_authority_syntax or bool(parsed is not None and parsed.host),
+        scheme=scheme,
+        host=host,
+        host_spellings=host_spellings,
+        port=port,
+        path_spellings=tuple(dict.fromkeys(p for p in (raw_path, parsed_path) if p)),
+        has_userinfo=has_credentials(normalized_url) or bool(parsed is not None and parsed.userinfo),
+        encoded_target=encoded_target,
+    )
+
+
+def _scheme_findings(ctx: _CheckContext) -> list[SecurityFinding]:
+    """The policy's scheme rule (see :func:`scheme_rejection`)."""
+    if not ctx.scheme:
+        return []
+    rejection = scheme_rejection(
+        ctx.scheme.lower(), allow_custom=ctx.policy.allow_custom_scheme, allowed=ctx.policy.allowed_schemes
+    )
+    if rejection is None:
+        return []
+    code, message = rejection
+    return [_finding("critical", code, message, "scheme")]
+
+
+def _encoding_findings(ctx: _CheckContext) -> list[SecurityFinding]:
+    if ctx.policy.enforce_double_encoding and has_double_encoding(ctx.encoded_target):
+        return [_finding("critical", ErrorCode.DOUBLE_ENCODING, "URL contains double-encoded characters.", "url")]
+    return []
+
+
+def _host_identity_findings(ctx: _CheckContext) -> list[SecurityFinding]:
+    """Zone IDs, address rules, SSRF and Unicode host analysis -- on every spelling of the host."""
+    policy, spellings = ctx.policy, ctx.host_spellings
+    if not spellings:
+        return []
+    findings: list[SecurityFinding] = []
+    if any(is_malicious_ipv6_zone_id(h) for h in spellings):
+        findings.append(
+            _finding(
+                "critical", ErrorCode.INVALID_IPV6_ZONE_ID, "IPv6 zone identifier contains invalid characters.", "host"
+            )
+        )
+    # A denied rule is the caller saying "never this host", so it applies
+    # whether or not built-in SSRF enforcement is on.
+    if any(policy.host_is_denied(h) for h in spellings):
+        findings.append(
+            SecurityFinding(
+                severity="critical",
+                code=ErrorCode.SSRF_RISK.value,
+                message="Host matches a denied address rule.",
+                component="host",
+                remediation="The policy's denied_addresses covers this host.",
+            )
+        )
+    elif policy.enforce_ssrf and any(policy.host_is_ssrf_risk(h) for h in spellings):
+        findings.append(_finding("critical", ErrorCode.SSRF_RISK, "Host poses SSRF risk and is disallowed.", "host"))
+    # Unicode host analysis. Deliberately NOT gated on the URL being
+    # non-ASCII: Punycode is ASCII, and an A-label is exactly how a homograph
+    # attack arrives on the wire. analyze_host() decodes first, then works
+    # per label.
+    enabled_by_code = {
+        ErrorCode.MIXED_SCRIPT_LABEL: policy.enforce_mixed_scripts,
+        ErrorCode.CONFUSABLE_HOST: policy.enforce_confusable_host,
+    }
+    reported: set[ErrorCode] = set()
+    for spelling in spellings:
+        for code, severity, message in analyze_host(spelling):
+            if code in reported:
+                continue
+            reported.add(code)
+            if enabled_by_code.get(code, policy.enforce_host_unicode_safety):
+                findings.append(_finding(severity, code, message, "host"))
+    return findings
+
+
+def _path_findings(ctx: _CheckContext) -> list[SecurityFinding]:
+    """Traversal and open-redirect patterns, in the raw path and the parsed one."""
+    findings: list[SecurityFinding] = []
+    if ctx.policy.enforce_path_traversal and any(has_path_traversal(p) for p in ctx.path_spellings):
+        findings.append(
+            _finding("critical", ErrorCode.PATH_TRAVERSAL, "URL path contains path traversal patterns.", "path")
+        )
+    if ctx.policy.enforce_open_redirect and any(is_open_redirect_risk(p) for p in ctx.path_spellings):
+        findings.append(
+            _finding("major", ErrorCode.OPEN_REDIRECT, "URL path contains open redirect risk patterns.", "path")
+        )
+    return findings
+
+
+def _structure_findings(ctx: _CheckContext) -> list[SecurityFinding]:
+    if ctx.policy.enforce_parser_confusion and has_parser_confusion(ctx.url):
+        return [
+            _finding(
+                "critical",
+                ErrorCode.PARSER_CONFUSION,
+                "URL contains ambiguous syntax that could cause parser confusion.",
+                "url",
+            )
+        ]
+    return []
+
+
+def _credential_findings(ctx: _CheckContext) -> list[SecurityFinding]:
+    """Credentials in the authority: advisory unless the policy rejects them.
+
+    They are legal RFC 3986 and common in internal tooling. The phishing
+    shape that actually matters ("https://apple.com@evil.com/") is caught
+    structurally by enforce_parser_confusion, and .host already resolves to
+    the real host either way.
+    """
+    if not ctx.has_userinfo:
+        return []
+    if ctx.policy.reject_credentials:
+        return [
+            _finding("major", ErrorCode.CREDENTIALS_IN_URL, "URL credentials are disallowed by policy.", "userinfo")
+        ]
+    return [
+        _finding(
+            "warning",
+            ErrorCode.CREDENTIALS_IN_URL,
+            "URL contains credentials in the authority. The host resolves to the part "
+            "after the last '@'; verify it is the host you expect. Use "
+            "URL.redacted() or as_string(mask_password=True) before logging.",
+            "userinfo",
+        )
+    ]
+
+
+def _port_findings(ctx: _CheckContext) -> list[SecurityFinding]:
+    if ctx.policy.block_dangerous_ports and is_commonly_abused_port(ctx.port):
+        return [_finding("major", ErrorCode.DANGEROUS_PORT, "URL uses a blocked dangerous port.", "port")]
+    return []
+
+
+def _dns_findings(ctx: _CheckContext) -> list[SecurityFinding]:
+    """Resolve the host and check every address under the policy.
+
+    ``host`` is the A-label the caller will connect to. Resolving the raw
+    spelling instead let getaddrinfo apply stdlib IDNA 2003, which maps
+    "faß.de" to "fass.de" -- a different domain from the "xn--fa-hia.de"
+    that URL.host and HTTP clients use.
+    """
+    policy, host = ctx.policy, ctx.host
+    if not (policy.check_dns and host):
+        return []
+    host_allowed_by_name = policy.host_is_allowed(host)
+    safe, dns_error = check_dns_rebinding_detailed(
+        host,
+        ip_filter=lambda ip: policy.ip_is_permitted(ip, host_allowed_by_name=host_allowed_by_name),
+        enforce_rate_limit=policy.enforce_dns_rate_limit,
+        retries=policy.dns_retries,
+        backoff_base_seconds=policy.dns_backoff_base_seconds,
+        backoff_jitter_seconds=policy.dns_backoff_jitter_seconds,
+        fail_open_on_connect_error=policy.dns_fail_open_on_connect_error,
+        limiter=policy.dns_rate_limiter,
+        deadline_seconds=policy.dns_deadline_seconds,
+    )
+    if safe or dns_error is None:
+        return []
+    retry_after = None
+    if dns_error is ErrorCode.DNS_RATE_LIMITED:
+        limiter = policy.dns_rate_limiter or get_dns_rate_limiter()
+        retry_after = limiter.retry_after(_dns_host(host))
+    return [
+        SecurityFinding(
+            severity="critical",
+            code=dns_error.value,
+            message=_DNS_MESSAGES.get(dns_error, "DNS validation failed."),
+            component="host",
+            remediation=_REMEDIATION_BY_CODE.get(dns_error),
+            retry_after=retry_after,
+        )
+    ]
+
+
+def _phishing_findings(ctx: _CheckContext) -> list[SecurityFinding]:
+    policy, host = ctx.policy, ctx.host
+    if not (policy.check_phishing and host):
+        return []
+    is_phishing, db_available = check_against_phishing_db_detailed(host)
+    if is_phishing:
+        return [_finding("critical", ErrorCode.PHISHING_DOMAIN, "Host is identified as a phishing domain.", "host")]
+    if not db_available:
+        # The caller opted into phishing checking and received none. Reporting
+        # a clean result would be a lie, so it is surfaced: as a warning (a
+        # degraded check, not a detected threat), or as a rejection when the
+        # policy says to fail closed.
+        return [
+            _finding(
+                "critical" if policy.phishing_fail_closed else "warning",
+                ErrorCode.PHISHING_DB_UNAVAILABLE,
+                "Phishing database unavailable; host was not checked.",
+                "host",
+            )
+        ]
+    return []
+
+
+#: The checks, in the order their findings are reported. Order matters:
+#: validate_url_security raises on the first blocking finding, so this is
+#: also which error a URL with several problems is rejected for.
+_CHECKS_WITHOUT_AUTHORITY = (_scheme_findings, _encoding_findings)
+_CHECKS_WITH_AUTHORITY = (
+    _host_identity_findings,
+    _path_findings,
+    _structure_findings,
+    _credential_findings,
+    _port_findings,
+    _dns_findings,
+    _phishing_findings,
+)
+
+
 def collect_security_findings(
     url: str,
     *,
@@ -181,217 +457,38 @@ def collect_security_findings(
     traversal, open redirect, parser confusion, credentials) run on it,
     because the parser normalizes away exactly what they look for.
 
-    ``parsed`` is the authority as the parser produced it. When given, its
-    host and port are authoritative: DNS, phishing and the dangerous-port
-    check use them alone, and the identity checks (SSRF, IPv6 zone ID,
-    Unicode host analysis) run on them *in addition to* the host as spelled
+    ``parsed`` is what the parser produced. When given, its host and port
+    are authoritative: DNS, phishing and the dangerous-port check use them
+    alone, and the identity checks (SSRF, IPv6 zone ID, Unicode host
+    analysis) and the path checks run on them *in addition to* the spelling
     in ``url`` -- a finding on either spelling rejects, so the raw text can
-    only add findings, never mask one. Without ``parsed``, the host is
-    extracted from ``url`` and canonicalized the way the parser would.
+    only add findings, never mask one. Without ``parsed``, the components
+    are extracted from ``url`` and canonicalized the way the parser would.
     """
     effective_policy = resolve_security_policy(policy, check_dns=check_dns, check_phishing=check_phishing)
-    findings: list[SecurityFinding] = []
+    ctx = _build_context(url, effective_policy, parsed)
+    checks = _CHECKS_WITHOUT_AUTHORITY + (_CHECKS_WITH_AUTHORITY if ctx.has_authority else ())
+    return [finding for check in checks for finding in check(ctx)]
 
-    # NFC-normalizing a pure-ASCII string is always a no-op (Unicode
-    # Normalization Form C only recomposes sequences involving combining
-    # marks, none of which exist in ASCII), and str.isascii() is a dedicated
-    # C-level scan -- no bytes allocation, no exception machinery -- so this
-    # skips both the encode()/except dance and the normalize() pass entirely
-    # for the common case of an all-ASCII URL.
-    is_ascii = url.isascii()
-    normalized_url = url if is_ascii else normalize_url_unicode(url)
 
-    has_authority_syntax = has_scheme_authority(normalized_url)
-    # Reused below for host/query/port when authority syntax is present, so
-    # this URL only gets split once instead of twice.
-    split = urlsplit(normalized_url) if has_authority_syntax else None
-    double_encoding_target = f"{split.path}?{split.query}" if split is not None else normalized_url
-    if effective_policy.enforce_double_encoding and has_double_encoding(double_encoding_target):
-        findings.append(
-            _finding("critical", ErrorCode.DOUBLE_ENCODING, "URL contains double-encoded characters.", "url")
-        )
+def reject_ambiguous_url(url: str, policy: SecurityPolicy) -> None:
+    """Refuse, before parsing, a raw URL that different parsers would read differently.
 
-    parsed_host = parsed.host if parsed is not None else None
-    if not has_authority_syntax and not parsed_host:
-        return findings
-
-    raw_host, path = extract_host_and_path(normalized_url)
-    canonical_raw_host = _canonical_host(raw_host) if raw_host else ""
-    if parsed is not None:
-        host = parsed_host or ""
-        port = parsed.port
-    else:
-        # Without parsed components, has_authority_syntax held above, which
-        # is exactly the condition split was computed under -- spelled out
-        # for mypy, which can't correlate the two variables on its own.
-        assert split is not None
-        host = canonical_raw_host
-        port = _explicit_port(split)
-    # Every spelling of the host gets the identity checks, authoritative one
-    # first. The raw spelling stays in the set because some findings live
-    # only there: IDNA maps a zero-width space to nothing, so it survives in
-    # the text a user sees but not in the host the parser stores.
-    host_spellings = tuple(dict.fromkeys(h for h in (host, canonical_raw_host, raw_host) if h))
-
-    # --- Host-related checks ---
-    if host_spellings:
-        if any(is_malicious_ipv6_zone_id(h) for h in host_spellings):
-            findings.append(
-                _finding(
-                    "critical",
-                    ErrorCode.INVALID_IPV6_ZONE_ID,
-                    "IPv6 zone identifier contains invalid characters.",
-                    "host",
-                )
-            )
-        # A denied rule is the caller saying "never this host", so it applies
-        # whether or not built-in SSRF enforcement is on.
-        if any(effective_policy.host_is_denied(h) for h in host_spellings):
-            findings.append(
-                SecurityFinding(
-                    severity="critical",
-                    code=ErrorCode.SSRF_RISK.value,
-                    message="Host matches a denied address rule.",
-                    component="host",
-                    remediation="The policy's denied_addresses covers this host.",
-                )
-            )
-        elif effective_policy.enforce_ssrf and any(effective_policy.host_is_ssrf_risk(h) for h in host_spellings):
-            findings.append(
-                _finding("critical", ErrorCode.SSRF_RISK, "Host poses SSRF risk and is disallowed.", "host")
-            )
-        # Unicode host analysis. Deliberately NOT gated on `not is_ascii`:
-        # Punycode is ASCII, and an A-label is exactly how a homograph attack
-        # arrives on the wire. analyze_host() decodes first, then works per label.
-        _CODE_TO_FLAG = {
-            ErrorCode.MIXED_SCRIPT_LABEL: effective_policy.enforce_mixed_scripts,
-            ErrorCode.CONFUSABLE_HOST: effective_policy.enforce_confusable_host,
-        }
-        reported: set[ErrorCode] = set()
-        for spelling in host_spellings:
-            for code, severity, message in analyze_host(spelling):
-                if code in reported:
-                    continue
-                reported.add(code)
-                enabled = _CODE_TO_FLAG.get(code, effective_policy.enforce_host_unicode_safety)
-                if enabled:
-                    findings.append(_finding(severity, code, message, "host"))
-
-    # --- Path-related checks ---
-    # The raw path (what the heuristics were written for) and the parsed
-    # path (what the caller sees and sends) -- see ParsedComponents.
-    path_spellings = tuple(dict.fromkeys(p for p in (path, parsed.path if parsed is not None else None) if p))
-    if effective_policy.enforce_path_traversal and any(has_path_traversal(p) for p in path_spellings):
-        findings.append(
-            _finding("critical", ErrorCode.PATH_TRAVERSAL, "URL path contains path traversal patterns.", "path")
-        )
-    if effective_policy.enforce_open_redirect and any(is_open_redirect_risk(p) for p in path_spellings):
-        findings.append(
-            _finding("major", ErrorCode.OPEN_REDIRECT, "URL path contains open redirect risk patterns.", "path")
-        )
-
-    # --- URL structural checks ---
-    if effective_policy.enforce_parser_confusion and has_parser_confusion(normalized_url):
-        findings.append(
-            _finding(
-                "critical",
-                ErrorCode.PARSER_CONFUSION,
-                "URL contains ambiguous syntax that could cause parser confusion.",
-                "url",
-            )
-        )
-    # Credentials in the authority are legal RFC 3986 and common in internal
-    # tooling, so they are advisory by default: the phishing shape that
-    # actually matters ("https://apple.com@evil.com/") is caught structurally
-    # by enforce_parser_confusion, and .host already resolves to the real
-    # host either way. Callers who want them rejected opt in explicitly.
-    if has_credentials(normalized_url) or (parsed is not None and parsed.userinfo):
-        if effective_policy.reject_credentials:
-            findings.append(
-                _finding(
-                    "major",
-                    ErrorCode.CREDENTIALS_IN_URL,
-                    "URL credentials are disallowed by policy.",
-                    "userinfo",
-                )
-            )
-        else:
-            findings.append(
-                _finding(
-                    "warning",
-                    ErrorCode.CREDENTIALS_IN_URL,
-                    "URL contains credentials in the authority. The host resolves to the part "
-                    "after the last '@'; verify it is the host you expect. Use "
-                    "URL.redacted() or as_string(mask_password=True) before logging.",
-                    "userinfo",
-                )
-            )
-    if effective_policy.block_dangerous_ports and is_dangerous_port(port, block_dangerous_ports=True):
-        findings.append(_finding("major", ErrorCode.DANGEROUS_PORT, "URL uses a blocked dangerous port.", "port"))
-
-    # --- DNS checks ---
-    # `host` is the A-label the caller will connect to. Resolving the raw
-    # spelling instead let getaddrinfo apply stdlib IDNA 2003, which maps
-    # "faß.de" to "fass.de" -- a different domain from the "xn--fa-hia.de"
-    # that URL.host and HTTP clients use.
-    effective_check_dns = effective_policy.check_dns
-    if effective_check_dns and host:
-        host_allowed_by_name = effective_policy.host_is_allowed(host)
-        safe, dns_error = check_dns_rebinding_detailed(
-            host,
-            ip_filter=lambda ip: effective_policy.ip_is_permitted(ip, host_allowed_by_name=host_allowed_by_name),
-            enforce_rate_limit=effective_policy.enforce_dns_rate_limit,
-            retries=effective_policy.dns_retries,
-            backoff_base_seconds=effective_policy.dns_backoff_base_seconds,
-            backoff_jitter_seconds=effective_policy.dns_backoff_jitter_seconds,
-            fail_open_on_connect_error=effective_policy.dns_fail_open_on_connect_error,
-            limiter=effective_policy.dns_rate_limiter,
-            deadline_seconds=effective_policy.dns_deadline_seconds,
-        )
-        if not safe and dns_error is not None:
-            retry_after = None
-            if dns_error is ErrorCode.DNS_RATE_LIMITED:
-                limiter = effective_policy.dns_rate_limiter or get_dns_rate_limiter()
-                retry_after = limiter.retry_after(_dns_host(host))
-            findings.append(
-                SecurityFinding(
-                    severity="critical",
-                    code=dns_error.value,
-                    message=_DNS_MESSAGES.get(dns_error, "DNS validation failed."),
-                    component="host",
-                    remediation=_REMEDIATION_BY_CODE.get(dns_error),
-                    retry_after=retry_after,
-                )
-            )
-
-    effective_check_phishing = effective_policy.check_phishing
-    if effective_check_phishing and host:
-        is_phishing, db_available = check_against_phishing_db_detailed(host)
-        if is_phishing:
-            findings.append(
-                _finding(
-                    "critical",
-                    ErrorCode.PHISHING_DOMAIN,
-                    "Host is identified as a phishing domain.",
-                    "host",
-                )
-            )
-        elif not db_available:
-            # The caller opted into phishing checking and received none.
-            # Reporting a clean result here would be a lie, so surface it as a
-            # warning finding rather than failing silently. It is not
-            # "critical" because it is a degraded check, not a detected threat;
-            # callers that require the check can treat it as fatal.
-            findings.append(
-                _finding(
-                    "critical" if effective_policy.phishing_fail_closed else "warning",
-                    ErrorCode.PHISHING_DB_UNAVAILABLE,
-                    "Phishing database unavailable; host was not checked.",
-                    "host",
-                )
-            )
-
-    return findings
+    Runs ahead of the parser so an ambiguous URL is reported as what it is,
+    not as whichever parse error the ambiguity happens to cause. A path the
+    traversal or open-redirect checks will report is left to them: theirs
+    is the more specific finding.
+    """
+    if not (policy.enforce_parser_confusion and has_parser_confusion(url)):
+        return
+    _, path = extract_host_and_path(url)
+    if path and (is_open_redirect_risk(path) or has_path_traversal(path)):
+        return
+    raise InvalidURLError(
+        "URL contains ambiguous syntax that could cause parser confusion.",
+        code=ErrorCode.PARSER_CONFUSION,
+        component="url",
+    )
 
 
 # Severities that represent a detected problem with the URL itself. Anything
@@ -405,6 +502,8 @@ BLOCKING_SEVERITIES = frozenset({"critical", "major"})
 # InvalidURLError subclasses, so existing `except InvalidURLError` callers are
 # unaffected. Every other finding still raises the generic InvalidURLError.
 _EXCEPTION_TYPES_BY_CODE = {
+    ErrorCode.UNSUPPORTED_SCHEME: UnsupportedSchemeError,
+    ErrorCode.UNSAFE_SCHEME: UnsupportedSchemeError,
     ErrorCode.DNS_RATE_LIMITED: DNSRateLimitError,
     ErrorCode.DNS_RESOLUTION_FAILED: DNSResolutionError,
     ErrorCode.DNS_CONNECTION_FAILED: DNSConnectionError,
@@ -525,6 +624,7 @@ __all__ = [
     "has_path_traversal",
     "has_scheme_authority",
     "has_suspicious_punycode",
+    "is_commonly_abused_port",
     "is_dangerous_port",
     "is_malicious_ipv6_zone_id",
     "is_open_redirect_risk",
@@ -534,6 +634,7 @@ __all__ = [
     "redact_component",
     "redact_url_for_logs",
     "refresh_phishing_db",
+    "reject_ambiguous_url",
     "reset_dns_rate_limiter",
     "resolve_security_policy",
     "validate_url_security",

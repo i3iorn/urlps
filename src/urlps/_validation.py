@@ -22,6 +22,7 @@ All public methods and arguments are type-annotated and documented.
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Set as AbstractSet
 from functools import lru_cache
 from typing import Any
 from urllib.parse import unquote
@@ -36,10 +37,10 @@ from .constants import (
     MAX_IPV6_STRING_LENGTH,
     MAX_SCHEME_LENGTH,
     MAX_USERINFO_LENGTH,
-    OFFICIAL_SCHEMES,
+    STANDARD_SCHEMES,
     UNSAFE_SCHEMES,
 )
-from .exceptions import InvalidURLError, UnsupportedSchemeError
+from .exceptions import ErrorCode, InvalidURLError
 
 compiled_regex = PATTERNS
 
@@ -304,6 +305,30 @@ def is_valid_userinfo(value: str, max_length: int = MAX_USERINFO_LENGTH) -> bool
     return True
 
 
+def scheme_rejection(
+    scheme: str, *, allow_custom: bool, allowed: AbstractSet[str] = STANDARD_SCHEMES
+) -> tuple[ErrorCode, str] | None:
+    """Why ``scheme`` (lowercase, syntactically valid) is not allowed, or None if it is.
+
+    The one scheme rule. The parser applies it while splitting a string, so
+    a dangerous scheme is refused before anything after it is read; the
+    security pass applies it to every validation, so ``validate(policy=...)``
+    and derived URLs follow the same rule.
+    """
+    if allow_custom or scheme in allowed:
+        return None
+    if scheme in UNSAFE_SCHEMES:
+        return (
+            ErrorCode.UNSAFE_SCHEME,
+            f"Scheme '{scheme}' can execute code or reach local resources; pass allow_custom_scheme=True to accept it.",
+        )
+    return (
+        ErrorCode.UNSUPPORTED_SCHEME,
+        f"Scheme '{scheme}' is not allowed ({', '.join(sorted(allowed))}); "
+        "pass allow_custom_scheme=True, or add it to the policy's allowed_schemes.",
+    )
+
+
 class _URLValidation:
     """Validation of ``copy()`` overrides against the parser's component rules.
 
@@ -314,12 +339,12 @@ class _URLValidation:
     __slots__ = ()
 
     @staticmethod
-    def validate_copy_overrides(overrides: dict[str, Any], *, allow_custom_scheme: bool = False) -> None:
+    def validate_copy_overrides(overrides: dict[str, Any]) -> None:
         """Check what ``copy()`` overrides are, before they are normalized.
 
-        Names, types, the scheme (whose allowlist the parser applies while
-        splitting a string), control characters in the path and query, and a
-        "#" in a query. Everything else about a component -- a host, userinfo,
+        Names, types, scheme syntax, control characters in the path and
+        query, and a "#" in a query. The scheme allowlist is the policy's
+        (``scheme_rejection``), applied when the derived URL is validated. Everything else about a component -- a host, userinfo,
         fragment or port that would not parse -- is rejected by the parser's
         own rules, which every derived URL goes through
         (``_parser.normalize_components``).
@@ -341,19 +366,6 @@ class _URLValidation:
         scheme = overrides.get("scheme")
         if scheme is not None and not Validator.is_valid_scheme(scheme.lower()):
             raise InvalidURLError(f"Invalid scheme: {scheme!r}", value=scheme, component="scheme")
-        # The same allowlist parse_url() applies: with_scheme("gopher") or
-        # with_scheme("file") must not be a way around it.
-        if (
-            scheme is not None
-            and not allow_custom_scheme
-            and (scheme.lower() not in OFFICIAL_SCHEMES or scheme.lower() in UNSAFE_SCHEMES)
-        ):
-            raise UnsupportedSchemeError(
-                f"Scheme {scheme!r} is not a standard scheme; the URL must be parsed with "
-                "allow_custom_scheme=True to switch to it.",
-                value=scheme,
-                component="scheme",
-            )
 
         for key in ("path", "query"):
             value = overrides.get(key)
@@ -368,4 +380,4 @@ class _URLValidation:
             raise InvalidURLError("query must not contain '#'; encode it as %23.", value=query, component="query")
 
 
-__all__ = ["Validator", "_URLValidation", "is_valid_userinfo"]
+__all__ = ["Validator", "_URLValidation", "is_valid_userinfo", "scheme_rejection"]

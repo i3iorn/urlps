@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Iterable
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Any, Literal, Union, cast
 
 from .._cache_config import POLICY_CACHE_SIZE
-from ..constants import DEFAULT_DNS_DEADLINE_SECONDS
+from .._validation import Validator
+from ..constants import DEFAULT_DNS_DEADLINE_SECONDS, STANDARD_SCHEMES
 from ..exceptions import SecurityPolicyError
 from .address_rules import NO_RULES, AddressList, AddressRule
 from .ip_utils import IpAddress, _is_ip_safe, is_metadata_address, is_permitted_private_ip, is_ssrf_risk
@@ -20,6 +22,20 @@ _UNSET = object()
 #: What ``allowed_addresses``/``denied_addresses`` accept: a compiled
 #: AddressList, or any iterable of rules (see :mod:`.address_rules`).
 AddressListInput = AddressList | Iterable[AddressRule]
+
+
+def _compile_schemes(schemes: AbstractSet[str] | Iterable[str]) -> frozenset[str]:
+    """Lowercase and syntax-check ``allowed_schemes``; a bad entry fails at construction."""
+    if isinstance(schemes, (str, bytes)):
+        raise SecurityPolicyError("allowed_schemes must be a collection of schemes, not a single string.")
+    entries = list(schemes)
+    if not all(isinstance(scheme, str) for scheme in entries):
+        raise SecurityPolicyError("allowed_schemes entries must be strings.")
+    compiled = frozenset(scheme.lower() for scheme in entries)
+    invalid = sorted(scheme for scheme in compiled if not Validator.is_valid_scheme(scheme))
+    if invalid:
+        raise SecurityPolicyError(f"Invalid scheme(s) in allowed_schemes: {', '.join(invalid)}")
+    return compiled
 
 
 def _deprecated_fail_open(value: bool | None, preset_default: bool) -> bool:
@@ -103,12 +119,19 @@ class SecurityPolicy:
     # addresses, which only an explicit IP/network rule can allow.
     allowed_addresses: AddressListInput = NO_RULES
     denied_addresses: AddressListInput = NO_RULES
+    # The schemes a URL may have: the standard web/file-transfer schemes by
+    # default. allowed_schemes={"https"} narrows that; allow_custom_scheme
+    # accepts any well-formed scheme (including javascript:, data:, file:),
+    # which is what parse_url(..., allow_custom_scheme=True) sets.
+    allowed_schemes: AbstractSet[str] = STANDARD_SCHEMES
+    allow_custom_scheme: bool = False
 
     def __post_init__(self) -> None:
         # Compile here so an invalid rule fails at policy construction, not on
         # the first URL that happens to reach it.
         object.__setattr__(self, "allowed_addresses", AddressList.from_rules(self.allowed_addresses))
         object.__setattr__(self, "denied_addresses", AddressList.from_rules(self.denied_addresses))
+        object.__setattr__(self, "allowed_schemes", _compile_schemes(self.allowed_schemes))
         if self.enforce_suspicious_punycode:
             warnings.warn(
                 "SecurityPolicy.enforce_suspicious_punycode is deprecated and "
@@ -314,10 +337,14 @@ def _apply_overrides(
     check_dns: bool | None,
     check_phishing: bool | None,
     dns_rate_limiter: Any = _UNSET,
+    allow_custom_scheme: bool | None = None,
 ) -> SecurityPolicy:
     """Return a new policy if overrides differ; otherwise return base."""
     effective_dns = base.check_dns if check_dns is None else bool(check_dns)
     effective_phishing = base.check_phishing if check_phishing is None else bool(check_phishing)
+    # Only ever widens: allow_custom_scheme=False at an entry point is its
+    # default, not a request to narrow a policy that allows custom schemes.
+    effective_custom_scheme = base.allow_custom_scheme or bool(allow_custom_scheme)
     # None means "not provided", like check_dns=None: the entry points pass
     # their own dns_rate_limiter=None default through here, and treating it as
     # an override silently dropped a limiter injected on the policy, moving
@@ -330,6 +357,7 @@ def _apply_overrides(
         effective_dns == base.check_dns
         and effective_phishing == base.check_phishing
         and effective_dns_rate_limiter is base.dns_rate_limiter
+        and effective_custom_scheme == base.allow_custom_scheme
     ):
         return base
 
@@ -341,6 +369,7 @@ def _apply_overrides(
         check_dns=effective_dns,
         check_phishing=effective_phishing,
         dns_rate_limiter=effective_dns_rate_limiter,
+        allow_custom_scheme=effective_custom_scheme,
     )
 
 
@@ -380,6 +409,7 @@ def resolve_security_policy(
     check_dns: bool | None = None,
     check_phishing: bool | None = None,
     dns_rate_limiter: Any = _UNSET,
+    allow_custom_scheme: bool | None = None,
 ) -> SecurityPolicy:
     """Resolve a policy input into a concrete SecurityPolicy instance."""
     if isinstance(policy, SecurityPolicy):
@@ -388,6 +418,7 @@ def resolve_security_policy(
             check_dns=check_dns,
             check_phishing=check_phishing,
             dns_rate_limiter=dns_rate_limiter,
+            allow_custom_scheme=allow_custom_scheme,
         )
 
     if policy is None:
@@ -397,6 +428,7 @@ def resolve_security_policy(
             check_dns=check_dns,
             check_phishing=check_phishing,
             dns_rate_limiter=dns_rate_limiter,
+            allow_custom_scheme=allow_custom_scheme,
         )
 
     if policy in _POLICY_NAMES:
@@ -406,6 +438,7 @@ def resolve_security_policy(
             check_dns=check_dns,
             check_phishing=check_phishing,
             dns_rate_limiter=dns_rate_limiter,
+            allow_custom_scheme=allow_custom_scheme,
         )
 
     raise SecurityPolicyError(f"Unsupported security policy: {policy!r}")

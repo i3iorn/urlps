@@ -84,6 +84,8 @@ EXPECTED_ERROR_CODES = {
     "bidi_control_in_host",
     "zero_width_in_host",
     "invalid_punycode",
+    "unsupported_scheme",
+    "unsafe_scheme",
     # Deprecated, retained so downstream `except ... e.code is X` keeps
     # importing. Never emitted; removed in 2.0.
     "query_injection",

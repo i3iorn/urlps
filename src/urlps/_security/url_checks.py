@@ -322,11 +322,18 @@ def extract_host_and_path(url: str) -> tuple[str, str]:
     return host_portion, path_portion
 
 
+def is_commonly_abused_port(port: int | None) -> bool:
+    """Whether ``port`` is one commonly abused for SSRF / protocol smuggling (SSH, SMTP, databases...)."""
+    return port is not None and port in DANGEROUS_PORTS
+
+
 def is_dangerous_port(port: int | None, block_dangerous_ports: bool = False) -> bool:
-    """Check if port is commonly exploited."""
-    if not block_dangerous_ports or port is None:
-        return False
-    return port in DANGEROUS_PORTS
+    """Compatibility wrapper: :func:`is_commonly_abused_port`, gated by a flag.
+
+    The flag duplicated the policy's own ``block_dangerous_ports``; the
+    security checks now ask the policy and call the plain predicate.
+    """
+    return block_dangerous_ports and is_commonly_abused_port(port)
 
 
 def normalize_url_unicode(url: str) -> str:

@@ -15,7 +15,7 @@ from ._parser import normalize_components, parse_netloc
 from ._parser import parse_url as parse_components
 from ._validation import _URLValidation
 from .constants import DEFAULT_PORTS, OFFICIAL_SCHEMES
-from .exceptions import InvalidURLError
+from .exceptions import InvalidURLError, UnsupportedSchemeError
 
 if TYPE_CHECKING:
     from ._components import URLParts
@@ -33,7 +33,7 @@ def derive(url: URL, overrides: Mapping[str, Any]) -> URL:
     ``parse_url("https://h/")`` does.
     """
     context = url._context
-    _URLValidation.validate_copy_overrides(dict(overrides), allow_custom_scheme=context.allow_custom_scheme)
+    _URLValidation.validate_copy_overrides(dict(overrides))
     current = url._parts
 
     def value(name: str) -> Any:
@@ -95,7 +95,13 @@ def assert_round_trip(parts: URLParts, context: _URLContext) -> None:
         {"scheme": parts.scheme, "userinfo": parts.userinfo, "host": parts.host, "port": parts.port, "path": "/"}
     )
     try:
-        reparsed = parse_components(authority_only, allow_custom_scheme=context.allow_custom_scheme)
+        reparsed = parse_components(
+            authority_only,
+            allow_custom_scheme=context.policy.allow_custom_scheme,
+            allowed_schemes=context.policy.allowed_schemes,
+        )
+    except UnsupportedSchemeError:
+        raise  # the policy's scheme rule, not a round-trip failure: keep its type
     except InvalidURLError as exc:
         raise InvalidURLError(f"Derived URL does not re-parse: {exc.message}", component="url") from exc
 

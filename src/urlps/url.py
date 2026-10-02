@@ -20,7 +20,7 @@ from __future__ import annotations
 import functools
 import warnings
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from typing import Any
 
 from . import _mutations, _serialization
@@ -34,12 +34,9 @@ from ._relative import build_relative_reference, parse_relative_reference, round
 from ._security import (
     ParsedComponents,
     SecurityPolicy,
-    extract_host_and_path,
-    has_parser_confusion,
-    has_path_traversal,
-    is_open_redirect_risk,
     redact_component,
     redact_url_for_logs,
+    reject_ambiguous_url,
     validate_url_security,
 )
 from ._validation import Validator
@@ -71,7 +68,6 @@ class _URLContext:
     policy: SecurityPolicy
     check_dns: bool
     check_phishing: bool
-    allow_custom_scheme: bool
     debug: bool
     correlation_id: str | None
     audit_manager: AuditManager
@@ -207,6 +203,10 @@ class URL:
             )
 
         policy = security_policy if security_policy is not None else SecurityPolicy.strict(check_dns=check_dns)
+        if allow_custom_scheme and not policy.allow_custom_scheme:
+            # The scheme rule is the policy's, so derived URLs and
+            # validate() follow the same one.
+            policy = replace(policy, allow_custom_scheme=True)
         self._context = _URLContext(
             policy=policy,
             # A check enabled on either the argument or the policy runs. These
@@ -214,7 +214,6 @@ class URL:
             # a plain False here used to switch off a policy's check_dns=True.
             check_dns=check_dns or policy.check_dns,
             check_phishing=check_phishing or policy.check_phishing,
-            allow_custom_scheme=allow_custom_scheme,
             debug=debug,
             correlation_id=correlation_id,
             audit_manager=AuditManager(audit) if audit is not None else NO_OP_AUDIT_MANAGER,
@@ -246,7 +245,10 @@ class URL:
         """Parse ``url`` into components, statelessly unless a legacy parser was injected."""
         context = self._context
         if context.parser is None:
-            result = parse_components(url, allow_custom_scheme=context.allow_custom_scheme)
+            policy = context.policy
+            result = parse_components(
+                url, allow_custom_scheme=policy.allow_custom_scheme, allowed_schemes=policy.allowed_schemes
+            )
             return result.parts, result.recognized_scheme
         components = context.parser.parse(url)
         # From the result, not the parser's state: a shared Parser may
@@ -268,10 +270,7 @@ class URL:
 
         context = self._context
         try:
-            if context.policy.enforce_parser_confusion and has_parser_confusion(url):
-                _, pre_path = extract_host_and_path(url)
-                if not (pre_path and (is_open_redirect_risk(pre_path) or has_path_traversal(pre_path))):
-                    raise InvalidURLError("URL contains ambiguous syntax that could cause parser confusion.")
+            reject_ambiguous_url(url, context.policy)
             parts, recognized = self._parse(url)
             self._initialize(parts, recognized)
             self._security_findings = self.validate(raise_on_error=True, raw_url=url)
@@ -524,7 +523,7 @@ class URL:
     #: lock and user callbacks; a deserialized URL firing someone's audit
     #: callbacks would be surprising), the builder and the deprecated parser
     #: -- are machinery, rebuilt fresh on unpickle.
-    _PICKLED_CONTEXT = ("policy", "check_dns", "check_phishing", "allow_custom_scheme", "debug", "correlation_id")
+    _PICKLED_CONTEXT = ("policy", "check_dns", "check_phishing", "debug", "correlation_id")
 
     def __getstate__(self) -> dict[str, Any]:
         # The str() cache is left out: it is cheap to rebuild, and a hash of
@@ -558,7 +557,6 @@ class URL:
                 policy=state["policy"],
                 check_dns=state["check_dns"],
                 check_phishing=state["check_phishing"],
-                allow_custom_scheme=state["allow_custom_scheme"],
                 debug=state["debug"],
                 correlation_id=state["correlation_id"],
                 audit_manager=NO_OP_AUDIT_MANAGER,
@@ -622,7 +620,9 @@ class URL:
             # The components this URL actually exposes and serializes. Without
             # them the checks re-parse the string themselves and can land on a
             # different host than the parser did.
-            parsed=ParsedComponents(host=parts.host, port=parts.port, userinfo=parts.userinfo, path=parts.path),
+            parsed=ParsedComponents(
+                host=parts.host, port=parts.port, userinfo=parts.userinfo, path=parts.path, scheme=parts.scheme
+            ),
             debug=context.debug,
         )
         return list(findings)
@@ -689,11 +689,13 @@ def _upgrade_legacy_state(state: Mapping[str, Any]) -> dict[str, Any]:
         },
         "recognized_scheme": recognized,
         "security_findings": state.get("_security_findings") or [],
-        "policy": state.get("_security_policy") or SecurityPolicy.strict(),
+        # 1.1 kept the custom-scheme setting on the (unpickled) parser; a
+        # custom scheme implies it.
+        "policy": replace(
+            state.get("_security_policy") or SecurityPolicy.strict(), allow_custom_scheme=recognized is False
+        ),
         "check_dns": bool(state.get("_check_dns")),
         "check_phishing": bool(state.get("_check_phishing")),
-        # 1.1 kept this on the (unpickled) parser; a custom scheme implies it.
-        "allow_custom_scheme": recognized is False,
         "debug": bool(state.get("_debug")),
         "correlation_id": state.get("_correlation_id"),
     }

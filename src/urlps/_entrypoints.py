@@ -112,10 +112,10 @@ def parse_url(
         check_dns=check_dns,
         check_phishing=check_phishing,
         dns_rate_limiter=dns_rate_limiter,
+        allow_custom_scheme=allow_custom_scheme,
     )
     return _url.URL(
         url,
-        allow_custom_scheme=allow_custom_scheme,
         debug=debug,
         check_dns=resolved_policy.check_dns,
         check_phishing=resolved_policy.check_phishing,
@@ -191,17 +191,16 @@ def parse_url_local(
         For production use with untrusted input, always use parse_url() instead.
     """
     resolved_policy = (
-        resolve_security_policy(policy, dns_rate_limiter=dns_rate_limiter)
+        resolve_security_policy(policy, dns_rate_limiter=dns_rate_limiter, allow_custom_scheme=allow_custom_scheme)
         if policy is not None
-        else SecurityPolicy.local(
-            check_dns=check_dns,
-            dns_rate_limiter=dns_rate_limiter,
+        else resolve_security_policy(
+            SecurityPolicy.local(check_dns=check_dns, dns_rate_limiter=dns_rate_limiter),
+            allow_custom_scheme=allow_custom_scheme,
         )
     )
 
     return _url.URL(
         url,
-        allow_custom_scheme=allow_custom_scheme,
         debug=debug,
         check_dns=resolved_policy.check_dns,
         check_phishing=resolved_policy.check_phishing,

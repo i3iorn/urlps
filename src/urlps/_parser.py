@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Set as AbstractSet
 from typing import Any
 from urllib.parse import unquote
 
@@ -12,7 +13,7 @@ from ._host import is_ascii_digits, looks_like_ipv4, port_number
 from ._normalize import normalize_host, normalize_percent_encoding, normalize_userinfo
 from ._resolve import normalize_dot_segments
 from ._security._unicode.uts46 import IdnaError, canonical_host
-from ._validation import Validator, is_valid_userinfo
+from ._validation import Validator, is_valid_userinfo, scheme_rejection
 from .constants import (
     DEFAULT_PORTS,
     MAX_FRAGMENT_LENGTH,
@@ -22,7 +23,7 @@ from .constants import (
     MAX_SCHEME_LENGTH,
     OFFICIAL_SCHEMES,
     SCHEMES_NO_PORT,
-    UNSAFE_SCHEMES,
+    STANDARD_SCHEMES,
 )
 from .exceptions import (
     FragmentEncodingError,
@@ -36,7 +37,9 @@ from .exceptions import (
 )
 
 
-def parse_scheme(url: str, allow_custom: bool = False) -> tuple[str | None, str, bool | None, bool]:
+def parse_scheme(
+    url: str, allow_custom: bool = False, *, allowed_schemes: AbstractSet[str] = STANDARD_SCHEMES
+) -> tuple[str | None, str, bool | None, bool]:
     """Parse scheme from URL.
 
     Returns (scheme, remainder, recognized_scheme, has_authority). The colon
@@ -75,27 +78,18 @@ def parse_scheme(url: str, allow_custom: bool = False) -> tuple[str | None, str,
         )
 
     scheme_lower = scheme_candidate.lower()
-    if scheme_lower in UNSAFE_SCHEMES and not allow_custom:
-        raise URLParseError(
-            f"Scheme '{scheme_candidate}' requires custom_scheme=True", value=scheme_candidate, component="scheme"
-        )
-    if scheme_lower in OFFICIAL_SCHEMES:
-        return scheme_lower, remainder, True, has_authority
-    if allow_custom:
-        return scheme_lower, remainder, False, has_authority
-    if Validator.is_valid_scheme(scheme_lower):
-        # Syntactically fine, but not one of the standard schemes. Accepting
-        # it by default (as this used to) let parse_url() vet links such as
-        # ms-msdt:, search-ms: or smb:// that hand the URL to an OS protocol
-        # handler; the allowlist is what allow_custom_scheme documents.
-        raise UnsupportedSchemeError(
-            f"Scheme '{scheme_candidate}' is not a standard scheme "
-            f"({', '.join(sorted(OFFICIAL_SCHEMES - UNSAFE_SCHEMES))}); "
-            "pass allow_custom_scheme=True to accept it.",
-            value=scheme_candidate,
-            component="scheme",
-        )
-    raise URLParseError(f"Invalid URL scheme: {scheme_candidate}", value=scheme_candidate, component="scheme")
+    # RFC 3986 grammar first, even for a custom scheme: "a_b" is no scheme.
+    if not Validator.is_valid_scheme(scheme_lower):
+        raise URLParseError(f"Invalid URL scheme: {scheme_candidate}", value=scheme_candidate, component="scheme")
+    # The policy's scheme rule, applied here so a dangerous scheme is refused
+    # before the rest of the URL is read. Accepting any well-formed scheme by
+    # default let parse_url() vet links such as ms-msdt:, search-ms: or
+    # smb:// that hand the URL to an OS protocol handler.
+    rejection = scheme_rejection(scheme_lower, allow_custom=allow_custom, allowed=allowed_schemes)
+    if rejection is not None:
+        code, message = rejection
+        raise UnsupportedSchemeError(message, value=scheme_candidate, component="scheme", code=code)
+    return scheme_lower, remainder, scheme_lower in OFFICIAL_SCHEMES, has_authority
 
 
 def split_fragment(url: str) -> tuple[str, str | None]:
@@ -317,14 +311,22 @@ def apply_port_defaults(scheme: str | None, port: int | None, host: str | None) 
     return DEFAULT_PORTS.get(scheme.lower()) if scheme else None
 
 
-def parse_url(url: str, allow_custom_scheme: bool = False) -> ParseResult:
-    """Parse a URL string into a ParseResult with all components."""
+def parse_url(
+    url: str, allow_custom_scheme: bool = False, *, allowed_schemes: AbstractSet[str] = STANDARD_SCHEMES
+) -> ParseResult:
+    """Parse a URL string into a ParseResult with all components.
+
+    ``allow_custom_scheme`` accepts any well-formed scheme; otherwise the
+    scheme must be in ``allowed_schemes`` (a policy's, or the standard set).
+    """
     if not isinstance(url, str):
         raise URLParseError(f"URL must be a string, not {type(url).__name__}.", value=url, component="url")
     if not url.strip():
         raise URLParseError(f"URL cannot be empty or whitespace-only. Received: {url!r}", value=url, component="url")
     working = url.strip()
-    scheme, remainder, recognized, has_authority = parse_scheme(working, allow_custom_scheme)
+    scheme, remainder, recognized, has_authority = parse_scheme(
+        working, allow_custom_scheme, allowed_schemes=allowed_schemes
+    )
 
     if not scheme and remainder.startswith("//"):
         remainder = remainder[2:]

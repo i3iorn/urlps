@@ -48,6 +48,10 @@ UNSAFE_SCHEMES: Final[frozenset[str]] = frozenset(
     }
 )
 
+#: What every preset policy accepts by default: the official schemes that
+#: neither execute code nor reach local resources.
+STANDARD_SCHEMES: Final[frozenset[str]] = OFFICIAL_SCHEMES - UNSAFE_SCHEMES
+
 DANGEROUS_PORTS: Final[frozenset[int]] = frozenset(
     {
         22,  # SSH
@@ -317,6 +321,7 @@ __all__ = [
     "PHISHING_DATABASE_SHA256",
     "PHISHING_DATABASE_URL",
     "SCHEMES_NO_PORT",
+    "STANDARD_SCHEMES",
     "UNSAFE_SCHEMES",
     "OfficialSchemes",
 ]
