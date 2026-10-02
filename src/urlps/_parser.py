@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
 from typing import Any
-from urllib.parse import unquote_plus
+from urllib.parse import unquote, unquote_plus
 
 from ._builder import Builder, QueryPairs
-from ._cache_config import PARSER_CACHE_SIZE
+from ._cache_config import PARSER_CACHE_SIZE, bounded_lru_cache
 from ._components import ParseResult
-from ._normalize import normalize_host, normalize_percent_encoding
+from ._normalize import normalize_host, normalize_percent_encoding, normalize_userinfo
 from ._security._unicode.uts46 import IdnaError, to_ascii
 from ._validation import Validator, is_valid_userinfo
 from .constants import (
@@ -82,8 +81,20 @@ def parse_scheme(url: str, allow_custom: bool = False) -> tuple[str | None, str,
         )
     if scheme_lower in OFFICIAL_SCHEMES:
         return scheme_lower, remainder, True, has_authority
-    if Validator.is_valid_scheme(scheme_lower) or allow_custom:
+    if allow_custom:
         return scheme_lower, remainder, False, has_authority
+    if Validator.is_valid_scheme(scheme_lower):
+        # Syntactically fine, but not one of the standard schemes. Accepting
+        # it by default (as this used to) let parse_url() vet links such as
+        # ms-msdt:, search-ms: or smb:// that hand the URL to an OS protocol
+        # handler; the allowlist is what allow_custom_scheme documents.
+        raise UnsupportedSchemeError(
+            f"Scheme '{scheme_candidate}' is not a standard scheme "
+            f"({', '.join(sorted(OFFICIAL_SCHEMES - UNSAFE_SCHEMES))}); "
+            "pass allow_custom_scheme=True to accept it.",
+            value=scheme_candidate,
+            component="scheme",
+        )
     raise URLParseError(f"Invalid URL scheme: {scheme_candidate}", value=scheme_candidate, component="scheme")
 
 
@@ -116,7 +127,14 @@ def parse_userinfo(authority: str) -> tuple[str | None, str]:
     auth_segment, _, host = authority.partition("@")
     if not is_valid_userinfo(auth_segment):
         raise UserInfoParsingError("Invalid authentication section in URL.", value=auth_segment, component="userinfo")
-    return auth_segment, host
+    # Escape anything outside the RFC 3986 userinfo grammar, so str(url) can
+    # only ever be read with this host. "http://169.254.169.254\\@example.com/"
+    # is host example.com here but host 169.254.169.254 to a WHATWG parser
+    # (browsers, Node), which treats "\\" as "/"; "%5C" is unambiguous.
+    try:
+        return normalize_userinfo(auth_segment), host
+    except UnicodeEncodeError as exc:
+        raise UserInfoParsingError("Userinfo is not valid Unicode.", component="userinfo") from exc
 
 
 def parse_port(candidate: str) -> int:
@@ -131,7 +149,10 @@ def parse_port(candidate: str) -> int:
     Raises:
         PortValidationError: If port is non-numeric or out of valid range (1-65535)
     """
-    if not candidate or not candidate.isdigit():
+    # isascii() too: str.isdigit() accepts any Unicode digit (fullwidth "22",
+    # U+FF12 U+FF12), which int() reads as 22 while urlsplit() rejects it --
+    # one port meaning two different things to two parsers.
+    if not candidate or not candidate.isascii() or not candidate.isdigit():
         raise PortValidationError(
             f"Port must be a positive integer. Received: {candidate!r}", value=candidate, component="port"
         )
@@ -198,7 +219,7 @@ def parse_host(host_candidate: str, require_host: bool = False) -> tuple[str | N
     return parse_regular_host(host_candidate)
 
 
-@lru_cache(maxsize=PARSER_CACHE_SIZE)
+@bounded_lru_cache(maxsize=PARSER_CACHE_SIZE)
 def normalize_path(path_candidate: str) -> str:
     """Normalize URL path by resolving . and .. segments.
 
@@ -206,7 +227,9 @@ def normalize_path(path_candidate: str) -> str:
     """
     if not path_candidate:
         return ""
-    if len(path_candidate) > MAX_PATH_LENGTH:
+    # Decoded length, like the userinfo limit: the builder percent-encodes
+    # non-ASCII on output (up to 12x longer), and str(url) must re-parse.
+    if len(unquote(path_candidate)) > MAX_PATH_LENGTH:
         raise URLParseError(
             f"Path exceeds maximum length of {MAX_PATH_LENGTH}.", value=path_candidate, component="path"
         )
@@ -297,7 +320,7 @@ def parse_fragment_string(fragment_candidate: str | None) -> str | None:
     """Parse and validate fragment."""
     if fragment_candidate is None:
         return None
-    if len(fragment_candidate) > MAX_FRAGMENT_LENGTH:
+    if len(unquote(fragment_candidate)) > MAX_FRAGMENT_LENGTH:  # decoded, as for the path
         raise FragmentEncodingError(
             f"Fragment exceeds maximum length of {MAX_FRAGMENT_LENGTH}.", value=fragment_candidate, component="fragment"
         )
@@ -422,7 +445,7 @@ class Parser:
 #: Caches reported under the "parser" group. normalize_host and
 #: normalize_percent_encoding live in _normalize but run on every parse, so
 #: they are reported here rather than in a group of their own.
-_CACHED_FUNCTIONS = [normalize_path, normalize_host, normalize_percent_encoding]
+_CACHED_FUNCTIONS: list[Any] = [normalize_path, normalize_host, normalize_percent_encoding]
 
 
 def get_cache_info() -> dict:

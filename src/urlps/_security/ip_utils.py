@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import ipaddress
-import socket
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from functools import lru_cache
 
-from .._cache_config import SECURITY_CACHE_SIZE
-from ..constants import BLOCKED_HOSTNAMES, LOOPBACK_HOSTNAMES, METADATA_HOSTNAMES
+from .._cache_config import SECURITY_CACHE_SIZE, bounded_lru_cache
+from ..constants import (
+    BLOCKED_HOSTNAMES,
+    LOOPBACK_HOSTNAMES,
+    METADATA_ADDRESSES,
+    METADATA_HOSTNAMES,
+    NON_PUBLIC_NETWORKS,
+)
 
 # `X | Y` works here at runtime (not just in annotations) because it's a
 # plain module-level assignment, not something `from __future__ import
@@ -18,9 +23,66 @@ IpAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 AddrInfo = Sequence[tuple[int, int, int, str, tuple]]
 
 
+IpNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+_NON_PUBLIC_NETWORKS: tuple[IpNetwork, ...] = tuple(ipaddress.ip_network(net) for net in NON_PUBLIC_NETWORKS)
+_METADATA_NETWORKS: tuple[IpNetwork, ...] = tuple(ipaddress.ip_network(net) for net in METADATA_ADDRESSES)
+_NAT64_WELL_KNOWN = ipaddress.IPv6Network("64:ff9b::/96")
+
+
+def in_networks(ip: IpAddress, networks: Iterable[IpNetwork]) -> bool:
+    """Whether ``ip`` falls in any of ``networks`` (mixed IPv4/IPv6 allowed)."""
+    return any(ip.version == net.version and ip in net for net in networks)
+
+
+def embedded_ipv4(ip: IpAddress) -> tuple[ipaddress.IPv4Address, ...]:
+    """IPv4 addresses an IPv6 address carries: mapped, 6to4, Teredo, NAT64.
+
+    ``[::ffff:10.0.0.1]`` and ``[64:ff9b::a00:1]`` reach 10.0.0.1, so a rule
+    about 10.0.0.0/8 has to see through them.
+    """
+    if not isinstance(ip, ipaddress.IPv6Address):
+        return ()
+    found: list[ipaddress.IPv4Address] = []
+    if ip.ipv4_mapped is not None:
+        found.append(ip.ipv4_mapped)
+    if ip.sixtofour is not None:
+        found.append(ip.sixtofour)
+    if ip.teredo is not None:
+        found.extend(ip.teredo)
+    if ip in _NAT64_WELL_KNOWN:
+        found.append(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
+    return tuple(found)
+
+
+def is_metadata_address(ip: IpAddress) -> bool:
+    """Whether ``ip`` is (or embeds) a cloud metadata / credential endpoint."""
+    return any(in_networks(candidate, _METADATA_NETWORKS) for candidate in (ip, *embedded_ipv4(ip)))
+
+
 def _is_ip_safe(ip: IpAddress) -> bool:
-    """Check if IP is safe (not private/reserved)."""
-    return not (ip.is_private or ip.is_loopback or ip.is_multicast or ip.is_reserved or ip.is_link_local)
+    """Whether ``ip`` is a public, globally routable unicast address.
+
+    Fails closed on three independent signals, any of which marks the address
+    unsafe: the stdlib predicates (including ``is_global``, which is what
+    catches 100.64.0.0/10), the explicit NON_PUBLIC_NETWORKS floor that does
+    not move with the CPython version, and any IPv4 address embedded in an
+    IPv6 one.
+    """
+    if (
+        not ip.is_global
+        or ip.is_private
+        or ip.is_loopback
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_link_local
+        or ip.is_unspecified
+        or (isinstance(ip, ipaddress.IPv6Address) and ip.is_site_local)
+    ):
+        return False
+    if in_networks(ip, _NON_PUBLIC_NETWORKS):
+        return False
+    return all(_is_ip_safe(inner) for inner in embedded_ipv4(ip))
 
 
 def _check_ipv4_private(host: str) -> bool:
@@ -178,15 +240,22 @@ def _is_obfuscated_ip_private(host: str) -> bool:
     return not _is_ip_safe(address)
 
 
-def _check_direct_ip_safe(host: str) -> bool | None:
+IpFilter = Callable[[IpAddress], bool]
+
+
+def _check_direct_ip_safe(host: str, ip_filter: IpFilter | None = None) -> bool | None:
     """Check if host is a direct IP and if it is safe; None if not an IP."""
     try:
-        return _is_ip_safe(ipaddress.ip_address(host))
+        address = ipaddress.ip_address(host)
     except ValueError:
         return None
+    return (ip_filter or _is_ip_safe)(address)
 
 
-def _check_resolved_ips_safe(addr_info: Iterable[tuple[int, int, int, str, tuple]]) -> bool:
+def _check_resolved_ips_safe(
+    addr_info: Iterable[tuple[int, int, int, str, tuple]],
+    ip_filter: IpFilter | None = None,
+) -> bool:
     """Check that all resolved IPs in addr_info are safe.
 
     Fails closed: an address we cannot parse is treated as unsafe rather than
@@ -200,43 +269,10 @@ def _check_resolved_ips_safe(addr_info: Iterable[tuple[int, int, int, str, tuple
             address = ipaddress.ip_address(sockaddr[0])
         except (ValueError, IndexError, TypeError):
             return False
-        if not _is_ip_safe(address):
+        if not (ip_filter or _is_ip_safe)(address):
             return False
         checked_any = True
     return checked_any
-
-
-def _verify_connection_safe(
-    addr_info: Iterable[tuple[int, int, int, str, tuple]],
-    timeout: float,
-    *,
-    fail_open_on_error: bool = True,
-) -> bool:
-    """Verify connection peer IP safety to mitigate DNS rebinding.
-
-    Only transport failures honour ``fail_open_on_error`` -- that is a
-    deliberate, policy-driven availability tradeoff. Being unable to
-    *determine* the peer is not a transport failure and always fails closed:
-    an empty address list or an unparseable peer address means the check did
-    not run, which is not the same as the check passing.
-    """
-    addresses = list(addr_info)
-    if not addresses:
-        return False
-
-    family, socktype, proto, _canonname, sockaddr = addresses[0]
-    test_socket = socket.socket(family, socktype, proto)
-    try:
-        test_socket.settimeout(timeout)
-        test_socket.connect(sockaddr)
-        try:
-            return _is_ip_safe(ipaddress.ip_address(test_socket.getpeername()[0]))
-        except (ValueError, IndexError, TypeError):
-            return False
-    except (TimeoutError, OSError):
-        return bool(fail_open_on_error)
-    finally:
-        test_socket.close()
 
 
 @lru_cache(maxsize=SECURITY_CACHE_SIZE)
@@ -262,34 +298,47 @@ def _resolve_host_to_ip(host: str) -> IpAddress | None:
     return _parse_inet_aton_ipv4(host)
 
 
+def is_permitted_private_ip(ip: IpAddress) -> bool:
+    """Whether the ``local`` policy permits connecting to ``ip``."""
+    return _is_permitted_private_host(str(ip), str(ip))
+
+
 def _is_permitted_private_host(host: str, host_lower: str) -> bool:
     """Whether ``local`` policy may permit this host.
 
-    True only for loopback/RFC1918/ULA. Link-local (which is where the cloud
-    metadata endpoints live), multicast, reserved and unspecified addresses
-    are never permitted, nor is anything in METADATA_HOSTNAMES.
+    True for loopback and the private-use ranges ``ipaddress`` classifies as
+    ``is_private`` (RFC 1918, ULA, documentation, ...), or their IPv4-mapped
+    form. Link-local (where most cloud metadata endpoints live), CGNAT
+    (100.64.0.0/10, which is not ``is_private``), multicast and unspecified
+    addresses are never permitted, nor is anything in METADATA_HOSTNAMES or
+    METADATA_ADDRESSES (fd00:ec2::254 is a ULA, so this matters).
     """
     if host_lower in METADATA_HOSTNAMES or host_lower.endswith(".internal"):
         return False
 
     ip = _resolve_host_to_ip(host_lower)
     if ip is not None:
-        # Order matters. Link-local is checked first because it is where the
-        # cloud metadata endpoints live and because IPv6 link-local is also
-        # is_private. is_reserved is deliberately NOT a veto: IPv6 ::1 is both
-        # loopback and reserved (it falls inside ::/8), and a reserved address
-        # that is neither loopback nor private simply fails the permit below
-        # and stays risky anyway.
-        if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+        if is_metadata_address(ip):
             return False
-        return bool(ip.is_loopback or ip.is_private)
+        # An IPv4-mapped address reaches its IPv4 counterpart on a dual-stack
+        # host, so it is judged as that address: [::ffff:169.254.169.254] is
+        # link-local, not merely "IPv6 private".
+        target: IpAddress = ip
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            target = ip.ipv4_mapped
+        # Link-local is vetoed before the permit because IPv6 link-local is
+        # also is_private. is_reserved is deliberately NOT a veto: IPv6 ::1 is
+        # both loopback and reserved (it falls inside ::/8).
+        if target.is_link_local or target.is_multicast or target.is_unspecified:
+            return False
+        return bool(target.is_loopback or target.is_private)
 
     # Hostname, not a literal: only the explicit loopback spellings and the
     # loopback/mDNS suffixes qualify.
     return host_lower in LOOPBACK_HOSTNAMES or host_lower.endswith((".local", ".localhost"))
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@bounded_lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def is_ssrf_risk(host: str, *, allow_private: bool = False) -> bool:
     """Check if host poses SSRF risk (blocked hostnames, private IPs, and ambiguous IPs).
 

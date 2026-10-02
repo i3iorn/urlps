@@ -97,3 +97,42 @@ class TestTopLevel:
     def test_build_parser_returns_argparse_parser(self):
         parser = build_parser()
         assert parser.prog == "urlps"
+
+
+class TestTerminalSafety:
+    """URL lists checked in CI are untrusted; nothing raw may reach the terminal."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://evil\x1b]0;pwned\x07.example/",  # OSC title-set sequence
+            "http://example.com/\x1b[2J",  # clear screen
+            "http://example.com/\x9b31m",  # C1 CSI: now also rejected as a control character
+            "\x1b[1A\x1b[2Khttps://looks-fine.example/",  # rewrite the previous line
+        ],
+    )
+    def test_rejected_input_is_escaped_when_echoed(self, capsys, url):
+        code = main(["check", url])
+        captured = capsys.readouterr()
+        assert code == 1
+        for control in ("\x1b", "\x07", "\x9b"):
+            assert control not in captured.err
+        assert "\\x1b" in captured.err or "\\x9b" in captured.err
+
+    def test_bidi_control_in_an_accepted_url_never_reaches_the_terminal_raw(self, capsys):
+        code = main(["check", "https://example.com/?q=\u202egnp.exe"])
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "\u202e" not in out
+
+    def test_printable_escapes_only_what_it_must(self):
+        from urlps._cli import _printable
+
+        assert _printable("https://example.com/caf\u00e9") == "https://example.com/caf\u00e9"
+        assert _printable("a\x1bb\u202ec\x9bd") == "a\\x1bb\\u202ec\\x9bd"
+
+    def test_ordinary_unicode_is_printed_as_is(self, capsys):
+        code = main(["check", "https://example.com/caf\u00e9?q=\u00fcber"])
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "\\x" not in out and "\\u" not in out

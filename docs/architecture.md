@@ -23,7 +23,8 @@ constants.py, exceptions.py, _patterns.py, _components.py, _resolve.py
         |  (no dependencies on the rest of the package)
         v
 _validation.py, _builder.py, _relative.py, _normalize.py
-_security/ip_utils.py, _security/policy.py, _security/url_checks.py
+_security/ip_utils.py, _security/address_rules.py, _security/policy.py,
+_security/url_checks.py
 _security/_unicode/ (scripts.py, confusables.py, uts46.py)
 _security/host_analysis.py
         |
@@ -42,6 +43,9 @@ _audit.py                        (imports _security, for redact_url_for_logs)
         v
 url.py                           (the URL class; ties parser + security + audit together)
         |
+        v
+_egress.py                       (connect-time SSRF guard: resolve_and_validate,
+        |                          create_guarded_connection)
         v
 __init__.py                      (public API: parse_url, parse_url_local, join, build, ...)
 ```
@@ -64,6 +68,25 @@ succeeds.** `URL.__init__` calls `self._parser.parse(url)` first, then
 `self.validate(...)`, which delegates to `_security.validate_url_security`.
 A syntactically valid URL can still be rejected at that second step (e.g.
 `http://127.0.0.1/` parses fine and is rejected only by the SSRF check).
+
+**The second pass validates the parser's output, not a re-parse of the
+input.** `validate()` hands `_security` the host, port and userinfo the
+parser produced (`ParsedAuthority`), and every host/port-based check — SSRF,
+IPv6 zone ID, Unicode host analysis, dangerous ports, DNS, phishing — runs on
+those. Only the heuristics that look for things the parser normalizes away
+(path traversal, open redirect, double encoding, parser confusion) read the
+raw string. The identity checks *also* run on the host as spelled in the raw
+string, but only ever to add findings: some signals (a zero-width space) exist
+only in the text a user sees, because IDNA maps them to nothing.
+
+This was learned the hard way. `_security` used to extract the host from the
+raw string with its own splitter, and wherever that splitter and the parser
+disagreed, the checks approved one host while `URL.host` was another:
+`http://169.254.169.254?` (the splitter ended the authority only at `/`) and
+`127.0.0.1` written with ideographic full stops (the parser applies UTS-46
+mapping, the splitter did not) both reached loopback/metadata under the
+default `strict` policy. If you add a check that is about *where the URL
+goes*, read it from `ParsedAuthority`, never from the raw string.
 
 This split is why `parse_url_local()` and `parse_url()` can share the exact
 same parser: the difference between them is entirely which `SecurityPolicy`
@@ -101,7 +124,10 @@ exception of `dns_guard.DNSRateLimiter`/`DNSRateLimiterConfig`, which are
 also re-exported from the top-level `urlps` package for dependency
 injection). The submodules:
 
-- **`ip_utils.py`** — SSRF-relevant IP classification: private-range checks,
+- **`ip_utils.py`** — SSRF-relevant IP classification (`_is_ip_safe`: an
+  address is safe only if it is public, globally routable unicast by the
+  stdlib's predicates *and* outside the version-independent
+  `NON_PUBLIC_NETWORKS`, with any embedded IPv4 checked too): private-range checks,
   the obfuscated-IPv4 grammar (`_parse_inet_aton_ipv4`), IPv6 zone-ID
   validation. Every predicate here is expected to **fail closed**: an
   address that can't be parsed or verified is treated as unsafe, never as
@@ -126,9 +152,20 @@ injection). The submodules:
   design.
 - **`phishing_db.py`** — the phishing-domain database: lazy download,
   cooldown-gated retry, thread-safe refresh.
+- **`address_rules.py`** — the caller's `allowed_addresses`/
+  `denied_addresses`: IP, CIDR, hostname and `.domain` rules, matched on
+  what a host *is* (every IP spelling, embedded IPv4, IDNA/case/trailing
+  dot) rather than how it is written.
 - **`policy.py`** — `SecurityPolicy` and the `"strict"`/`"balanced"`/
   `"internal"`/`"local"` presets. This is the single place that decides
-  which checks across the other submodules actually run for a given parse.
+  which checks across the other submodules actually run for a given parse,
+  and (`host_is_ssrf_risk`, `ip_is_permitted`) how the caller's address
+  rules combine with the built-in classification.
+
+`_egress.py` sits *above* `url.py` because it is not part of parsing at all:
+it is the one piece that validates the address actually connected to, which
+is the only defence against DNS rebinding. Parse-time checks, including
+`check_dns`, run before the client resolves the host again.
 
 ## Public API surface
 

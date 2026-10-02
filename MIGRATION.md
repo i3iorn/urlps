@@ -1,5 +1,49 @@
 # Migration Guide
 
+## 1.1.x → 1.2.0
+
+A security release. Several checks now do what the documentation always
+said they did, which means some input that used to be accepted is now
+rejected. Each row says how to get the old behaviour back on purpose.
+
+### You will notice these
+
+| Change | Who it affects | What to do |
+|---|---|---|
+| Non-standard schemes (`smb://`, `redis://`, `mailto:`, `ms-msdt:`, `x-custom://`, ...) now raise `UnsupportedSchemeError` unless `allow_custom_scheme=True` | Anyone parsing non-`http(s)`/`ftp(s)`/`sftp`/`ws(s)` URLs | Pass `allow_custom_scheme=True`, as the parameter's documentation always said was required. `with_scheme()` follows the same rule, based on how the URL was parsed. |
+| `100.64.0.0/10` (shared address space / CGNAT, which includes Alibaba Cloud's metadata endpoint `100.100.100.200`), IPv6 site-local `fec0::/10`, and the rest of `NON_PUBLIC_NETWORKS` are now SSRF risks | Anyone fetching Tailscale (`100.x`) or CGNAT-range hosts | Add them to `SecurityPolicy(..., allowed_addresses=["100.64.0.0/10"])` (every preset accepts it). |
+| The `local` policy never permits a cloud metadata address, in any spelling, including the AWS IPv6 endpoint `fd00:ec2::254` (otherwise an ordinary ULA) | Nobody legitimate | Nothing. |
+| `parse_url(url, policy=SecurityPolicy.strict(check_dns=True))` now actually runs the DNS check (it silently did not), and a `dns_rate_limiter` set on the policy is now actually used | Anyone who configured DNS checks on the policy | Nothing, unless your tests relied on no lookups happening. Pass `check_dns=False` explicitly to override a policy. |
+| The DNS check no longer makes a "verification connection" to the resolved address | Nobody legitimate | Use `create_guarded_connection()` / `resolve_and_validate()` for connect-time protection; see the README. |
+| DNS lookups are cached (30s positive, 5s negative) and the per-host limit counts only real lookups | Anyone relying on every `check_dns=True` parse hitting the resolver | Configure `DNSRateLimiterConfig(cache_ttl_seconds=0)` to disable caching. |
+| Exception `value` (and so `str(exc)`) has credentials and query/fragment values redacted | Anyone parsing `str(exc)` for the original input | Pass `debug=True` (now also accepted by `parse_url()`) to keep the raw input. |
+| Userinfo is percent-encoded to the RFC 3986 grammar on parse, `with_userinfo()`/`with_netloc()` and `build()`: `a\b` becomes `a%5Cb`, a password `p#ss` becomes `p%23ss` | Anyone comparing `url.userinfo` to a raw string | Compare against the encoded form, or `urllib.parse.unquote()` it. Previously such characters were emitted raw and could move the host for other parsers. |
+| `with_scheme()` resets a *default* port (`https://h/` -> `with_scheme("http")` -> `http://h/`, not `http://h:443/`) and lowercases the scheme | Anyone relying on the old port carry-over | Pass `port=` explicitly via `copy(scheme=..., port=...)`. |
+| `with_query("a#b")` raises | Anyone putting a raw `#` in a query override | Encode it as `%23`, or use `with_query_param()`. |
+| Escaped fragments are no longer double-encoded on output (`#a%2Fb` stays `#a%2Fb`, not `#a%252Fb`) | Anyone who worked around the double encoding | Remove the workaround. |
+| Path, fragment and userinfo length limits count *decoded* characters | Nobody legitimate | Nothing; a parsed URL's own `str()` now always re-parses. |
+| C1 control characters (`\x80`-`\x9F`) are rejected like other control characters | Anyone with raw C1 bytes in URLs | Percent-encode them. |
+| `check_phishing=True` also flags subdomains of listed domains, refreshes the list daily, and keeps the previous list when a refresh fails | Anyone relying on exact-match only | Nothing, unless a listed parent domain covers hosts you trust. `phishing_fail_closed=True` on the policy rejects when the feed is unavailable. |
+| Caches do not retain keys longer than `URLPS_CACHE_MAX_KEY_LENGTH` (1024) / `URLPS_CACHE_MAX_VALUE_KEY_LENGTH` (128) | Nobody (results are identical) | Raise them if profiling shows misses on long, repeated URLs. |
+| `urlps check` escapes non-printable characters in its output | Scripts parsing raw control characters out of the CLI's stderr | Nothing reasonable depends on this. |
+
+### Renamed and deprecated
+
+| Old | New | Status |
+|---|---|---|
+| `dns_fail_open_on_connect_error=` on the policy presets | nothing (it governed the removed verification connect) | Passing it emits `DeprecationWarning` and has no effect. Removed in 2.0. |
+
+### New
+
+| API | What it is for |
+|---|---|
+| `SecurityPolicy(allowed_addresses=..., denied_addresses=...)` (and on every preset) | Your own IP/CIDR/hostname/`.domain` rules, applied to every spelling of a host and every resolved address. |
+| `create_guarded_connection()` | Connect-time SSRF protection; a drop-in for `socket.create_connection` and urllib3's. |
+| `resolve_and_validate()` | The vetted addresses for a URL, to pin a connection to. |
+| `DNSRateLimiterConfig(cache_ttl_seconds=, negative_cache_ttl_seconds=, max_cached_hosts=)`, `SecurityPolicy.dns_deadline_seconds`, `DNSRateLimitError.retry_after` | DNS check tuning. |
+| `SecurityPolicy.phishing_fail_closed`, `URLPS_PHISHING_DATABASE_REFRESH_SECONDS`, `URLPS_PHISHING_DATABASE_SHA256` | Phishing feed behaviour. |
+| `AuditConfig(sensitive_keys=...)` | Extra query-key fragments to redact in audit logs. |
+
 ## 1.0.x → 1.1.0
 
 No breaking changes. Two things are worth knowing about before you upgrade.

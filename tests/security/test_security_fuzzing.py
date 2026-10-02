@@ -44,6 +44,18 @@ except ImportError:
         def integers(*args, **kwargs):
             return None
 
+        @staticmethod
+        def sampled_from(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def booleans(*args, **kwargs):
+            return None
+
+        @staticmethod
+        def composite(func):
+            return lambda *args, **kwargs: None
+
     def assume(condition):
         pass
 
@@ -413,3 +425,124 @@ class TestSSRFProtection:
         """IPv4-mapped IPv6 addresses should be flagged as SSRF risk."""
         assert _security.is_ssrf_risk("[::ffff:127.0.0.1]")
         assert _security.is_ssrf_risk("[::FFFF:192.168.1.1]")
+
+
+# Spellings of internal hosts that only a parser applying UTS-46 mapping, or
+# ending the authority at "?"/"#", resolves to the internal host. The security
+# checks used to see a different host than URL.host for every one of them.
+_INTERNAL_HOSTS = ["127.0.0.1", "localhost", "169.254.169.254", "metadata.google.internal", "10.0.0.1", "[::1]"]
+_DOT_SPELLINGS = [".", "\u3002", "\uff0e", "\uff61"]
+_AUTHORITY_ENDINGS = ["", "/", "?", "#", "?x", "#x", ":8080", ":8080?x", ":8080#x"]
+
+
+def _fullwidth(text):
+    """Map ASCII letters and digits to their fullwidth forms (UTS-46 maps them back)."""
+    return "".join(chr(ord(c) + 0xFEE0) if c.isascii() and c.isalnum() else c for c in text)
+
+
+@st.composite
+def _internal_host_urls(draw):
+    host = draw(st.sampled_from(_INTERNAL_HOSTS))
+    if not host.startswith("["):
+        host = host.replace(".", draw(st.sampled_from(_DOT_SPELLINGS)))
+        if draw(st.booleans()):
+            host = _fullwidth(host)
+    prefix = draw(st.sampled_from(["http://", "https://", "//"]))
+    userinfo = draw(st.sampled_from(["", "user@", "user:pw@"]))
+    return f"{prefix}{userinfo}{host}{draw(st.sampled_from(_AUTHORITY_ENDINGS))}"
+
+
+class TestHostDifferential:
+    """The host the security checks validate must be the host the URL exposes."""
+
+    @given(_internal_host_urls())
+    @settings(max_examples=300)
+    def test_every_spelling_of_an_internal_host_is_rejected(self, url):
+        with pytest.raises(InvalidURLError):
+            parse_url(url)
+
+    @given(_internal_host_urls())
+    @settings(max_examples=300)
+    def test_with_host_rejects_every_spelling_of_an_internal_host(self, url):
+        host = _security.extract_host_and_path(url)[0]
+        assume(host)
+        try:
+            derived = parse_url("https://example.com/").with_host(host)
+        except InvalidURLError:
+            return
+        pytest.fail(f"with_host({host!r}) was accepted as {derived.host!r}")
+
+    @given(st.text(max_size=60))
+    @settings(max_examples=500)
+    def test_accepted_url_never_exposes_a_risky_or_non_ascii_host(self, authority):
+        try:
+            url = parse_url(f"http://{authority}")
+        except InvalidURLError:
+            return
+        assert url.host is not None
+        assert url.host.isascii()
+        assert not _security.is_ssrf_risk(url.host)
+
+
+def _components(url):
+    """Everything that decides where a URL goes, compared exactly; the fragment canonically.
+
+    The fragment is never sent to a server, and serializing "[" as "%5B" does
+    not change its meaning -- copy()'s own round-trip assertion compares it
+    the same way.
+    """
+    from urlps._normalize import normalize_fragment
+
+    fragment = normalize_fragment(url.fragment) if url.fragment else None
+    return (url.scheme, url.userinfo, url.host, url.effective_port, url.query, fragment)
+
+
+class TestDerivedUrlsRoundTrip:
+    """parse(str(u)) must reproduce every URL derived with copy()/with_*()."""
+
+    @given(st.text(max_size=40))
+    @settings(max_examples=400)
+    def test_with_userinfo_round_trips_and_keeps_the_host(self, userinfo):
+        from urllib.parse import urlsplit
+
+        base = parse_url("http://example.com/", policy="internal")
+        try:
+            derived = base.with_userinfo(userinfo)
+        except InvalidURLError:
+            return
+        assert derived.host == "example.com"
+        assert urlsplit(str(derived)).hostname == "example.com"
+        assert _components(parse_url(str(derived), policy="internal")) == _components(derived)
+
+    @given(st.text(max_size=40), st.text(max_size=40))
+    @settings(max_examples=400)
+    def test_with_query_and_fragment_round_trip(self, query, fragment):
+        base = parse_url("https://example.com/p", policy="internal")
+        try:
+            derived = base.with_query(query).with_fragment(fragment)
+        except InvalidURLError:
+            return
+        assert _components(parse_url(str(derived), policy="internal")) == _components(derived)
+
+    @given(st.text(max_size=30))
+    @settings(max_examples=300)
+    def test_with_netloc_round_trips(self, netloc):
+        base = parse_url("https://example.com/p", policy="internal")
+        try:
+            derived = base.with_netloc(netloc)
+        except InvalidURLError:
+            return
+        assert _components(parse_url(str(derived), policy="internal")) == _components(derived)
+
+    @given(
+        st.text(alphabet=st.sampled_from(list("ab%2F7e5B#[]?/=&+:@!$'()*,;~-._09AF\\")), max_size=30),
+        st.text(alphabet=st.sampled_from(list("ab%2F7e5B[]?/=&+:@!$'()*,;~-._09AF")), max_size=30),
+    )
+    @settings(max_examples=500)
+    def test_delimiter_dense_query_and_fragment_round_trip(self, query, fragment):
+        base = parse_url("https://example.com/p", policy="internal")
+        try:
+            derived = base.with_query(query).with_fragment(fragment)
+        except InvalidURLError:
+            return
+        assert _components(parse_url(str(derived), policy="internal")) == _components(derived)

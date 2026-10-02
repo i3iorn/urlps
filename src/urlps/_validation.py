@@ -24,8 +24,9 @@ from __future__ import annotations
 import ipaddress
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote
 
-from ._cache_config import VALIDATION_CACHE_SIZE
+from ._cache_config import VALIDATION_CACHE_SIZE, bounded_lru_cache
 from ._patterns import PATTERNS
 from .constants import (
     MAX_FRAGMENT_LENGTH,
@@ -33,9 +34,11 @@ from .constants import (
     MAX_IPV6_STRING_LENGTH,
     MAX_SCHEME_LENGTH,
     MAX_USERINFO_LENGTH,
+    OFFICIAL_SCHEMES,
     STANDARD_PORTS,
+    UNSAFE_SCHEMES,
 )
-from .exceptions import InvalidURLError
+from .exceptions import InvalidURLError, UnsupportedSchemeError
 
 if TYPE_CHECKING:
     from ._components import SecurityFinding
@@ -80,7 +83,7 @@ class Validator:
         return to_ascii(host)
 
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_valid_scheme(scheme: str) -> bool:
         """Validate URL scheme.
 
@@ -94,7 +97,7 @@ class Validator:
         return bool(compiled_regex["scheme"].fullmatch(scheme))
 
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_valid_host(host: str) -> bool:
         """Validate hostname.
 
@@ -114,7 +117,7 @@ class Validator:
         return bool(compiled_regex["host"].fullmatch(ascii_host))
 
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_valid_ipv4(ip: str) -> bool:
         """Validate IPv4 address.
 
@@ -152,7 +155,7 @@ class Validator:
         return True
 
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_valid_ipv6(ip: str) -> bool:
         """Validate IPv6 address (bracketed format).
 
@@ -215,7 +218,7 @@ class Validator:
             return False
 
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_url_safe_string(url: str) -> bool:
         """Check if string contains only URL-safe characters (no control characters).
 
@@ -258,7 +261,7 @@ class Validator:
         return Validator.is_url_safe_string(param)
 
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_valid_fragment(fragment: str) -> bool:
         """Validate URL fragment.
 
@@ -267,12 +270,12 @@ class Validator:
         Returns:
             True if valid, False otherwise.
         """
-        if not isinstance(fragment, str) or len(fragment) > MAX_FRAGMENT_LENGTH:
+        if not isinstance(fragment, str) or len(unquote(fragment)) > MAX_FRAGMENT_LENGTH:
             return False
         return bool(compiled_regex["fragment"].fullmatch(fragment))
 
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
     def is_ip_address(host: str) -> bool:
         """Check if host is an IP address literal.
 
@@ -335,7 +338,10 @@ def is_valid_userinfo(value: str, max_length: int = MAX_USERINFO_LENGTH) -> bool
     Returns:
         True if valid userinfo format, False otherwise.
     """
-    if not value or len(value) > max_length or "@" in value:
+    # The limit applies to the decoded length, so a userinfo and its own
+    # percent-encoded serialization (which can be up to 12x longer) are held
+    # to the same bound and str(url) always re-parses.
+    if not value or "@" in value or len(unquote(value)) > max_length:
         return False
     if ":" in value:
         username, _, _ = value.partition(":")
@@ -354,7 +360,7 @@ class _URLValidation:
     __slots__ = ()
 
     @staticmethod
-    def validate_copy_overrides(overrides: dict[str, Any]) -> None:
+    def validate_copy_overrides(overrides: dict[str, Any], *, allow_custom_scheme: bool = False) -> None:
         """Validate copy() override arguments.
 
         Overrides are checked against the same component validators the parser
@@ -382,6 +388,19 @@ class _URLValidation:
         scheme = overrides.get("scheme")
         if scheme is not None and not Validator.is_valid_scheme(scheme.lower()):
             raise InvalidURLError(f"Invalid scheme: {scheme!r}", value=scheme, component="scheme")
+        # The same allowlist parse_url() applies: with_scheme("gopher") or
+        # with_scheme("file") must not be a way around it.
+        if (
+            scheme is not None
+            and not allow_custom_scheme
+            and (scheme.lower() not in OFFICIAL_SCHEMES or scheme.lower() in UNSAFE_SCHEMES)
+        ):
+            raise UnsupportedSchemeError(
+                f"Scheme {scheme!r} is not a standard scheme; the URL must be parsed with "
+                "allow_custom_scheme=True to switch to it.",
+                value=scheme,
+                component="scheme",
+            )
 
         host = overrides.get("host")
         if host is not None and not _URLValidation._is_valid_host_override(host):
@@ -395,6 +414,13 @@ class _URLValidation:
             value = overrides.get(key)
             if value is not None and not Validator.is_url_safe_string(value):
                 raise InvalidURLError(f"{key} contains invalid control characters.", value=value, component=key)
+
+        # A raw "#" in a query override would be emitted as-is and re-parse as
+        # the start of a fragment, so the URL's .query and what str(url)
+        # means would disagree. Encode it as %23, or use with_query_param().
+        query = overrides.get("query")
+        if query is not None and "#" in query:
+            raise InvalidURLError("query must not contain '#'; encode it as %23.", value=query, component="query")
 
     @staticmethod
     def _is_valid_host_override(host: str) -> bool:
@@ -422,7 +448,7 @@ class _URLValidation:
         ``validate(policy=stricter)`` can be used to ask a hypothetical
         question without rewriting the URL's own recorded verdict.
         """
-        from ._security import validate_url_security
+        from ._security import ParsedAuthority, validate_url_security
         from ._serialization import _URLSerialization
 
         effective_policy = policy if policy is not None else url._security_policy
@@ -435,6 +461,11 @@ class _URLValidation:
             check_dns=check_dns,
             check_phishing=check_phishing,
             raise_on_error=raise_on_error,
+            # The host/port this URL actually exposes and serializes. Without
+            # it the checks re-parse candidate_url themselves and can land on
+            # a different host than the parser did.
+            parsed=ParsedAuthority(host=url._host, port=url._port, userinfo=url._userinfo),
+            debug=url._debug,
         )
         return list(findings)
 

@@ -31,11 +31,22 @@ from ._security import (
     has_parser_confusion,
     has_path_traversal,
     is_open_redirect_risk,
+    redact_component,
 )
 from ._serialization import _URLSerialization
 from ._validation import Validator, _URLValidation
 from .constants import DEFAULT_PORTS, MAX_URL_LENGTH
-from .exceptions import InvalidURLError, URLParseError
+from .exceptions import InvalidURLError, URLParseError, URLpError
+
+
+def _redact_exception(exc: BaseException) -> None:
+    """Redact the offending value an exception carries, in place.
+
+    ``str(exc)`` includes ``value``, and both end up in logs and error
+    responses; the raw input is only kept with ``debug=True``.
+    """
+    if isinstance(exc, URLpError):
+        exc.value = redact_component(exc.value, exc.component)
 
 
 class URL:
@@ -47,7 +58,9 @@ class URL:
         url: The URL string to parse.
         parser: Optional custom parser instance.
         builder: Optional custom builder instance.
-        debug: If True, include raw input in exception traces.
+        debug: If True, exceptions carry the raw input as ``value``. By
+            default credentials and sensitive query/fragment values in it are
+            redacted, since exception text routinely reaches logs.
         check_dns: If True, perform DNS resolution checks.
         check_phishing: If True, check for known phishing domains.
         security_policy: Policy governing which checks are enforced. This is
@@ -136,11 +149,14 @@ class URL:
         self._builder = builder if builder is not None else Builder()
         self._audit_manager = AuditManager(audit) if audit is not None else NO_OP_AUDIT_MANAGER
         self._debug = debug
-        self._check_dns = check_dns
-        self._check_phishing = check_phishing
         self._security_policy = (
             security_policy if security_policy is not None else SecurityPolicy.strict(check_dns=check_dns)
         )
+        # A check enabled on either the argument or the policy runs. These
+        # flags are passed on as explicit overrides at validation time, so a
+        # plain False here used to switch off a policy's check_dns=True.
+        self._check_dns = check_dns or self._security_policy.check_dns
+        self._check_phishing = check_phishing or self._security_policy.check_phishing
         self._security_findings: list[SecurityFinding] = []
         self._correlation_id = correlation_id
         self.recognized_scheme: bool | None = None
@@ -173,6 +189,8 @@ class URL:
                 correlation_id=self._correlation_id,
             )
         except Exception as exc:
+            if not self._debug:
+                _redact_exception(exc)
             self._audit_manager.invoke(raw_url=url, parsed_url=None, exception=exc, correlation_id=self._correlation_id)
             raise
 
@@ -423,7 +441,14 @@ class URL:
         return {name: getattr(self, name, None) for name in URL.__slots__ if name not in URL._UNPICKLED_COLLABORATORS}
 
     def __setstate__(self, state: Mapping[str, Any]) -> None:
-        """Restore via object.__setattr__ -- the default path trips the guard."""
+        """Restore via object.__setattr__ -- the default path trips the guard.
+
+        A restored URL is *not* re-validated: pickle round-trips trusted
+        state. Never unpickle data from an untrusted source -- unpickling can
+        execute arbitrary code, so no check here could make that safe. To
+        move URLs across a trust boundary, send ``str(url)`` and
+        ``parse_url()`` it on the other side.
+        """
         for name, value in state.items():
             object.__setattr__(self, name, value)
         object.__setattr__(self, "_parser", Parser())

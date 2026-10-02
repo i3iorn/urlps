@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
-from urllib.parse import urlsplit
+from typing import Any, NamedTuple
+from urllib.parse import SplitResult, urlsplit
 
 from .._components import SecurityFinding
+from .._normalize import normalize_host
 from ..exceptions import (
     DNSConnectionError,
     DNSRateLimitError,
@@ -32,7 +33,7 @@ from .dns_guard import (
     reset_dns_rate_limiter,
 )
 from .host_analysis import analyze_host
-from .ip_utils import is_malicious_ipv6_zone_id, is_private_ip, is_ssrf_risk
+from .ip_utils import _strip_ipv6_brackets, is_malicious_ipv6_zone_id, is_private_ip, is_ssrf_risk
 from .phishing_db import (
     check_against_phishing_db,
     check_against_phishing_db_detailed,
@@ -59,6 +60,7 @@ from .url_checks import (
     is_dangerous_port,
     is_open_redirect_risk,
     normalize_url_unicode,
+    redact_component,
     redact_url_for_logs,
 )
 
@@ -68,14 +70,24 @@ from .url_checks import (
 _REMEDIATION_BY_CODE: dict[ErrorCode, str] = {
     ErrorCode.SSRF_RISK: (
         "If this is an intentional local or internal URL, use parse_url_local() "
-        'or policy="local", which still blocks cloud metadata endpoints. To turn '
-        "SSRF enforcement off entirely, pass "
+        'or policy="local", which still blocks cloud metadata endpoints. To permit '
+        "specific hosts or networks, add them to the policy's allowed_addresses. To "
+        "turn SSRF enforcement off entirely, pass "
         "SecurityPolicy.internal(enforce_ssrf=False)."
     ),
     ErrorCode.DANGEROUS_PORT: (
         "Port blocking is opt-in; it is enabled on this policy. Use "
         'policy="balanced" or SecurityPolicy.strict(block_dangerous_ports=False) '
         "if this port is expected."
+    ),
+    ErrorCode.DNS_RATE_LIMITED: (
+        "Retryable: see retry_after. The limiter only counts real lookups (cached "
+        "answers are free); inject a DNSRateLimiter per tenant so one tenant cannot "
+        "spend another's budget."
+    ),
+    ErrorCode.PHISHING_DB_UNAVAILABLE: (
+        "The phishing feed could not be downloaded; see get_phishing_db_info()['last_error']. "
+        "A policy with phishing_fail_closed=True rejects the URL in this case; otherwise it is a warning."
     ),
     ErrorCode.CREDENTIALS_IN_URL: (
         "Credentials in a URL are legal but discouraged. Use "
@@ -91,6 +103,19 @@ _REMEDIATION_BY_CODE: dict[ErrorCode, str] = {
 }
 
 
+_DNS_MESSAGES: dict[ErrorCode, str] = {
+    ErrorCode.SSRF_RISK: "Host resolves to a disallowed address.",
+    ErrorCode.DNS_RATE_LIMITED: "DNS lookup rate limit reached; the host was not checked.",
+    ErrorCode.DNS_RESOLUTION_FAILED: "Host could not be resolved.",
+    ErrorCode.DNS_CONNECTION_FAILED: "DNS resolution timed out or failed.",
+}
+
+
+def _dns_host(host: str) -> str:
+    """The key the DNS check uses for ``host`` (brackets and zone stripped)."""
+    return _strip_ipv6_brackets(host.strip())
+
+
 def _finding(severity: str, code: ErrorCode, message: str, component: str | None) -> SecurityFinding:
     """Create a normalized security finding object."""
     return SecurityFinding(
@@ -102,14 +127,67 @@ def _finding(severity: str, code: ErrorCode, message: str, component: str | None
     )
 
 
+class ParsedAuthority(NamedTuple):
+    """The authority exactly as the parser produced it.
+
+    This is what ``URL.host``/``URL.port``/``URL.userinfo`` expose and what
+    ``str(url)`` serializes, so it -- not a re-extraction from the raw string
+    -- is what the host- and port-based checks must validate. Validating a
+    second, independently parsed copy of the host is a parser differential:
+    ``http://169.254.169.254?`` and ``127.0.0.1`` written with ideographic
+    full stops (U+3002) both passed the SSRF check, while the parser handed
+    the caller a metadata/loopback host.
+    """
+
+    host: str | None
+    port: int | None
+    userinfo: str | None
+
+
+def _canonical_host(raw_host: str) -> str:
+    """Return ``raw_host`` in the form the parser stores: IDNA-encoded, then normalized.
+
+    A host IDNA rejects is returned as-is; the parser refuses it anyway, and
+    the raw text is still worth running the checks on.
+    """
+    ascii_host = raw_host
+    if not raw_host.isascii():
+        try:
+            ascii_host = to_ascii(raw_host)
+        except ValueError:  # IdnaError, which is a ValueError -- as Validator.is_valid_host catches it
+            return raw_host
+    return normalize_host(ascii_host)
+
+
+def _explicit_port(split: SplitResult) -> int | None:
+    try:
+        return split.port
+    except ValueError:
+        return None
+
+
 def collect_security_findings(
     url: str,
     *,
     policy: PolicyInput = None,
     check_dns: bool | None = None,
     check_phishing: bool | None = None,
+    parsed: ParsedAuthority | None = None,
 ) -> list[SecurityFinding]:
-    """Collect policy-aware security findings without raising exceptions."""
+    """Collect policy-aware security findings without raising exceptions.
+
+    ``url`` is the raw input. The string heuristics (double encoding, path
+    traversal, open redirect, parser confusion, credentials) run on it,
+    because the parser normalizes away exactly what they look for.
+
+    ``parsed`` is the authority as the parser produced it. When given, its
+    host and port are authoritative: DNS, phishing and the dangerous-port
+    check use them alone, and the identity checks (SSRF, IPv6 zone ID,
+    Unicode host analysis) run on them *in addition to* the host as spelled
+    in ``url`` -- a finding on either spelling rejects, so the raw text can
+    only add findings, never mask one. Without ``parsed``, the host is
+    extracted from ``url`` and canonicalized the way the parser would.
+    """
     effective_policy = resolve_security_policy(policy, check_dns=check_dns, check_phishing=check_phishing)
     findings: list[SecurityFinding] = []
 
@@ -132,22 +210,31 @@ def collect_security_findings(
             _finding("critical", ErrorCode.DOUBLE_ENCODING, "URL contains double-encoded characters.", "url")
         )
 
-    if not has_authority_syntax:
+    parsed_host = parsed.host if parsed is not None else None
+    if not has_authority_syntax and not parsed_host:
         return findings
 
-    # has_authority_syntax is exactly the condition split was computed
-    # under above, so it is never None here -- spelled out for mypy, which
-    # can't correlate that across the two variables on its own.
-    assert split is not None
-    host, path = extract_host_and_path(normalized_url)
-    try:
-        port = split.port
-    except ValueError:
-        port = None
+    raw_host, path = extract_host_and_path(normalized_url)
+    canonical_raw_host = _canonical_host(raw_host) if raw_host else ""
+    if parsed is not None:
+        host = parsed_host or ""
+        port = parsed.port
+    else:
+        # Without parsed components, has_authority_syntax held above, which
+        # is exactly the condition split was computed under -- spelled out
+        # for mypy, which can't correlate the two variables on its own.
+        assert split is not None
+        host = canonical_raw_host
+        port = _explicit_port(split)
+    # Every spelling of the host gets the identity checks, authoritative one
+    # first. The raw spelling stays in the set because some findings live
+    # only there: IDNA maps a zero-width space to nothing, so it survives in
+    # the text a user sees but not in the host the parser stores.
+    host_spellings = tuple(dict.fromkeys(h for h in (host, canonical_raw_host, raw_host) if h))
 
     # --- Host-related checks ---
-    if host:
-        if is_malicious_ipv6_zone_id(host):
+    if host_spellings:
+        if any(is_malicious_ipv6_zone_id(h) for h in host_spellings):
             findings.append(
                 _finding(
                     "critical",
@@ -156,7 +243,19 @@ def collect_security_findings(
                     "host",
                 )
             )
-        if effective_policy.enforce_ssrf and is_ssrf_risk(host, allow_private=effective_policy.allow_private_hosts):
+        # A denied rule is the caller saying "never this host", so it applies
+        # whether or not built-in SSRF enforcement is on.
+        if any(effective_policy.host_is_denied(h) for h in host_spellings):
+            findings.append(
+                SecurityFinding(
+                    severity="critical",
+                    code=ErrorCode.SSRF_RISK.value,
+                    message="Host matches a denied address rule.",
+                    component="host",
+                    remediation="The policy's denied_addresses covers this host.",
+                )
+            )
+        elif effective_policy.enforce_ssrf and any(effective_policy.host_is_ssrf_risk(h) for h in host_spellings):
             findings.append(
                 _finding("critical", ErrorCode.SSRF_RISK, "Host poses SSRF risk and is disallowed.", "host")
             )
@@ -167,10 +266,15 @@ def collect_security_findings(
             ErrorCode.MIXED_SCRIPT_LABEL: effective_policy.enforce_mixed_scripts,
             ErrorCode.CONFUSABLE_HOST: effective_policy.enforce_confusable_host,
         }
-        for code, severity, message in analyze_host(host):
-            enabled = _CODE_TO_FLAG.get(code, effective_policy.enforce_host_unicode_safety)
-            if enabled:
-                findings.append(_finding(severity, code, message, "host"))
+        reported: set[ErrorCode] = set()
+        for spelling in host_spellings:
+            for code, severity, message in analyze_host(spelling):
+                if code in reported:
+                    continue
+                reported.add(code)
+                enabled = _CODE_TO_FLAG.get(code, effective_policy.enforce_host_unicode_safety)
+                if enabled:
+                    findings.append(_finding(severity, code, message, "host"))
 
     # --- Path-related checks ---
     if path:
@@ -198,7 +302,7 @@ def collect_security_findings(
     # actually matters ("https://apple.com@evil.com/") is caught structurally
     # by enforce_parser_confusion, and .host already resolves to the real
     # host either way. Callers who want them rejected opt in explicitly.
-    if has_credentials(normalized_url):
+    if has_credentials(normalized_url) or (parsed is not None and parsed.userinfo):
         if effective_policy.reject_credentials:
             findings.append(
                 _finding(
@@ -223,19 +327,39 @@ def collect_security_findings(
         findings.append(_finding("major", ErrorCode.DANGEROUS_PORT, "URL uses a blocked dangerous port.", "port"))
 
     # --- DNS checks ---
+    # `host` is the A-label the caller will connect to. Resolving the raw
+    # spelling instead let getaddrinfo apply stdlib IDNA 2003, which maps
+    # "faß.de" to "fass.de" -- a different domain from the "xn--fa-hia.de"
+    # that URL.host and HTTP clients use.
     effective_check_dns = effective_policy.check_dns
     if effective_check_dns and host:
+        host_allowed_by_name = effective_policy.host_is_allowed(host)
         safe, dns_error = check_dns_rebinding_detailed(
             host,
+            ip_filter=lambda ip: effective_policy.ip_is_permitted(ip, host_allowed_by_name=host_allowed_by_name),
             enforce_rate_limit=effective_policy.enforce_dns_rate_limit,
             retries=effective_policy.dns_retries,
             backoff_base_seconds=effective_policy.dns_backoff_base_seconds,
             backoff_jitter_seconds=effective_policy.dns_backoff_jitter_seconds,
             fail_open_on_connect_error=effective_policy.dns_fail_open_on_connect_error,
             limiter=effective_policy.dns_rate_limiter,
+            deadline_seconds=effective_policy.dns_deadline_seconds,
         )
         if not safe and dns_error is not None:
-            findings.append(_finding("critical", dns_error, "DNS rebinding validation failed.", "host"))
+            retry_after = None
+            if dns_error is ErrorCode.DNS_RATE_LIMITED:
+                limiter = effective_policy.dns_rate_limiter or get_dns_rate_limiter()
+                retry_after = limiter.retry_after(_dns_host(host))
+            findings.append(
+                SecurityFinding(
+                    severity="critical",
+                    code=dns_error.value,
+                    message=_DNS_MESSAGES.get(dns_error, "DNS validation failed."),
+                    component="host",
+                    remediation=_REMEDIATION_BY_CODE.get(dns_error),
+                    retry_after=retry_after,
+                )
+            )
 
     effective_check_phishing = effective_policy.check_phishing
     if effective_check_phishing and host:
@@ -257,7 +381,7 @@ def collect_security_findings(
             # callers that require the check can treat it as fatal.
             findings.append(
                 _finding(
-                    "warning",
+                    "critical" if effective_policy.phishing_fail_closed else "warning",
                     ErrorCode.PHISHING_DB_UNAVAILABLE,
                     "Phishing database unavailable; host was not checked.",
                     "host",
@@ -291,6 +415,8 @@ def validate_url_security(
     check_dns: bool | None = None,
     check_phishing: bool | None = None,
     raise_on_error: bool = True,
+    parsed: ParsedAuthority | None = None,
+    debug: bool = False,
 ) -> list[SecurityFinding]:
     """Run policy-based security validation, raising on the first blocking finding.
 
@@ -298,8 +424,15 @@ def validate_url_security(
     lets an advisory finding (for example, "the phishing database could not be
     downloaded, so the host was not checked") reach the caller without turning
     a degraded optional check into a hard parse failure.
+
+    ``parsed`` is passed through to :func:`collect_security_findings`; see
+    there for why a parsed URL must supply it. The raised exception's
+    ``value`` is the URL with credentials and sensitive parameters redacted,
+    unless ``debug=True``.
     """
-    findings = collect_security_findings(url, policy=policy, check_dns=check_dns, check_phishing=check_phishing)
+    findings = collect_security_findings(
+        url, policy=policy, check_dns=check_dns, check_phishing=check_phishing, parsed=parsed
+    )
     if raise_on_error:
         for finding in findings:
             if finding.severity in BLOCKING_SEVERITIES:
@@ -310,7 +443,12 @@ def validate_url_security(
                 message = finding.message
                 if finding.remediation:
                     message = f"{message} {finding.remediation}"
-                raise exception_type(message, component=finding.component, value=url, code=code)
+                value = url if debug else redact_url_for_logs(url)
+                if exception_type is DNSRateLimitError:
+                    raise DNSRateLimitError(
+                        message, component=finding.component, value=value, code=code, retry_after=finding.retry_after
+                    )
+                raise exception_type(message, component=finding.component, value=value, code=code)
     return findings
 
 
@@ -361,6 +499,7 @@ def clear_caches() -> dict:
 __all__ = [
     "DNSRateLimiter",
     "DNSRateLimiterConfig",
+    "ParsedAuthority",
     "PolicyInput",
     "SecurityPolicy",
     "SecurityPolicyError",
@@ -389,6 +528,7 @@ __all__ = [
     "is_private_ip",
     "is_ssrf_risk",
     "normalize_url_unicode",
+    "redact_component",
     "redact_url_for_logs",
     "refresh_phishing_db",
     "reset_dns_rate_limiter",

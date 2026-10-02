@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from functools import lru_cache
 from typing import Any
 from urllib.parse import quote, quote_plus, unquote_plus
 
-from ._cache_config import BUILDER_PATH_ENCODE_CACHE_SIZE, BUILDER_QUERY_ENCODE_CACHE_SIZE
-from ._normalize import normalize_host
+from ._cache_config import (
+    BUILDER_PATH_ENCODE_CACHE_SIZE,
+    BUILDER_QUERY_ENCODE_CACHE_SIZE,
+    CACHE_MAX_VALUE_KEY_LENGTH,
+    bounded_lru_cache,
+)
+from ._normalize import normalize_fragment, normalize_host, normalize_userinfo
 from ._patterns import PATTERNS
 from ._validation import Validator
 from .constants import DEFAULT_PORTS, OfficialSchemes
@@ -21,7 +25,7 @@ QueryPairs = list[tuple[str, str | None]]
 _PERCENT_ENCODE_PATTERN = PATTERNS["percent_encode"]
 
 
-@lru_cache(maxsize=BUILDER_QUERY_ENCODE_CACHE_SIZE)
+@bounded_lru_cache(maxsize=BUILDER_QUERY_ENCODE_CACHE_SIZE, max_key_length=CACHE_MAX_VALUE_KEY_LENGTH)
 def _encode_for_query(value: str, safe: str) -> str:
     """Encode a query component with quote_plus and normalize percent-encodings to uppercase.
 
@@ -127,7 +131,13 @@ class Builder:
         if serialized_query is not None:
             url += f"?{serialized_query}"
         if fragment:
-            url += f"#{self.percent_encode(str(fragment), safe=self.FRAGMENT_SAFE)}"
+            # Escape-preserving: percent_encode() would re-encode the "%" of
+            # an existing escape, turning "#a%2Fb" into "#a%252Fb" on every
+            # serialization.
+            try:
+                url += f"#{normalize_fragment(str(fragment))}"
+            except UnicodeEncodeError as exc:
+                raise URLBuildError("Fragment is not valid Unicode.", component="fragment") from exc
         return url
 
     def compose_secure(
@@ -184,7 +194,12 @@ class Builder:
             return userinfo or ""
         parts = []
         if userinfo:
-            parts.append(f"{userinfo}@")
+            # Escaped to the RFC 3986 userinfo grammar so no "/", "?", "#",
+            # "@" or "\\" in it can move where any parser thinks the host is.
+            try:
+                parts.append(f"{normalize_userinfo(userinfo)}@")
+            except UnicodeEncodeError as exc:
+                raise URLBuildError("Userinfo is not valid Unicode.", component="userinfo") from exc
         # build()/compose_url() never go through the parser, so the RFC 3986
         # §6.2.2 host normalization has to be applied here too -- otherwise
         # the same host would canonicalize differently depending on whether
@@ -281,7 +296,7 @@ class Builder:
         return self._percent_encode_cached(value, safe)
 
     @staticmethod
-    @lru_cache(maxsize=BUILDER_PATH_ENCODE_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=BUILDER_PATH_ENCODE_CACHE_SIZE, max_key_length=CACHE_MAX_VALUE_KEY_LENGTH)
     def _percent_encode_cached(value: str, safe: str) -> str:
         """Cached percent-encoding with uppercase hex normalization."""
         encoded = quote(value, safe=safe)

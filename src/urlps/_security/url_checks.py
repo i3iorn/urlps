@@ -6,13 +6,40 @@ import ipaddress
 import re
 import unicodedata
 import warnings
-from functools import lru_cache
+from collections.abc import Iterable
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlsplit, urlunparse, urlunsplit
 
-from .._cache_config import SECURITY_CACHE_SIZE
+from .._cache_config import SECURITY_CACHE_SIZE, bounded_lru_cache
 from .._patterns import PATTERNS
 from ..constants import DANGEROUS_PORTS
 
+#: A query/fragment key is sensitive when, lowercased and stripped of "-",
+#: "_" and ".", it *contains* one of these. Matching by substring is
+#: deliberately broad: an exact list missed client_secret, id_token, code,
+#: sig/X-Amz-Signature, session ids and API keys spelled any other way, and
+#: over-redacting a log line ("keyword", "zipcode") costs nothing.
+_SENSITIVE_KEY_PARTS: tuple[str, ...] = (
+    "token",
+    "secret",
+    "key",
+    "sig",
+    "pass",
+    "pwd",
+    "auth",
+    "session",
+    "sid",
+    "code",
+    "credential",
+    "jwt",
+    "otp",
+    "nonce",
+    "cookie",
+    "assertion",
+    "saml",
+    "ticket",
+)
+
+#: Kept for backward compatibility; every one of these is still redacted.
 _SENSITIVE_QUERY_KEYS = frozenset(
     {
         "token",
@@ -27,6 +54,17 @@ _SENSITIVE_QUERY_KEYS = frozenset(
         "authorization",
     }
 )
+
+#: What a URL that cannot even be split is logged as. Returning the input
+#: instead -- as this used to -- leaked exactly the malformed URLs (typos with
+#: credentials in them) that most often end up in error logs.
+UNPARSEABLE_URL_PLACEHOLDER = "[unparseable URL redacted]"
+
+REDACTED = "***"
+
+#: "user:password@" anywhere in a string, for inputs urlsplit() does not see
+#: an authority in ("https:/user:pw@host", "user:pw@host/path").
+_USERINFO_LIKE = re.compile(r"(?P<user>[^\s/?#@:]+):(?P<password>[^\s/?#@]+)@")
 
 _TRACKED_UNICODE_SCRIPTS = frozenset(
     {
@@ -45,7 +83,7 @@ _TRACKED_UNICODE_SCRIPTS = frozenset(
 )
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@bounded_lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def find_authority_marker(url: str) -> int:
     """Return the index of a genuine scheme '://' authority marker, or -1.
 
@@ -76,7 +114,7 @@ def has_scheme_authority(url: str) -> bool:
     return find_authority_marker(url) != -1 or url.startswith("//")
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@bounded_lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def has_mixed_scripts(host: str) -> bool:
     """Detect potential homograph attacks using mixed Unicode scripts."""
     if not isinstance(host, str):
@@ -191,7 +229,7 @@ def _has_confusing_userinfo_markers(authority: str) -> bool:
     return any(terminator in before_last_at for terminator in ("/", "?", "#"))
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@bounded_lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def has_parser_confusion(url: str) -> bool:
     """Detect ambiguous URLs that could be parsed differently by different parsers.
 
@@ -259,11 +297,12 @@ def extract_host_and_path(url: str) -> tuple[str, str]:
     else:
         return "", ""
 
-    # The host/path split always needs both halves, so partition() once
-    # (one scan) strictly beats an "x in s" pre-check plus split()/find()
-    # (two-plus scans) for the same separator.
-    host_portion, sep, rest = after_scheme.partition("/")
-    path_portion = sep + rest
+    # The authority ends at the first "/", "?" or "#" (RFC 3986 §3.2), not
+    # just at "/". Splitting on "/" alone read "http://127.0.0.1?x" as host
+    # "127.0.0.1?x" -- not an IP, so the SSRF check passed -- while the
+    # parser (which splits off "#" and "?" first) produced host "127.0.0.1".
+    host_portion, rest = _extract_authority_and_rest(after_scheme)
+    path_portion = rest if rest.startswith("/") else ""
 
     # Userinfo and explicit ports are the exception rather than the rule, so
     # keep the cheap "x in s" pre-check here: it lets the common case (no
@@ -300,32 +339,86 @@ def normalize_url_unicode(url: str) -> str:
         return url
 
 
-def redact_url_for_logs(url: str) -> str:
-    """Redact credentials and sensitive query values for logging/auditing."""
+def _is_sensitive_key(key: str, extra: Iterable[str] = ()) -> bool:
+    folded = key.lower().replace("-", "").replace("_", "").replace(".", "")
+    if not folded.strip():
+        return True  # a value with no name ("?=x") gives no reason to believe it is safe to log
+    return any(part in folded for part in (*_SENSITIVE_KEY_PARTS, *extra)) or key.lower() in _SENSITIVE_QUERY_KEYS
+
+
+def _redact_pairs(text: str, *, all_values: bool, extra: Iterable[str] = ()) -> str:
+    """Mask the values of sensitive ``key=value`` pairs (every value if ``all_values``)."""
+    redacted_pairs = []
+    for key, value in parse_qsl(text, keep_blank_values=True):
+        redacted_pairs.append((key, REDACTED if all_values or _is_sensitive_key(key, extra) else value))
+    return urlencode(redacted_pairs, doseq=True)
+
+
+def _redact_userinfo(userinfo: str) -> str:
+    """``user:password`` -> ``user:***``; a bare token (no ":") -> ``***``."""
+    if ":" in userinfo:
+        username, _, _ = userinfo.partition(":")
+        return f"{username}:{REDACTED}"
+    return REDACTED
+
+
+def redact_url_for_logs(url: str, *, extra_sensitive_keys: Iterable[str] = ()) -> str:
+    """Redact credentials and sensitive query/fragment values for logging/auditing.
+
+    - Userinfo: the password (or a bare token) is masked.
+    - Query: values of sensitive keys are masked (see ``_SENSITIVE_KEY_PARTS``;
+      ``extra_sensitive_keys`` adds more substrings).
+    - Fragment: every ``key=value`` value is masked -- fragments carry OAuth
+      implicit-flow tokens and are never sent to a server, so their values
+      have no debugging use. A plain anchor (``#section``) is kept.
+    - Fails closed: a URL that cannot be split is replaced by
+      ``UNPARSEABLE_URL_PLACEHOLDER``, never returned as-is.
+    """
     if not isinstance(url, str) or not url:
         return url
+    extra = tuple(part.lower().replace("-", "").replace("_", "").replace(".", "") for part in extra_sensitive_keys)
 
     try:
         split = urlsplit(url)
         netloc = split.netloc
         if "@" in netloc:
             userinfo, _, host_part = netloc.rpartition("@")
-            if ":" in userinfo:
-                username, _, _ = userinfo.partition(":")
-                netloc = f"{username}:***@{host_part}"
-            else:
-                netloc = f"***@{host_part}"
+            netloc = f"{_redact_userinfo(userinfo)}@{host_part}"
 
-        query = split.query
-        if query:
-            redacted_pairs = []
-            for key, value in parse_qsl(query, keep_blank_values=True):
-                redacted_pairs.append((key, "***" if key.lower() in _SENSITIVE_QUERY_KEYS else value))
-            query = urlencode(redacted_pairs, doseq=True)
+        query = _redact_pairs(split.query, all_values=False, extra=extra) if split.query else split.query
+        fragment = split.fragment
+        if fragment and "=" in fragment:
+            fragment = _redact_pairs(fragment, all_values=True)
 
-        return urlunsplit((split.scheme, netloc, split.path, query, split.fragment))
+        redacted = urlunsplit((split.scheme, netloc, split.path, query, fragment))
     except (ValueError, AttributeError):
-        return url
+        return UNPARSEABLE_URL_PLACEHOLDER
+    # Credentials urlsplit did not recognise as an authority.
+    return _USERINFO_LIKE.sub(lambda m: f"{m.group('user')}:{REDACTED}@", redacted)
+
+
+def redact_component(value: object, component: str | None) -> object:
+    """Redact an exception's offending ``value`` according to which component it is.
+
+    Exceptions carry the input that failed, and both ``str(exc)`` and
+    ``exc.value`` routinely end up in logs and error responses.
+    """
+    if not isinstance(value, str) or not value:
+        return value
+    if component == "userinfo":
+        return _redact_userinfo(value)
+    if component == "query":
+        # Every value: the query failed to parse, so key names are no guide
+        # ("?=SECRET" has no key at all).
+        try:
+            return _redact_pairs(value, all_values=True)
+        except ValueError:
+            return REDACTED
+    if component == "fragment":
+        return _redact_pairs(value, all_values=True) if "=" in value else value
+    if "@" in value or "?" in value or "#" in value or "://" in value or value.startswith("//"):
+        return redact_url_for_logs(value)
+    return value
 
 
 def has_suspicious_punycode(host: str) -> bool:

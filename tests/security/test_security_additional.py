@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import socket
 import unicodedata
 from unittest.mock import patch
 
@@ -181,15 +180,3 @@ class TestSecurityAdditional:
         result = clear_caches()
         assert isinstance(result, dict)
         assert len(result) > 0
-
-    def test_verify_connection_safe_with_mocked_socket(self):
-        """Lines 183-186: _verify_connection_safe with mocked socket."""
-        from urlps._security.ip_utils import _verify_connection_safe
-
-        with patch("socket.socket") as mock_socket_cls:
-            mock_inst = mock_socket_cls.return_value
-            mock_inst.getpeername.return_value = ("93.184.216.34", 80)
-            mock_inst.connect.return_value = None  # success
-            addr_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 80))]
-            result = _verify_connection_safe(addr_info, 2.0)
-        assert isinstance(result, bool)

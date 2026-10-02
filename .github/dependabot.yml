@@ -20,3 +20,13 @@ updates:
       prefix: "deps"
     labels:
       - "dependencies"
+
+  # Hash-pinned build/upload tooling for the release workflows.
+  - package-ecosystem: "pip"
+    directory: "/.github/requirements"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"

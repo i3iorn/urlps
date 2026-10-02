@@ -52,7 +52,7 @@ class TestRFC3986Examples:
     def test_telnet_example(self):
         """RFC 3986 example: telnet://192.0.2.16:80/"""
         # Use parse_url_unsafe for RFC compliance tests with documentation IPs
-        url = parse_url_unsafe("telnet://192.0.2.16:80/")
+        url = parse_url_unsafe("telnet://192.0.2.16:80/", allow_custom_scheme=True)
         assert url.scheme == "telnet"
         assert url.host == "192.0.2.16"
         assert url.port == 80

@@ -292,7 +292,8 @@ class TestSchemeValidationRFC3986:
             "svn+ssh://example.com",
         ]
         for url_str in valid_schemes:
-            url = parse_url(url_str)
+            # h2c and svn+ssh are syntactically valid but non-standard: opt-in.
+            url = parse_url(url_str, allow_custom_scheme=True)
             assert url.scheme is not None
 
     def test_scheme_case_insensitive_normalization(self):

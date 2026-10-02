@@ -24,6 +24,19 @@ def _read_stdin_urls() -> list[str]:
     return urls
 
 
+def _printable(text: str) -> str:
+    """Escape every non-printable character before it reaches a terminal.
+
+    The CLI is meant for checking URL lists from CI and pre-commit hooks --
+    i.e. untrusted input. Echoed raw, an ANSI/OSC escape sequence in a URL
+    rewrites the terminal (or a CI log viewer), and a bidi control such as
+    U+202E makes the printed URL read differently from what was checked.
+    """
+    if text.isprintable():
+        return text
+    return "".join(char if char.isprintable() else char.encode("unicode_escape").decode("ascii") for char in text)
+
+
 def _check_one(url: str, *, policy: PolicyInput, check_dns: bool, check_phishing: bool) -> tuple[bool, str]:
     """Return (ok, message) for a single URL.
 
@@ -45,9 +58,9 @@ def _run_check(urls: Iterable[str], *, policy: PolicyInput, check_dns: bool, che
         all_ok = all_ok and ok
         if ok:
             if not quiet:
-                print(message)
+                print(_printable(message))
         else:
-            print(f"{url}: {message}", file=sys.stderr)
+            print(f"{_printable(url)}: {_printable(message)}", file=sys.stderr)
     return 0 if all_ok else 1
 
 

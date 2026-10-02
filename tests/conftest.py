@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 
 def _ensure_src_on_path() -> None:
     """Add repository paths so `urlps` and legacy `urlps` imports both resolve."""
@@ -19,3 +21,13 @@ def _ensure_src_on_path() -> None:
 
 
 _ensure_src_on_path()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_global_dns_limiter():
+    """The process-global DNS limiter caches resolutions; never share them between tests."""
+    from urlps._security.dns_guard import reset_dns_rate_limiter
+
+    reset_dns_rate_limiter()
+    yield
+    reset_dns_rate_limiter()

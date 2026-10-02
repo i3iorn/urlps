@@ -182,6 +182,7 @@ def test_parse_query_rejects_empty_keys() -> None:
 
 def test_single_character_scheme() -> None:
     parser = Parser()
+    parser.custom_scheme = True  # non-standard schemes are opt-in
     parsed = parser.parse("a://example.com")
     assert parsed["scheme"] == "a"
     assert parser.recognized_scheme is False
