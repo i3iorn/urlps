@@ -133,6 +133,11 @@ class Builder:
         query = components.get("query")
         query_pairs: QueryPairs = components.get("query_pairs") or []
 
+        if host and path and not path.startswith("/"):
+            # RFC 3986 §3.3: after an authority the path must start with "/";
+            # build("https", "example.com", path="api") used to emit
+            # "https://example.comapi", a different host.
+            path = "/" + path
         normalized_path = self.normalize_path(path)
         if not normalized_path and host:
             normalized_path = "/"

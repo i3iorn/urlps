@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import pytest
 
-from urlps import UnsupportedSchemeError, parse_url, parse_url_local
+from urlps import UnsupportedSchemeError, build, parse_url, parse_url_local
 
 BASE = "https://user:pw@example.com:8443/a/b?q=1&r=2#frag"
 
 DERIVATIONS = {
     "dot-segments-and-escapes": lambda u: u.with_path("/a/../b/%7e"),
     "empty-segments": lambda u: u.with_path("/x//y/."),
+    "relative-path": lambda u: u.with_path("c/d"),
     "port-none": lambda u: u.with_port(None),
     "port": lambda u: u.with_port(9000),
     "scheme": lambda u: u.with_scheme("http"),
@@ -58,3 +59,21 @@ def test_with_port_none_means_the_scheme_default() -> None:
 def test_parser_rules_apply_to_derived_urls() -> None:
     with pytest.raises(UnsupportedSchemeError):
         parse_url_local("file:///etc/hosts", allow_custom_scheme=True).with_port(80)
+
+
+@pytest.mark.parametrize("path", ["evil.com/x", "c/d", "x"])
+def test_a_relative_path_cannot_merge_into_the_authority(path: str) -> None:
+    """with_path("evil.com/x") used to serialize as https://example.comevil.com/x -- another host."""
+    url = parse_url("https://example.com/").with_path(path)
+    assert url.path == f"/{path}"
+    assert parse_url(str(url)).host == "example.com"
+
+
+def test_build_adds_the_leading_slash_its_docstring_promises() -> None:
+    assert build("https", "example.com", path="api") == "https://example.com/api"
+
+
+def test_query_string_wins_when_both_views_are_given() -> None:
+    url = parse_url("https://example.com/").copy(query="a=1", query_pairs=[("b", "2")])
+    assert url.query == "a=1"
+    assert url.query_params == [("a", "1")]

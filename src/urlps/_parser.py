@@ -396,6 +396,12 @@ def _assemble(
 ) -> URLParts:
     """The steps after the authority: port defaults, path, query and fragment normalization."""
     port = apply_port_defaults(scheme, port, host)
+    if host and path and not path.startswith("/"):
+        # RFC 3986 §3.3: with an authority the path is empty or starts with
+        # "/". A relative one would be serialized straight onto the
+        # authority -- with_path("evil.com/x") on https://example.com/ read
+        # back as host "example.comevil.com".
+        path = "/" + path
     normalized_path = normalize_path(path)
     if host and not normalized_path:
         normalized_path = "/"
