@@ -20,9 +20,8 @@ cannot be done without it instead of quietly returning a different answer.
 from __future__ import annotations
 
 import warnings
-from functools import lru_cache
 
-from ..._cache_config import VALIDATION_CACHE_SIZE
+from ..._cache_config import VALIDATION_CACHE_SIZE, lru_cache
 from ..._normalize import normalize_host
 
 __all__ = [
@@ -60,7 +59,7 @@ if not UTS46_AVAILABLE:
     warnings.warn(_FALLBACK_WARNING, RuntimeWarning, stacklevel=2)
 
 
-@lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+@lru_cache(maxsize=VALIDATION_CACHE_SIZE, group="security")
 def to_ascii(host: str) -> str:
     """Encode ``host`` to its A-label (Punycode) form.
 
@@ -104,7 +103,7 @@ def canonical_host(host: str) -> str:
     return normalize_host(host if host.isascii() else to_ascii(host))
 
 
-@lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+@lru_cache(maxsize=VALIDATION_CACHE_SIZE, group="security")
 def to_unicode(host: str) -> str:
     """Decode ``host`` from its A-label form back to U-labels.
 

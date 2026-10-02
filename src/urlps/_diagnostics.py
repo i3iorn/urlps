@@ -1,10 +1,16 @@
-"""Cache diagnostics aggregated across internal modules.
+"""Cache diagnostics across the whole package.
 
-Lives on its own because it reaches into parser, validation, security, and
-builder caches rather than belonging to any single one of them.
+Every cache registers itself with its group when it is defined (see
+``_cache_config``), so these report and clear all of them -- including
+caches added later -- without a list to keep in sync.
 """
 
 from __future__ import annotations
+
+from . import _cache_config
+
+#: The groups get_cache_info() always reports, in this order.
+_GROUPS = ("parser", "validation", "security", "builder")
 
 
 def get_cache_info() -> dict:
@@ -17,28 +23,15 @@ def get_cache_info() -> dict:
     - Builder caches (percent encoding, query encoding)
 
     Returns:
-        Dictionary mapping module names to their cache statistics.
+        Dictionary mapping group names to {cache name: {hits, misses, maxsize, currsize}}.
 
     Example:
         >>> info = get_cache_info()
         >>> info['parser']['normalize_path']['hits']
         450
     """
-    from . import _builder, _parser, _security, _validation
-
-    return {
-        "parser": _parser.get_cache_info(),
-        "validation": _validation.Validator.get_cache_info(),
-        "security": _security.get_cache_info(),
-        "builder": {
-            "percent_encode": _builder.Builder._percent_encode_cached.cache_info()._asdict()
-            if hasattr(_builder.Builder._percent_encode_cached, "cache_info")
-            else None,
-            "encode_for_query": _builder._encode_for_query.cache_info()._asdict()
-            if hasattr(_builder._encode_for_query, "cache_info")
-            else None,
-        },
-    }
+    groups = dict.fromkeys(_GROUPS + _cache_config.cache_groups())
+    return {group: _cache_config.cache_info(group) for group in groups}
 
 
 def clear_all_caches() -> dict:
@@ -50,31 +43,15 @@ def clear_all_caches() -> dict:
     - Resetting after processing a large batch of URLs
 
     Returns:
-        Dictionary mapping module names to previous cache sizes.
+        Dictionary mapping group names to {cache name: previous size}.
 
     Example:
         >>> previous = clear_all_caches()
         >>> previous['parser']['normalize_path']
         127
     """
-    from . import _builder, _parser, _security, _validation
-
-    previous = {
-        "parser": _parser.clear_caches(),
-        "validation": _validation.Validator.clear_caches(),
-        "security": _security.clear_caches(),
-        "builder": {},
-    }
-
-    if hasattr(_builder.Builder._percent_encode_cached, "cache_clear"):
-        previous["builder"]["percent_encode"] = _builder.Builder._percent_encode_cached.cache_info().currsize
-        _builder.Builder._percent_encode_cached.cache_clear()
-
-    if hasattr(_builder._encode_for_query, "cache_clear"):
-        previous["builder"]["encode_for_query"] = _builder._encode_for_query.cache_info().currsize
-        _builder._encode_for_query.cache_clear()
-
-    return previous
+    groups = dict.fromkeys(_GROUPS + _cache_config.cache_groups())
+    return {group: _cache_config.clear_caches(group) for group in groups}
 
 
 __all__ = ["clear_all_caches", "get_cache_info"]

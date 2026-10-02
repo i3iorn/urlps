@@ -17,9 +17,8 @@ from __future__ import annotations
 
 import ipaddress
 import re
-from functools import lru_cache
 
-from ._cache_config import PARSER_CACHE_SIZE, bounded_lru_cache
+from ._cache_config import PARSER_CACHE_SIZE, bounded_lru_cache, lru_cache
 
 #: The unreserved set (RFC 3986 §2.3). These are the *only* characters that
 #: may be percent-decoded during normalization. They are never delimiters, so
@@ -90,7 +89,7 @@ def _normalize_escape(match: re.Match[str]) -> str:
     return f"%{hex_digits.upper()}"
 
 
-@bounded_lru_cache(maxsize=PARSER_CACHE_SIZE)
+@bounded_lru_cache(maxsize=PARSER_CACHE_SIZE, group="parser")
 def normalize_percent_encoding(value: str) -> str:
     """
     Apply RFC 3986 §6.2.2.1-.2 to a single URL component.
@@ -109,7 +108,7 @@ def normalize_percent_encoding(value: str) -> str:
     return _PERCENT_ESCAPE.sub(_normalize_escape, value)
 
 
-@lru_cache(maxsize=PARSER_CACHE_SIZE)
+@lru_cache(maxsize=PARSER_CACHE_SIZE, group="parser")
 def normalize_host(host: str) -> str:
     """
     Canonicalize a host so that equal hosts compare equal.

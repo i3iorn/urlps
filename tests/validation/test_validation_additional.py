@@ -59,30 +59,12 @@ class TestValidation:
         result = Validator.is_ip_address.__wrapped__(123)
         assert result is False
 
-    def test_get_cache_info_none_for_non_cached(self):
-        """Line 302: get_cache_info returns None for methods without cache_info."""
+    def test_validation_cache_info_reads_the_registry(self):
         from urlps._validation import Validator
 
-        # Temporarily inject a non-cached method name
-        original = Validator._CACHED_METHODS[:]
-        Validator._CACHED_METHODS = ["_validate_ipv4_octets"]  # not LRU cached
-        try:
-            info = Validator.get_cache_info()
-            assert info.get("_validate_ipv4_octets") is None
-        finally:
-            Validator._CACHED_METHODS = original
-
-    def test_clear_caches_zero_for_non_cached_method(self):
-        """Lines 317->313, 320: clear_caches returns 0 for non-cached methods."""
-        from urlps._validation import Validator
-
-        original = Validator._CACHED_METHODS[:]
-        Validator._CACHED_METHODS = ["_validate_ipv4_octets"]  # not LRU cached
-        try:
-            result = Validator.clear_caches()
-            assert result.get("_validate_ipv4_octets") == 0
-        finally:
-            Validator._CACHED_METHODS = original
+        info = Validator.get_cache_info()
+        assert {"is_valid_host", "is_valid_scheme", "_to_ascii_host"} <= set(info)
+        assert set(Validator.clear_caches()) == set(info)
 
 
 class TestValidationAdditional:
@@ -102,16 +84,3 @@ class TestValidationAdditional:
         from urlps._validation import Validator
 
         assert Validator._validate_ipv4_octets("192.168.1.1") is True
-
-    def test_clear_caches_with_non_cached_method_name(self):
-        """Line 317->313, 320: clear_caches handles non-LRU methods correctly."""
-        from urlps._validation import Validator
-
-        original = Validator._CACHED_METHODS[:]
-        Validator._CACHED_METHODS = ["_validate_ipv4_octets", "is_valid_port"]
-        try:
-            result = Validator.clear_caches()
-            # _validate_ipv4_octets has no LRU, is_valid_port has no LRU either
-            assert result.get("_validate_ipv4_octets") == 0
-        finally:
-            Validator._CACHED_METHODS = original

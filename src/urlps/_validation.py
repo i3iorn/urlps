@@ -13,8 +13,8 @@ Public API:
     - is_valid_userinfo: Function to validate userinfo strings.
 
 Performance:
-    Frequently-called validators are LRU cached for performance.
-    Use Validator.get_cache_info() to monitor cache effectiveness.
+    Frequently-called validators are LRU cached; urlps.get_cache_info()
+    reports them under "validation".
 
 All public methods and arguments are type-annotated and documented.
 """
@@ -23,11 +23,11 @@ from __future__ import annotations
 
 import ipaddress
 from collections.abc import Set as AbstractSet
-from functools import lru_cache
 from typing import Any
 from urllib.parse import unquote
 
-from ._cache_config import VALIDATION_CACHE_SIZE, bounded_lru_cache
+from ._cache_config import VALIDATION_CACHE_SIZE, bounded_lru_cache, cache_info, lru_cache
+from ._cache_config import clear_caches as clear_registered_caches
 from ._host import port_number
 from ._patterns import PATTERNS
 from ._security._unicode.uts46 import to_ascii
@@ -52,19 +52,8 @@ class Validator:
     For security-related checks, use the _security module directly.
     """
 
-    _CACHED_METHODS: list[str] = [
-        "_to_ascii_host",
-        "is_valid_scheme",
-        "is_valid_host",
-        "is_valid_ipv4",
-        "is_valid_ipv6",
-        "is_url_safe_string",
-        "is_valid_fragment",
-        "is_ip_address",
-    ]
-
     @staticmethod
-    @lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @lru_cache(maxsize=VALIDATION_CACHE_SIZE, group="validation")
     def _to_ascii_host(host: str) -> str:
         """Return ACE (punycode) form for host.
 
@@ -78,7 +67,7 @@ class Validator:
         return to_ascii(host)
 
     @staticmethod
-    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE, group="validation")
     def is_valid_scheme(scheme: str) -> bool:
         """Validate URL scheme.
 
@@ -92,7 +81,7 @@ class Validator:
         return bool(compiled_regex["scheme"].fullmatch(scheme))
 
     @staticmethod
-    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE, group="validation")
     def is_valid_host(host: str) -> bool:
         """Validate hostname.
 
@@ -112,7 +101,7 @@ class Validator:
         return bool(compiled_regex["host"].fullmatch(ascii_host))
 
     @staticmethod
-    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE, group="validation")
     def is_valid_ipv4(ip: str) -> bool:
         """Validate IPv4 address.
 
@@ -150,7 +139,7 @@ class Validator:
         return True
 
     @staticmethod
-    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE, group="validation")
     def is_valid_ipv6(ip: str) -> bool:
         """Validate IPv6 address (bracketed format).
 
@@ -200,7 +189,7 @@ class Validator:
         return True
 
     @staticmethod
-    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE, group="validation")
     def is_url_safe_string(url: str) -> bool:
         """Check if string contains only URL-safe characters (no control characters).
 
@@ -217,7 +206,7 @@ class Validator:
         return not compiled_regex["control_chars"].search(url)
 
     @staticmethod
-    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE, group="validation")
     def is_valid_fragment(fragment: str) -> bool:
         """Validate URL fragment.
 
@@ -231,7 +220,7 @@ class Validator:
         return bool(compiled_regex["fragment"].fullmatch(fragment))
 
     @staticmethod
-    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+    @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE, group="validation")
     def is_ip_address(host: str) -> bool:
         """Check if host is an IP address literal.
 
@@ -244,45 +233,15 @@ class Validator:
             return False
         return Validator.is_valid_ipv4(host) or Validator.is_valid_ipv6(host)
 
-    @classmethod
-    def get_cache_info(cls) -> dict[str, Any | None]:
-        """Get statistics about validation caches.
+    @staticmethod
+    def get_cache_info() -> dict[str, Any]:
+        """Statistics for the validation caches."""
+        return cache_info("validation")
 
-        Returns:
-            A dictionary mapping method names to cache info dicts.
-        """
-        stats: dict[str, Any | None] = {}
-        for name in cls._CACHED_METHODS:
-            method = getattr(cls, name, None)
-            if method and hasattr(method, "cache_info"):
-                info = method.cache_info()
-                stats[name] = {
-                    "hits": info.hits,
-                    "misses": info.misses,
-                    "maxsize": info.maxsize,
-                    "currsize": info.currsize,
-                }
-            else:
-                stats[name] = None
-        return stats
-
-    @classmethod
-    def clear_caches(cls) -> dict[str, int]:
-        """Clear all validation caches and return previous sizes.
-
-        Returns:
-            A dictionary mapping method names to previous cache sizes.
-        """
-        previous_sizes: dict[str, int] = {}
-        for name in cls._CACHED_METHODS:
-            method = getattr(cls, name, None)
-            if method and hasattr(method, "cache_info"):
-                previous_sizes[name] = method.cache_info().currsize
-                if hasattr(method, "cache_clear"):
-                    method.cache_clear()
-            else:
-                previous_sizes[name] = 0
-        return previous_sizes
+    @staticmethod
+    def clear_caches() -> dict[str, int]:
+        """Clear the validation caches and return their previous sizes."""
+        return clear_registered_caches("validation")
 
 
 def is_valid_userinfo(value: str, max_length: int = MAX_USERINFO_LENGTH) -> bool:

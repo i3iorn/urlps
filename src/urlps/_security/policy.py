@@ -4,10 +4,9 @@ import warnings
 from collections.abc import Iterable
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
-from functools import lru_cache
 from typing import Any, Literal, Union, cast
 
-from .._cache_config import POLICY_CACHE_SIZE
+from .._cache_config import POLICY_CACHE_SIZE, lru_cache
 from .._validation import Validator
 from ..constants import DEFAULT_DNS_DEADLINE_SECONDS, STANDARD_SCHEMES
 from ..exceptions import SecurityPolicyError
@@ -373,7 +372,7 @@ def _apply_overrides(
     )
 
 
-@lru_cache(maxsize=POLICY_CACHE_SIZE)
+@lru_cache(maxsize=POLICY_CACHE_SIZE, group="security")
 def _resolve_named_policy(
     policy_name: PolicyName,
     check_dns: bool | None,

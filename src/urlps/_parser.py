@@ -7,7 +7,8 @@ from typing import Any
 from urllib.parse import unquote
 
 from ._builder import QueryPairs, decode_query_pairs
-from ._cache_config import PARSER_CACHE_SIZE, bounded_lru_cache
+from ._cache_config import PARSER_CACHE_SIZE, bounded_lru_cache, cache_info
+from ._cache_config import clear_caches as clear_registered_caches
 from ._components import ParseResult, URLParts
 from ._host import is_ascii_digits, looks_like_ipv4, port_number
 from ._normalize import normalize_host, normalize_percent_encoding, normalize_userinfo
@@ -227,7 +228,7 @@ def parse_host(host_candidate: str, require_host: bool = False) -> tuple[str | N
     return parse_regular_host(host_candidate)
 
 
-@bounded_lru_cache(maxsize=PARSER_CACHE_SIZE)
+@bounded_lru_cache(maxsize=PARSER_CACHE_SIZE, group="parser")
 def normalize_path(path_candidate: str) -> str:
     """RFC 3986 §6.2.2 path normalization: percent-encoding, then dot segments.
 
@@ -488,46 +489,14 @@ class Parser:
         return parse_netloc(netloc, require_host=require_host)
 
 
-#: Caches reported under the "parser" group. normalize_host and
-#: normalize_percent_encoding live in _normalize but run on every parse, so
-#: they are reported here rather than in a group of their own.
-_CACHED_FUNCTIONS: list[Any] = [normalize_path, normalize_host, normalize_percent_encoding]
-
-
 def get_cache_info() -> dict:
-    """Get statistics about parser caches.
-
-    Returns:
-        Dictionary with cache statistics for cached functions.
-    """
-    stats = {}
-    for cached in _CACHED_FUNCTIONS:
-        if not hasattr(cached, "cache_info"):
-            continue
-        info = cached.cache_info()
-        stats[cached.__wrapped__.__name__] = {
-            "hits": info.hits,
-            "misses": info.misses,
-            "maxsize": info.maxsize,
-            "currsize": info.currsize,
-        }
-    return stats
+    """Statistics for the parser caches (path, host and percent-encoding normalization)."""
+    return cache_info("parser")
 
 
 def clear_caches() -> dict:
-    """Clear all parser caches and return previous sizes.
-
-    Returns:
-        Dictionary mapping function names to previous cache sizes.
-    """
-    previous = {}
-    for cached in _CACHED_FUNCTIONS:
-        if not hasattr(cached, "cache_info"):
-            continue
-        previous[cached.__wrapped__.__name__] = cached.cache_info().currsize
-        if hasattr(cached, "cache_clear"):
-            cached.cache_clear()
-    return previous
+    """Clear the parser caches and return their previous sizes."""
+    return clear_registered_caches("parser")
 
 
 __all__ = [

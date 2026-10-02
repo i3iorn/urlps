@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from urlps import _parser
@@ -15,13 +13,7 @@ def test_parse_query_string_rejects_invalid_characters():
         _parser.parse_query_string("key=\x00value")
 
 
-def test_get_cache_info_skips_functions_without_cache_info(monkeypatch):
-    plain_function = MagicMock(spec=[])  # no cache_info attribute
-    monkeypatch.setattr(_parser, "_CACHED_FUNCTIONS", [plain_function])
-    assert _parser.get_cache_info() == {}
-
-
-def test_clear_caches_skips_functions_without_cache_info(monkeypatch):
-    plain_function = MagicMock(spec=[])  # no cache_info attribute
-    monkeypatch.setattr(_parser, "_CACHED_FUNCTIONS", [plain_function])
-    assert _parser.clear_caches() == {}
+def test_parser_cache_info_reads_the_registry():
+    info = _parser.get_cache_info()
+    assert {"normalize_path", "normalize_host", "normalize_percent_encoding"} <= set(info)
+    assert set(_parser.clear_caches()) == set(info)

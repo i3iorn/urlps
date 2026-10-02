@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import NamedTuple
 from urllib.parse import SplitResult, urlsplit
 
+from .._cache_config import cache_info
+from .._cache_config import clear_caches as clear_registered_caches
 from .._components import SecurityFinding
 from .._host import ip_literal_text
 from .._validation import scheme_rejection
@@ -17,15 +19,7 @@ from ..exceptions import (
     SecurityPolicyError,
     UnsupportedSchemeError,
 )
-from ._unicode import (
-    canonical_host,
-    is_single_script_label,
-    is_whole_script_confusable,
-    scripts_of,
-    skeleton,
-    to_ascii,
-    to_unicode,
-)
+from ._unicode import canonical_host
 from .dns_guard import (
     DNSRateLimiter,
     DNSRateLimiterConfig,
@@ -46,12 +40,10 @@ from .phishing_db import (
 from .policy import (
     PolicyInput,
     SecurityPolicy,
-    _resolve_named_policy,
     resolve_security_policy,
 )
 from .url_checks import (
     extract_host_and_path,
-    find_authority_marker,
     get_canonical_url,
     has_credentials,
     has_double_encoding,
@@ -554,48 +546,14 @@ def validate_url_security(
     return findings
 
 
-_CACHED_FUNCTIONS: list[Any] = [
-    is_private_ip,
-    is_ssrf_risk,
-    has_mixed_scripts,
-    has_parser_confusion,
-    find_authority_marker,
-    # Unicode host analysis (added 1.0). Registered here so the caches are
-    # visible to get_cache_info()/clear_all_caches() -- test_cache_registry.py
-    # asserts that every lru_cache in the package appears, so a new cache
-    # cannot silently escape reporting the way _resolve_named_policy did.
-    analyze_host,
-    scripts_of,
-    is_single_script_label,
-    skeleton,
-    is_whole_script_confusable,
-    to_ascii,
-    to_unicode,
-    _resolve_named_policy,
-]
-
-
 def get_cache_info() -> dict:
-    """Get statistics about security check caches."""
-    return {
-        f.__wrapped__.__name__: {
-            "hits": f.cache_info().hits,
-            "misses": f.cache_info().misses,
-            "maxsize": f.cache_info().maxsize,
-            "currsize": f.cache_info().currsize,
-        }
-        for f in _CACHED_FUNCTIONS
-        if hasattr(f, "cache_info")
-    }
+    """Statistics for the security caches (host classification, Unicode analysis, policies)."""
+    return cache_info("security")
 
 
 def clear_caches() -> dict:
-    """Clear all security caches and return previous sizes."""
-    previous = {f.__wrapped__.__name__: f.cache_info().currsize for f in _CACHED_FUNCTIONS if hasattr(f, "cache_info")}
-    for cached in _CACHED_FUNCTIONS:
-        if hasattr(cached, "cache_clear"):
-            cached.cache_clear()
-    return previous
+    """Clear the security caches and return their previous sizes."""
+    return clear_registered_caches("security")
 
 
 __all__ = [

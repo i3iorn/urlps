@@ -8,9 +8,7 @@ analyses per label -- never on the raw ASCII form.
 
 from __future__ import annotations
 
-from functools import lru_cache
-
-from .._cache_config import SECURITY_CACHE_SIZE
+from .._cache_config import SECURITY_CACHE_SIZE, lru_cache
 from .._host import strip_brackets
 from ..exceptions import ErrorCode
 from ._unicode import (
@@ -62,7 +60,7 @@ _ZERO_WIDTH = frozenset(
 HostFinding = tuple[ErrorCode, str, str]
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@lru_cache(maxsize=SECURITY_CACHE_SIZE, group="security")
 def analyze_host(host: str) -> tuple[HostFinding, ...]:
     """Return the Unicode-related findings for ``host``.
 

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import ipaddress
 from collections.abc import Callable, Iterable, Sequence
-from functools import lru_cache
 
-from .._cache_config import SECURITY_CACHE_SIZE, bounded_lru_cache
+from .._cache_config import SECURITY_CACHE_SIZE, bounded_lru_cache, lru_cache
 from .._host import ip_literal_text
 from ..constants import (
     BLOCKED_HOSTNAMES,
@@ -266,7 +265,7 @@ def _check_resolved_ips_safe(
     return checked_any
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@lru_cache(maxsize=SECURITY_CACHE_SIZE, group="security")
 def is_private_ip(host: str) -> bool:
     """Check if host is a private/reserved IP address."""
     if not isinstance(host, str):
@@ -329,7 +328,7 @@ def _is_permitted_private_host(host: str, host_lower: str) -> bool:
     return host_lower in LOOPBACK_HOSTNAMES or host_lower.endswith((".local", ".localhost"))
 
 
-@bounded_lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@bounded_lru_cache(maxsize=SECURITY_CACHE_SIZE, group="security")
 def is_ssrf_risk(host: str, *, allow_private: bool = False) -> bool:
     """Check if host poses SSRF risk (blocked hostnames, private IPs, and ambiguous IPs).
 
