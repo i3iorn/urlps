@@ -433,7 +433,14 @@ class Parser:
         self._recognized_scheme = result.recognized_scheme
         self._query_pairs = list(result.query_pairs)
         self._port = result.port
-        return result.to_dict()
+        # Everything a caller needs travels in the return value. URL used to
+        # read query_pairs/recognized_scheme back off this instance after the
+        # call, so a Parser shared between threads handed one URL the query
+        # pairs of another thread's parse.
+        components = result.to_dict()
+        components["query_pairs"] = list(result.query_pairs)
+        components["recognized_scheme"] = result.recognized_scheme
+        return components
 
     def parse_netloc(self, netloc: str, *, require_host: bool = False) -> tuple[str | None, str | None, int | None]:
         """Parse a netloc string into userinfo, host, and port."""

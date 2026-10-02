@@ -29,18 +29,17 @@ class _URLComparison:
 
     @staticmethod
     def hash_url(url: URL) -> int:
-        """Return a hash of the URL object (for use in sets/dicts)."""
-        return hash(
-            (
-                url._scheme,
-                url._userinfo,
-                url._host,
-                url._port,
-                url._path,
-                url._query,
-                url._fragment,
-            )
-        )
+        """Return a hash of the URL object (for use in sets/dicts).
+
+        Hashes exactly what ``equals`` compares -- the serialized string. A
+        hash over the raw components broke ``a == b -> hash(a) == hash(b)``:
+        ``https://h/`` with port 443 and with port None serialize identically
+        but hashed apart, so a set kept both. It also makes a URL and its
+        string hash alike, consistent with ``url == str(url)``.
+        """
+        from ._serialization import _URLSerialization
+
+        return hash(_URLSerialization.as_string(url))
 
     @staticmethod
     def equals(url: URL, other: object) -> Any:

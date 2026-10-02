@@ -179,7 +179,12 @@ class URL:
                 if not (pre_path and (is_open_redirect_risk(pre_path) or has_path_traversal(pre_path))):
                     raise InvalidURLError("URL contains ambiguous syntax that could cause parser confusion.")
             parsed = self._parser.parse(url)
-            self.recognized_scheme = self._parser.recognized_scheme
+            # From the result, not the parser's state: a shared Parser may
+            # already hold another thread's parse. Custom parsers that return
+            # only the component keys keep the old attribute fallback.
+            self.recognized_scheme = (
+                parsed["recognized_scheme"] if "recognized_scheme" in parsed else self._parser.recognized_scheme
+            )
             self._apply_parsed(parsed)
             self._security_findings = self.validate(raise_on_error=True, raw_url=url)
             self._audit_manager.invoke(
