@@ -7,7 +7,7 @@ from urllib.parse import unquote
 
 from ._builder import QueryPairs, decode_query_pairs
 from ._cache_config import PARSER_CACHE_SIZE, bounded_lru_cache
-from ._components import ParseResult
+from ._components import ParseResult, URLParts
 from ._host import is_ascii_digits, looks_like_ipv4, port_number
 from ._normalize import normalize_host, normalize_percent_encoding, normalize_userinfo
 from ._resolve import normalize_dot_segments
@@ -120,21 +120,28 @@ def split_authority(url: str) -> tuple[str, str]:
     return authority, f"/{path}" if sep else ""
 
 
+def normalize_userinfo_component(userinfo: str) -> str:
+    """Validate a userinfo and store it the way the parser does.
+
+    Anything outside the RFC 3986 userinfo grammar is escaped, so str(url)
+    can only ever be read with this host. "http://169.254.169.254\\@example.com/"
+    is host example.com here but host 169.254.169.254 to a WHATWG parser
+    (browsers, Node), which treats "\\" as "/"; "%5C" is unambiguous.
+    """
+    if not is_valid_userinfo(userinfo):
+        raise UserInfoParsingError("Invalid authentication section in URL.", value=userinfo, component="userinfo")
+    try:
+        return normalize_userinfo(userinfo)
+    except UnicodeEncodeError as exc:
+        raise UserInfoParsingError("Userinfo is not valid Unicode.", component="userinfo") from exc
+
+
 def parse_userinfo(authority: str) -> tuple[str | None, str]:
     """Parse userinfo from authority."""
     if not authority or "@" not in authority:
         return None, authority or ""
     auth_segment, _, host = authority.partition("@")
-    if not is_valid_userinfo(auth_segment):
-        raise UserInfoParsingError("Invalid authentication section in URL.", value=auth_segment, component="userinfo")
-    # Escape anything outside the RFC 3986 userinfo grammar, so str(url) can
-    # only ever be read with this host. "http://169.254.169.254\\@example.com/"
-    # is host example.com here but host 169.254.169.254 to a WHATWG parser
-    # (browsers, Node), which treats "\\" as "/"; "%5C" is unambiguous.
-    try:
-        return normalize_userinfo(auth_segment), host
-    except UnicodeEncodeError as exc:
-        raise UserInfoParsingError("Userinfo is not valid Unicode.", component="userinfo") from exc
+    return normalize_userinfo_component(auth_segment), host
 
 
 def parse_port(candidate: str) -> int:
@@ -161,41 +168,53 @@ def parse_port(candidate: str) -> int:
         ) from None
 
 
+def normalize_host_component(host: str) -> str:
+    """Validate one host (no port) and return it exactly as the parser stores it.
+
+    A bracketed IPv6 literal, a dotted IPv4 literal (anything shaped like
+    one must be a valid one), or a hostname -- IDNA-encoded through the one
+    entry point in _unicode/uts46.py, so the parser, derived URLs and the
+    security checks never disagree on a host's form.
+    """
+    if len(host) > MAX_HOST_LENGTH:
+        raise HostValidationError(f"Host exceeds maximum length of {MAX_HOST_LENGTH}.", value=host, component="host")
+    if host.startswith("["):
+        if not Validator.is_valid_ipv6(host):
+            raise HostValidationError("Invalid IPv6 address format.", value=host, component="host")
+        return normalize_host(host)
+    if not host:
+        raise MissingHostError("Host cannot be empty.", value=host, component="host")
+    if looks_like_ipv4(host):
+        if not Validator.is_valid_ipv4(host):
+            raise HostValidationError("Invalid IPv4 address format.", value=host, component="host")
+        return normalize_host(host)
+    if not Validator.is_valid_host(host):
+        raise HostValidationError("Host contains invalid characters.", value=host, component="host")
+    try:
+        return canonical_host(host)
+    except IdnaError as exc:
+        raise HostValidationError(f"Unable to IDNA-encode host: {exc}", value=host, component="host") from exc
+
+
 def parse_ipv6_host(host_candidate: str) -> tuple[str, int | None]:
     """Parse IPv6 host with optional port."""
     closing = host_candidate.find("]")
     if closing == -1:
         raise HostValidationError("Invalid IPv6 host segment.", value=host_candidate, component="host")
-    host_literal = host_candidate[: closing + 1]
+    host = normalize_host_component(host_candidate[: closing + 1])
     remainder = host_candidate[closing + 1 :]
-    if not Validator.is_valid_ipv6(host_literal):
-        raise HostValidationError("Invalid IPv6 address format.", value=host_literal, component="host")
     port = None
     if remainder.startswith(":"):
         port = parse_port(remainder[1:])
     elif remainder:
         raise HostValidationError("Unexpected characters after IPv6 literal.", value=remainder, component="host")
-    return normalize_host(host_literal), port
+    return host, port
 
 
 def parse_regular_host(host_candidate: str) -> tuple[str, int | None]:
     """Parse regular hostname with optional port."""
     host_part, sep, port_part = host_candidate.partition(":")
-    if not host_part:
-        raise MissingHostError("Host cannot be empty.", value=host_part, component="host")
-    if looks_like_ipv4(host_part):
-        if not Validator.is_valid_ipv4(host_part):
-            raise HostValidationError("Invalid IPv4 address format.", value=host_part, component="host")
-        return normalize_host(host_part), parse_port(port_part) if sep else None
-    if not Validator.is_valid_host(host_part):
-        raise HostValidationError("Host contains invalid characters.", value=host_part, component="host")
-    # The one IDNA entry point (see _unicode/uts46.py), so the parser,
-    # derived URLs and the security checks never disagree on a host's form.
-    try:
-        host = canonical_host(host_part)
-    except IdnaError as exc:
-        raise HostValidationError(f"Unable to IDNA-encode host: {exc}", value=host_part, component="host") from exc
-    return host, parse_port(port_part) if sep else None
+    return normalize_host_component(host_part), parse_port(port_part) if sep else None
 
 
 def parse_host(host_candidate: str, require_host: bool = False) -> tuple[str | None, int | None]:
@@ -256,7 +275,10 @@ def parse_query_string(query_candidate: str | None) -> tuple[str | None, QueryPa
         return None, []
     if query_candidate == "":
         return "", []
-    if len(query_candidate) > MAX_QUERY_LENGTH:
+    # Decoded length, like the path, fragment and userinfo limits: a query
+    # re-serialized from its pairs (canonicalize(), with_query_param())
+    # percent-encodes non-ASCII up to 12x longer, and must still parse.
+    if len(unquote(query_candidate)) > MAX_QUERY_LENGTH:
         raise QueryParsingError(
             f"Query exceeds maximum length of {MAX_QUERY_LENGTH}.", value=query_candidate, component="query"
         )
@@ -318,32 +340,80 @@ def parse_url(url: str, allow_custom_scheme: bool = False) -> ParseResult:
     userinfo, host_candidate = parse_userinfo(authority)
     require_host = scheme is not None and scheme.lower() != "file" and has_authority
     host, port = parse_host(host_candidate, require_host=require_host)
+    parts = _assemble(scheme, userinfo, host, port, path_candidate, query_str, fragment_str)
+
+    return ParseResult(
+        scheme=parts.scheme,
+        userinfo=parts.userinfo,
+        host=parts.host,
+        port=parts.port,
+        path=parts.path,
+        query=parts.query,
+        fragment=parts.fragment,
+        query_pairs=list(parts.query_pairs),
+        recognized_scheme=recognized,
+        security_findings=[],
+    )
+
+
+def normalize_components(
+    *,
+    scheme: str | None,
+    userinfo: str | None,
+    host: str | None,
+    port: int | None,
+    path: str,
+    query: str | None,
+    fragment: str | None,
+    require_host: bool = False,
+) -> URLParts:
+    """Run already-split components through the parser's own rules.
+
+    The single construction path: ``parse_url`` splits a string and then
+    applies exactly these steps, and every derived URL (``copy()``,
+    ``with_*()``) is built here too, so a derived URL means what parsing its
+    own string would. ``scheme`` must already be validated and lowercased.
+    """
+    if userinfo is not None:
+        userinfo = normalize_userinfo_component(userinfo)
+    if host:
+        host = normalize_host_component(host)
+    elif require_host:
+        raise MissingHostError("Host is required for absolute URLs.", value=host, component="host")
+    else:
+        host = None
+    return _assemble(scheme, userinfo, host, port, path, query, fragment)
+
+
+def _assemble(
+    scheme: str | None,
+    userinfo: str | None,
+    host: str | None,
+    port: int | None,
+    path: str,
+    query: str | None,
+    fragment: str | None,
+) -> URLParts:
+    """The steps after the authority: port defaults, path, query and fragment normalization."""
     port = apply_port_defaults(scheme, port, host)
-    path = normalize_path(path_candidate)
-    if host and not path:
-        path = "/"
-    query, query_pairs = parse_query_string(query_str)
+    normalized_path = normalize_path(path)
+    if host and not normalized_path:
+        normalized_path = "/"
+    raw_query, query_pairs = parse_query_string(query)
     # RFC 3986 §6.2.2.1/.2 applied to the stored components, not just at
     # serialization time -- otherwise `url.path` and `str(url)` disagree
     # about the same escape, and a caller comparing components sees a
     # different answer than one comparing strings.
-    if query is not None:
-        query = normalize_percent_encoding(query)
-    fragment = parse_fragment_string(fragment_str)
-    if fragment is not None:
-        fragment = normalize_percent_encoding(fragment)
-
-    return ParseResult(
+    normalized_fragment = parse_fragment_string(fragment)
+    return URLParts(
         scheme=scheme,
         userinfo=userinfo,
         host=host,
         port=port,
-        path=path,
-        query=query,
-        fragment=fragment,
-        query_pairs=list(query_pairs),
-        recognized_scheme=recognized,
-        security_findings=[],
+        path=normalized_path,
+        query=None if raw_query is None else normalize_percent_encoding(raw_query),
+        fragment=None if normalized_fragment is None else normalize_percent_encoding(normalized_fragment),
+        query_pairs=tuple(query_pairs),
     )
 
 
@@ -456,6 +526,7 @@ __all__ = [
     "Parser",
     "clear_caches",
     "get_cache_info",
+    "normalize_components",
     "normalize_path",
     "parse_fragment_string",
     "parse_host",

@@ -315,13 +315,14 @@ class _URLValidation:
 
     @staticmethod
     def validate_copy_overrides(overrides: dict[str, Any], *, allow_custom_scheme: bool = False) -> None:
-        """Validate copy() override arguments.
+        """Check what ``copy()`` overrides are, before they are normalized.
 
-        Overrides are checked against the same component validators the parser
-        uses. Previously this only verified that values were strings, so
-        ``with_host("not a valid host!")`` succeeded and produced a URL object
-        that ``parse_url`` would have rejected -- component validation on the
-        mutation path was strictly weaker than on the parse path.
+        Names, types, the scheme (whose allowlist the parser applies while
+        splitting a string), control characters in the path and query, and a
+        "#" in a query. Everything else about a component -- a host, userinfo,
+        fragment or port that would not parse -- is rejected by the parser's
+        own rules, which every derived URL goes through
+        (``_parser.normalize_components``).
         """
         valid_keys = {"scheme", "host", "port", "path", "query", "fragment", "userinfo", "query_pairs"}
         invalid_keys = set(overrides.keys()) - valid_keys
@@ -336,8 +337,6 @@ class _URLValidation:
         if "userinfo" in overrides and overrides["userinfo"] is not None:
             if not isinstance(overrides["userinfo"], str):
                 raise InvalidURLError("userinfo must be a string")
-            if not is_valid_userinfo(overrides["userinfo"]):
-                raise InvalidURLError("Invalid userinfo format.")
 
         scheme = overrides.get("scheme")
         if scheme is not None and not Validator.is_valid_scheme(scheme.lower()):
@@ -356,14 +355,6 @@ class _URLValidation:
                 component="scheme",
             )
 
-        host = overrides.get("host")
-        if host is not None and not _URLValidation._is_valid_host_override(host):
-            raise InvalidURLError(f"Invalid host: {host!r}", value=host, component="host")
-
-        fragment = overrides.get("fragment")
-        if fragment is not None and not Validator.is_valid_fragment(fragment):
-            raise InvalidURLError(f"Invalid fragment: {fragment!r}", value=fragment, component="fragment")
-
         for key in ("path", "query"):
             value = overrides.get(key)
             if value is not None and not Validator.is_url_safe_string(value):
@@ -375,17 +366,6 @@ class _URLValidation:
         query = overrides.get("query")
         if query is not None and "#" in query:
             raise InvalidURLError("query must not contain '#'; encode it as %23.", value=query, component="query")
-
-    @staticmethod
-    def _is_valid_host_override(host: str) -> bool:
-        """Return True if host is a valid hostname, IPv4 literal, or IPv6 literal."""
-        if host == "":
-            return True  # Clearing the host is allowed; compose() enforces the rest.
-        if host.startswith("["):
-            return Validator.is_valid_ipv6(host)
-        if Validator.is_valid_ipv4(host):
-            return True
-        return Validator.is_valid_host(host)
 
 
 __all__ = ["Validator", "_URLValidation", "is_valid_userinfo"]

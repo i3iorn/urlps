@@ -77,10 +77,11 @@ class TestURLCanonicalization:
         assert canonical.host == "example.com"
 
     def test_default_port_removed(self):
-        """Default port should be removed."""
+        """The default port is dropped from the string; .port reports it, as for any parse."""
         url = parse_url("http://example.com:80/path", policy="balanced")
         canonical = url.canonicalize()
-        assert canonical.port is None
+        assert str(canonical) == "http://example.com/path"
+        assert canonical.port == parse_url("http://example.com/path").port == 80
 
     def test_non_default_port_kept(self):
         """Non-default port should be preserved."""

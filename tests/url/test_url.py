@@ -35,11 +35,13 @@ def test_default_port_inferred_and_hidden() -> None:
     assert url.effective_port == 443
     assert url.as_string() == "https://example.org/resource"
 
-    # Use with_port to create a new URL with port=None
+    # with_port(None) means "the scheme's default", exactly as parsing a URL
+    # without a port does -- a derived URL is what its string would parse to.
     url2 = url.with_port(None)
-    assert url2.port is None
+    assert url2.port == 443
     assert url2.effective_port == 443
     assert url2.as_string() == "https://example.org/resource"
+    assert url2 == url
 
 
 def test_file_scheme_rejects_ports() -> None:
