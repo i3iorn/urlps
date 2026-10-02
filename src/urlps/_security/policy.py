@@ -257,7 +257,9 @@ class SecurityPolicy:
         endpoints, the link-local range, ``.internal`` and kubernetes service
         names remain blocked, so this is not a blanket "turn security off".
         """
-        return cls._preset("local", {**_heuristics_off(), "allow_private_hosts": True}, overrides, fail_open_default=True)
+        return cls._preset(
+            "local", {**_heuristics_off(), "allow_private_hosts": True}, overrides, fail_open_default=True
+        )
 
     @classmethod
     def _preset(

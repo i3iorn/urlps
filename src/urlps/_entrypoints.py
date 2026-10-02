@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from . import url as _url
-from ._audit import AuditConfig
+from ._audit import AuditConfig, AuditManager
 from ._security.dns_guard import DNSRateLimiter
 from ._security.policy import PolicyInput, SecurityPolicy, resolve_security_policy
 from ._security.services import SecurityServices
@@ -28,7 +28,7 @@ def parse_url(
     dns_rate_limiter: DNSRateLimiter | None = None,
     policy: PolicyInput = None,
     correlation_id: str | None = None,
-    audit: AuditConfig | None = None,
+    audit: AuditConfig | AuditManager | None = None,
     services: SecurityServices | None = None,
 ) -> URL:
     """Parse a URL with security checks applied (recommended entry point).
@@ -90,7 +90,8 @@ def parse_url(
             or a SecurityPolicy instance. This is the single control for
             which checks are enforced.
         correlation_id: Optional identifier propagated to audit events.
-        audit: Optional AuditConfig supplying audit callbacks for this parse.
+        audit: Audit callbacks for this parse: an AuditConfig, or an AuditManager
+            to share across parses and read failure metrics from.
         services: Resolver, caches, DNS limiter and phishing feed for the
             security checks (default: the process-global ones).
 
@@ -139,7 +140,7 @@ def parse_url_local(
     dns_rate_limiter: DNSRateLimiter | None = None,
     policy: PolicyInput = None,
     correlation_id: str | None = None,
-    audit: AuditConfig | None = None,
+    audit: AuditConfig | AuditManager | None = None,
     services: SecurityServices | None = None,
 ) -> URL:
     """Parse a local/development URL, with the heuristic checks turned off.
@@ -178,7 +179,8 @@ def parse_url_local(
             preset. To re-enable protections, pass ``policy="strict"`` or use
             ``parse_url()`` rather than reaching for a separate flag.
         correlation_id: Optional identifier propagated to audit events.
-        audit: Optional AuditConfig supplying audit callbacks for this parse.
+        audit: Audit callbacks for this parse: an AuditConfig, or an AuditManager
+            to share across parses and read failure metrics from.
         services: Resolver, caches, DNS limiter and phishing feed for the
             security checks (default: the process-global ones).
 
@@ -230,7 +232,7 @@ def parse_url_unsafe(
     dns_rate_limiter: DNSRateLimiter | None = None,
     policy: PolicyInput = None,
     correlation_id: str | None = None,
-    audit: AuditConfig | None = None,
+    audit: AuditConfig | AuditManager | None = None,
     services: SecurityServices | None = None,
 ) -> URL:
     """Deprecated alias for :func:`parse_url_local`.
@@ -349,7 +351,7 @@ def join(
     dns_rate_limiter: DNSRateLimiter | None = None,
     policy: PolicyInput = None,
     correlation_id: str | None = None,
-    audit: AuditConfig | None = None,
+    audit: AuditConfig | AuditManager | None = None,
     strict_resolution: bool = True,
     services: SecurityServices | None = None,
 ) -> URL:
@@ -443,7 +445,7 @@ def build_secure(
     check_phishing: bool | None = None,
     dns_rate_limiter: DNSRateLimiter | None = None,
     correlation_id: str | None = None,
-    audit: AuditConfig | None = None,
+    audit: AuditConfig | AuditManager | None = None,
     services: SecurityServices | None = None,
     port: int | None = None,
     path: str = "/",

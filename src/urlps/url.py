@@ -58,6 +58,13 @@ def _redact_exception(exc: BaseException) -> None:
         exc.value = redact_component(exc.value, exc.component)
 
 
+def _audit_manager(audit: AuditConfig | AuditManager | None) -> AuditManager:
+    """The caller's manager as-is, a new one for a config, or the shared no-op."""
+    if isinstance(audit, AuditManager):
+        return audit
+    return AuditManager(audit) if audit is not None else NO_OP_AUDIT_MANAGER
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class _URLContext:
     """Everything a URL carries besides its components.
@@ -125,7 +132,8 @@ class URL:
             ``parse_url()`` applies. Pass ``SecurityPolicy.local()`` (or use
             :func:`urlps.parse_url_local`) for development URLs.
         correlation_id: Optional identifier propagated to audit events.
-        audit: Optional AuditConfig supplying audit callbacks.
+        audit: Audit callbacks: an AuditConfig, or an AuditManager to share
+            across parses and read failure metrics from.
         services: Resolver, caches, DNS limiter and phishing feed for the
             security checks (default: the process-global ones). Derived URLs
             keep them.
@@ -182,7 +190,7 @@ class URL:
         check_phishing: bool = False,
         security_policy: SecurityPolicy | None = None,
         correlation_id: str | None = None,
-        audit: AuditConfig | None = None,
+        audit: AuditConfig | AuditManager | None = None,
         services: SecurityServices | None = None,
     ) -> None:
         # Must be first: __setattr__ consults it on every assignment below.
@@ -193,8 +201,8 @@ class URL:
         _check_type(debug, bool, "debug")
         _check_type(check_dns, bool, "check_dns")
         _check_type(check_phishing, bool, "check_phishing")
-        if audit is not None and not isinstance(audit, AuditConfig):
-            raise TypeError(f"audit must be AuditConfig, got {type(audit).__name__}")
+        if audit is not None and not isinstance(audit, (AuditConfig, AuditManager)):
+            raise TypeError(f"audit must be AuditConfig or AuditManager, got {type(audit).__name__}")
         if parser is not None:
             warnings.warn(
                 "URL(parser=...) is deprecated and will be removed in a future major release; "
@@ -224,7 +232,7 @@ class URL:
             check_phishing=check_phishing or policy.check_phishing,
             debug=debug,
             correlation_id=correlation_id,
-            audit_manager=AuditManager(audit) if audit is not None else NO_OP_AUDIT_MANAGER,
+            audit_manager=_audit_manager(audit),
             builder=builder if builder is not None else _DEFAULT_BUILDER,
             services=services if services is not None else DEFAULT_SERVICES,
             parser=parser,
