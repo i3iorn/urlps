@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Iterable
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import KW_ONLY, dataclass, field, fields, replace
 from typing import Any, Literal, Union, cast
 
 from .._cache_config import POLICY_CACHE_SIZE, lru_cache
@@ -117,10 +117,10 @@ class SecurityPolicy:
     # newer home for it and wins when both are set.
     dns_rate_limiter: DNSRateLimiter | None = field(default=None, compare=False)
 
-    # New fields go below this line, never above: the dataclass takes its
-    # fields positionally, so a field inserted above shifts every later
-    # argument of an existing SecurityPolicy(...) call. A test pins the order.
-
+    # Everything above is 1.1's positional order; a test pins it. Everything
+    # below is keyword-only, so adding a field can never again move an
+    # existing positional SecurityPolicy(...) argument onto another setting.
+    _: KW_ONLY
     # When check_phishing is on and the database cannot be loaded, reject the
     # URL instead of accepting it with a warning finding.
     phishing_fail_closed: bool = False
@@ -214,15 +214,42 @@ class SecurityPolicy:
            private-use addresses, never metadata or link-local;
         6. otherwise only public, globally routable unicast is accepted.
         """
+        return self._permits(
+            ip,
+            host_allowed_by_name=host_allowed_by_name,
+            enforce_ssrf=self.enforce_ssrf,
+            allow_private=self.allow_private_hosts,
+        )
+
+    def ip_is_permitted(
+        self, ip: IpAddress, *, host_allowed_by_name: bool = False, allow_private: bool = False
+    ) -> bool:
+        """Deprecated 1.2.0 form of :meth:`permits_address`; removed in 2.0.
+
+        Keeps its 1.2.0 meaning: the built-in classification applies whatever
+        ``enforce_ssrf`` says, and ``allow_private`` stands in for
+        ``allow_private_hosts``.
+        """
+        warnings.warn(
+            "SecurityPolicy.ip_is_permitted() is deprecated; use permits_address(), which takes "
+            "enforce_ssrf and allow_private_hosts from the policy. It will be removed in 2.0.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._permits(
+            ip, host_allowed_by_name=host_allowed_by_name, enforce_ssrf=True, allow_private=allow_private
+        )
+
+    def _permits(self, ip: IpAddress, *, host_allowed_by_name: bool, enforce_ssrf: bool, allow_private: bool) -> bool:
         if self._denied.matches_ip(ip):
             return False
         if self._allowed.matches_ip(ip):
             return True
-        if not self.enforce_ssrf:
+        if not enforce_ssrf:
             return True
         if host_allowed_by_name:
             return not is_metadata_address(ip)
-        if self.allow_private_hosts and is_permitted_private_ip(ip):
+        if allow_private and is_permitted_private_ip(ip):
             return True
         return _is_ip_safe(ip)
 
