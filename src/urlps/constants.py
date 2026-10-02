@@ -329,3 +329,22 @@ __all__ = [
     "UNSAFE_SCHEMES",
     "OfficialSchemes",
 ]
+
+
+# Removed from use in 1.2 (nothing in urlps read it, and "standard" was never
+# defined anywhere), kept importable until 2.0 so upgrading is not a break.
+_DEPRECATED = {
+    "STANDARD_PORTS": frozenset([80, 443, 21, 22, 25, 110, 143, 53]),
+}
+
+
+def __getattr__(name: str) -> object:
+    if name in _DEPRECATED:
+        warnings.warn(
+            f"urlps.constants.{name} is deprecated and unused by urlps; it will be removed in 2.0. "
+            "Use DEFAULT_PORTS for the default port of each scheme.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _DEPRECATED[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

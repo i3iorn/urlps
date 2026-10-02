@@ -167,3 +167,50 @@ def test_typed_marker_is_present() -> None:
     from pathlib import Path
 
     assert (Path(urlps.__file__).parent / "py.typed").is_file()
+
+
+#: SecurityPolicy's positional order as released in 1.1.4. It is a dataclass,
+#: so SecurityPolicy("x", True, ...) binds by position: a field inserted among
+#: these silently moves every later argument onto a different setting.
+POLICY_FIELDS_1_1 = [
+    "name",
+    "enforce_ssrf",
+    "allow_private_hosts",
+    "enforce_path_traversal",
+    "enforce_open_redirect",
+    "enforce_mixed_scripts",
+    "enforce_parser_confusion",
+    "enforce_double_encoding",
+    "block_dangerous_ports",
+    "reject_credentials",
+    "enforce_suspicious_punycode",
+    "enforce_confusable_host",
+    "enforce_host_unicode_safety",
+    "check_dns",
+    "check_phishing",
+    "enforce_dns_rate_limit",
+    "dns_fail_open_on_connect_error",
+    "dns_retries",
+    "dns_backoff_base_seconds",
+    "dns_backoff_jitter_seconds",
+    "dns_rate_limiter",
+]
+
+
+def test_policy_keeps_its_released_positional_order() -> None:
+    import dataclasses
+
+    names = [f.name for f in dataclasses.fields(urlps.SecurityPolicy)]
+    assert names[: len(POLICY_FIELDS_1_1)] == POLICY_FIELDS_1_1, "add new SecurityPolicy fields at the end"
+
+
+def test_removed_constant_is_still_importable_with_a_warning() -> None:
+    import pytest
+
+    import urlps.constants as constants
+
+    with pytest.warns(DeprecationWarning, match="STANDARD_PORTS"):
+        from urlps.constants import STANDARD_PORTS
+    assert frozenset({80, 443}) <= STANDARD_PORTS
+    with pytest.raises(AttributeError):
+        _ = constants.NO_SUCH_CONSTANT

@@ -103,9 +103,6 @@ class SecurityPolicy:
     enforce_host_unicode_safety: bool = _heuristic()
     check_dns: bool = False
     check_phishing: bool = False
-    # When check_phishing is on and the database cannot be loaded, reject the
-    # URL instead of accepting it with a warning finding.
-    phishing_fail_closed: bool = False
     enforce_dns_rate_limit: bool = True
     # Deprecated: gates nothing. It governed a post-resolution "verification
     # connect" that has been removed (it re-checked the address just resolved,
@@ -114,13 +111,21 @@ class SecurityPolicy:
     dns_retries: int = 2
     dns_backoff_base_seconds: float = 0.05
     dns_backoff_jitter_seconds: float = 0.02
-    # Wall-clock bound on one DNS check across retries and backoff.
-    dns_deadline_seconds: float = DEFAULT_DNS_DEADLINE_SECONDS
     # The limiter charged for this policy's DNS lookups (None: the
     # process-global one). A collaborator rather than a setting, so it is left
     # out of equality and hashing; SecurityServices.dns_rate_limiter is the
     # newer home for it and wins when both are set.
     dns_rate_limiter: DNSRateLimiter | None = field(default=None, compare=False)
+
+    # New fields go below this line, never above: the dataclass takes its
+    # fields positionally, so a field inserted above shifts every later
+    # argument of an existing SecurityPolicy(...) call. A test pins the order.
+
+    # When check_phishing is on and the database cannot be loaded, reject the
+    # URL instead of accepting it with a warning finding.
+    phishing_fail_closed: bool = False
+    # Wall-clock bound on one DNS check across retries and backoff.
+    dns_deadline_seconds: float = DEFAULT_DNS_DEADLINE_SECONDS
     # Caller-supplied address rules, applied to the host and to every
     # DNS-resolved address. Each rule is an IP, a CIDR network, a hostname, or
     # a ".domain" (the domain and all its subdomains); see

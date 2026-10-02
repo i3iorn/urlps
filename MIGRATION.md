@@ -46,7 +46,8 @@ rejected. Each row says how to get the old behaviour back on purpose.
 | `URL(..., parser=Parser())` | `URL(..., allow_custom_scheme=...)` (all a parser was ever used for) | Emits `DeprecationWarning`; still works. Removed in 2.0. |
 | `URL(..., builder=Builder())` | nothing | Emits `DeprecationWarning`; still works. Removed in 2.0. |
 | `urlps._security.has_mixed_scripts()`, `get_canonical_url()` | `host_analysis.analyze_host()`; `str(parse_url(url).canonicalize())` | Emit `DeprecationWarning`. Removed in 2.0. |
-| `Builder.compose_secure()`, `Builder.merge_params()`, `Validator.is_valid_path()`/`is_valid_query_param()`/`is_standard_port()`, `urlps.constants.STANDARD_PORTS`, `_components.URLComponents` | `build_secure()`; nothing | Removed: unused internals (private modules, except `STANDARD_PORTS`). |
+| `Builder.compose_secure()`, `Builder.merge_params()`, `Validator.is_valid_path()`/`is_valid_query_param()`/`is_standard_port()`, `_components.URLComponents` | `build_secure()`; nothing | Removed: unused internals of private modules. |
+| `urlps.constants.STANDARD_PORTS` | `DEFAULT_PORTS` | Unused by urlps. Emits `DeprecationWarning`; still works. Removed in 2.0. |
 | The redaction helpers in `urlps._security.url_checks` | `urlps._redaction` | Re-exported from the old place. |
 | `urlps._security._unicode` | `urlps._unicode` | Private module, moved. |
 
