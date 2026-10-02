@@ -6,7 +6,7 @@ from typing import Any, NamedTuple
 from urllib.parse import SplitResult, urlsplit
 
 from .._components import SecurityFinding
-from .._normalize import normalize_host
+from .._host import ip_literal_text
 from ..exceptions import (
     DNSConnectionError,
     DNSRateLimitError,
@@ -16,6 +16,7 @@ from ..exceptions import (
     SecurityPolicyError,
 )
 from ._unicode import (
+    canonical_host,
     is_single_script_label,
     is_whole_script_confusable,
     scripts_of,
@@ -33,7 +34,7 @@ from .dns_guard import (
     reset_dns_rate_limiter,
 )
 from .host_analysis import analyze_host
-from .ip_utils import _strip_ipv6_brackets, is_malicious_ipv6_zone_id, is_private_ip, is_ssrf_risk
+from .ip_utils import is_malicious_ipv6_zone_id, is_private_ip, is_ssrf_risk
 from .phishing_db import (
     check_against_phishing_db,
     check_against_phishing_db_detailed,
@@ -113,7 +114,7 @@ _DNS_MESSAGES: dict[ErrorCode, str] = {
 
 def _dns_host(host: str) -> str:
     """The key the DNS check uses for ``host`` (brackets and zone stripped)."""
-    return _strip_ipv6_brackets(host.strip())
+    return ip_literal_text(host.strip())
 
 
 def _finding(severity: str, code: ErrorCode, message: str, component: str | None) -> SecurityFinding:
@@ -150,13 +151,10 @@ def _canonical_host(raw_host: str) -> str:
     A host IDNA rejects is returned as-is; the parser refuses it anyway, and
     the raw text is still worth running the checks on.
     """
-    ascii_host = raw_host
-    if not raw_host.isascii():
-        try:
-            ascii_host = to_ascii(raw_host)
-        except ValueError:  # IdnaError, which is a ValueError -- as Validator.is_valid_host catches it
-            return raw_host
-    return normalize_host(ascii_host)
+    try:
+        return canonical_host(raw_host)
+    except ValueError:  # IdnaError; caught by its base so a reloaded uts46 module still matches
+        return raw_host
 
 
 def _explicit_port(split: SplitResult) -> int | None:

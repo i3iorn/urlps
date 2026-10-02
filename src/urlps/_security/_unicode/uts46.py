@@ -23,10 +23,12 @@ import warnings
 from functools import lru_cache
 
 from ..._cache_config import VALIDATION_CACHE_SIZE
+from ..._normalize import normalize_host
 
 __all__ = [
     "UTS46_AVAILABLE",
     "IdnaError",
+    "canonical_host",
     "to_ascii",
 ]
 
@@ -85,6 +87,21 @@ def to_ascii(host: str) -> str:
         return host.encode("idna").decode("ascii")
     except (UnicodeError, ValueError) as exc:
         raise IdnaError(str(exc)) from exc
+
+
+def canonical_host(host: str) -> str:
+    """``host`` exactly as the parser stores it: IDNA-encoded, then RFC 3986 §6.2.2-normalized.
+
+    The one definition every layer uses -- the parser, derived URLs, the
+    security checks and the address rules each used to repeat these two
+    steps with their own error handling.
+
+    Raises:
+        IdnaError: IDNA refuses the host.
+    """
+    if not host:
+        return host
+    return normalize_host(host if host.isascii() else to_ascii(host))
 
 
 @lru_cache(maxsize=VALIDATION_CACHE_SIZE)

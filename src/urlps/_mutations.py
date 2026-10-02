@@ -11,8 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from ._helpers import _normalize_port
 from ._normalize import normalize_percent_encoding, normalize_userinfo
-from ._parser import normalize_host
-from ._security._unicode.uts46 import to_ascii
+from ._security._unicode.uts46 import canonical_host
 from .constants import DEFAULT_PORTS, OFFICIAL_SCHEMES
 from .exceptions import InvalidURLError
 
@@ -95,9 +94,7 @@ class _URLMutations:
         # proven the host encodes, via the same to_ascii().
         host_override = components.get("host")
         if isinstance(host_override, str):
-            if not host_override.isascii():
-                host_override = to_ascii(host_override)
-            components["host"] = normalize_host(host_override)
+            components["host"] = canonical_host(host_override)
         _URLMutations._reconcile_query_components(components, overrides)
 
         # Import here to avoid circular import

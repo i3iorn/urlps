@@ -16,12 +16,13 @@ from __future__ import annotations
 
 from .confusables import is_whole_script_confusable, skeleton
 from .scripts import UCD_VERSION, is_single_script_label, script_of, scripts_of
-from .uts46 import UTS46_AVAILABLE, IdnaError, to_ascii, to_unicode
+from .uts46 import UTS46_AVAILABLE, IdnaError, canonical_host, to_ascii, to_unicode
 
 __all__ = [
     "UCD_VERSION",
     "UTS46_AVAILABLE",
     "IdnaError",
+    "canonical_host",
     "is_single_script_label",
     "is_whole_script_confusable",
     "script_of",

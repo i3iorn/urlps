@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote
 
 from ._cache_config import VALIDATION_CACHE_SIZE, bounded_lru_cache
+from ._host import port_number
 from ._patterns import PATTERNS
 from .constants import (
     MAX_FRAGMENT_LENGTH,
@@ -198,9 +199,10 @@ class Validator:
             True if valid, False otherwise.
         """
         try:
-            return 0 < int(port) < 65536
-        except (TypeError, ValueError):
+            port_number(port)
+        except ValueError:
             return False
+        return True
 
     @staticmethod
     @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE)

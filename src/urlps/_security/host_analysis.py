@@ -11,6 +11,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from .._cache_config import SECURITY_CACHE_SIZE
+from .._host import strip_brackets
 from ..exceptions import ErrorCode
 from ._unicode import (
     is_single_script_label,
@@ -61,12 +62,6 @@ _ZERO_WIDTH = frozenset(
 HostFinding = tuple[ErrorCode, str, str]
 
 
-def _strip_brackets(host: str) -> str:
-    if host.startswith("[") and host.endswith("]"):
-        return host[1:-1]
-    return host
-
-
 @lru_cache(maxsize=SECURITY_CACHE_SIZE)
 def analyze_host(host: str) -> tuple[HostFinding, ...]:
     """Return the Unicode-related findings for ``host``.
@@ -76,9 +71,8 @@ def analyze_host(host: str) -> tuple[HostFinding, ...]:
     if not host:
         return ()
 
-    inner = _strip_brackets(host)
     # An IPv6 literal has no labels to analyse and no scripts to mix.
-    if inner != host:
+    if strip_brackets(host) != host:
         return ()
 
     findings: list[HostFinding] = []

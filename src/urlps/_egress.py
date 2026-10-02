@@ -25,6 +25,7 @@ import socket
 from collections.abc import Iterable
 from typing import Any
 
+from ._host import ip_literal_text
 from ._security import _canonical_host, dns_guard
 from ._security.ip_utils import AddrInfo, IpAddress
 from ._security.policy import PolicyInput, SecurityPolicy, resolve_security_policy
@@ -33,13 +34,6 @@ from .exceptions import DNSResolutionError, ErrorCode, InvalidURLError
 from .url import URL
 
 __all__ = ["create_guarded_connection", "resolve_and_validate"]
-
-
-def _bare_address(host: str) -> str:
-    """Strip IPv6 brackets and an encoded zone ID, as getaddrinfo expects."""
-    if host.startswith("[") and host.endswith("]"):
-        return host[1:-1].partition("%25")[0]
-    return host
 
 
 def _sockaddr_ip(sockaddr: tuple) -> IpAddress:
@@ -75,7 +69,7 @@ def _vetted_addrinfo(host: str, port: int, policy: SecurityPolicy, dns_timeout: 
 
     try:
         # Through the module so the resolver can be substituted in tests.
-        addr_info = dns_guard._resolve_addr_info(_bare_address(host), dns_timeout, port=port)
+        addr_info = dns_guard._resolve_addr_info(ip_literal_text(host), dns_timeout, port=port)
     except socket.gaierror as exc:
         raise DNSResolutionError(
             f"Could not resolve host: {exc}", component="host", value=host, code=ErrorCode.DNS_RESOLUTION_FAILED

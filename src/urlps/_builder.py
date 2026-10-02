@@ -10,12 +10,14 @@ from ._cache_config import (
     CACHE_MAX_VALUE_KEY_LENGTH,
     bounded_lru_cache,
 )
+from ._host import looks_like_ipv4
 from ._normalize import normalize_fragment, normalize_host, normalize_userinfo
 from ._patterns import PATTERNS
 from ._validation import Validator
 from .constants import DEFAULT_PORTS, OfficialSchemes
 from .exceptions import (
     HostValidationError,
+    InvalidURLError,
     PortValidationError,
     URLBuildError,
 )
@@ -34,6 +36,32 @@ def _encode_for_query(value: str, safe: str) -> str:
     """
     encoded = quote_plus(value, safe=safe)
     return _PERCENT_ENCODE_PATTERN.sub(lambda m: m.group(0).upper(), encoded)
+
+
+def _fast_unquote_plus(value: str) -> str:
+    """``unquote_plus`` with a fast path for the common case of nothing to decode."""
+    if "%" not in value and "+" not in value:
+        return value
+    return unquote_plus(value)
+
+
+def decode_query_pairs(query: str, *, error: type[InvalidURLError]) -> QueryPairs:
+    """Split a query string into decoded ``(key, value)`` pairs.
+
+    The single decoder for the parser and the builder; ``error`` is the
+    exception each raises for an empty key (``?=x``). A key with no ``=``
+    has the value ``None``, distinct from an empty value (``?k=``).
+    """
+    pairs: QueryPairs = []
+    for chunk in query.split("&"):
+        if not chunk:
+            continue
+        key_raw, sep, value_raw = chunk.partition("=")
+        key = _fast_unquote_plus(key_raw)
+        if not key:
+            raise error("Query keys must be non-empty.", value=chunk, component="query")
+        pairs.append((key, _fast_unquote_plus(value_raw) if sep else None))
+    return pairs
 
 
 class Builder:
@@ -207,7 +235,7 @@ class Builder:
             if not Validator.is_valid_ipv6(normalized_host):
                 raise HostValidationError("Invalid IPv6 address format.", value=original, component="host")
             return
-        if "." in normalized_host and normalized_host.replace(".", "").replace("-", "").isdigit():
+        if looks_like_ipv4(normalized_host):
             if not Validator.is_valid_ipv4(normalized_host):
                 raise HostValidationError("Invalid IPv4 address format.", value=original, component="host")
             return
@@ -281,16 +309,6 @@ class Builder:
         # Uppercase percent-encodings to canonical form using pre-compiled pattern
         return _PERCENT_ENCODE_PATTERN.sub(lambda m: m.group(0).upper(), encoded)
 
-    @staticmethod
-    def _fast_unquote_plus(value: str) -> str:
-        """Optimized URL decoding with fast-path for strings without encoding.
-
-        Performance: Skips expensive unquote_plus() for strings without % or +.
-        """
-        if "%" not in value and "+" not in value:
-            return value
-        return unquote_plus(value)
-
     def parse_query(self, query: str | None) -> QueryPairs:
         """Parse a query string into a list of key-value pairs.
 
@@ -320,18 +338,7 @@ class Builder:
         """
         if query is None or query == "":
             return []
-        pairs: QueryPairs = []
-        for chunk in query.split("&"):
-            if chunk == "":
-                continue
-            # Use partition for better performance
-            key_raw, sep, value_raw = chunk.partition("=")
-            key = self._fast_unquote_plus(key_raw)
-            if not key:
-                raise URLBuildError("Query keys must be non-empty.", value=chunk, component="query")
-            value = self._fast_unquote_plus(value_raw) if sep else None
-            pairs.append((key, value))
-        return pairs
+        return decode_query_pairs(query, error=URLBuildError)
 
     def serialize_query(self, params: QueryPairs) -> str:
         """Serialize query pairs to a query string."""

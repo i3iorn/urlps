@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import unquote, unquote_plus
+from urllib.parse import unquote
 
-from ._builder import QueryPairs
+from ._builder import QueryPairs, decode_query_pairs
 from ._cache_config import PARSER_CACHE_SIZE, bounded_lru_cache
 from ._components import ParseResult
+from ._host import is_ascii_digits, looks_like_ipv4, port_number
 from ._normalize import normalize_host, normalize_percent_encoding, normalize_userinfo
-from ._security._unicode.uts46 import IdnaError, to_ascii
+from ._security._unicode.uts46 import IdnaError, canonical_host
 from ._validation import Validator, is_valid_userinfo
 from .constants import (
     DEFAULT_PORTS,
@@ -147,18 +148,16 @@ def parse_port(candidate: str) -> int:
     Raises:
         PortValidationError: If port is non-numeric or out of valid range (1-65535)
     """
-    # isascii() too: str.isdigit() accepts any Unicode digit (fullwidth "22",
-    # U+FF12 U+FF12), which int() reads as 22 while urlsplit() rejects it --
-    # one port meaning two different things to two parsers.
-    if not candidate or not candidate.isascii() or not candidate.isdigit():
+    if not is_ascii_digits(candidate):
         raise PortValidationError(
             f"Port must be a positive integer. Received: {candidate!r}", value=candidate, component="port"
         )
-    if not Validator.is_valid_port(candidate):
+    try:
+        return port_number(candidate)
+    except ValueError:
         raise PortValidationError(
             f"Port must be between 1 and 65535. Received: {candidate}", value=candidate, component="port"
-        )
-    return int(candidate)
+        ) from None
 
 
 def parse_ipv6_host(host_candidate: str) -> tuple[str, int | None]:
@@ -183,22 +182,19 @@ def parse_regular_host(host_candidate: str) -> tuple[str, int | None]:
     host_part, sep, port_part = host_candidate.partition(":")
     if not host_part:
         raise MissingHostError("Host cannot be empty.", value=host_part, component="host")
-    if "." in host_part and host_part.replace(".", "").replace("-", "").isdigit():
+    if looks_like_ipv4(host_part):
         if not Validator.is_valid_ipv4(host_part):
             raise HostValidationError("Invalid IPv4 address format.", value=host_part, component="host")
         return normalize_host(host_part), parse_port(port_part) if sep else None
     if not Validator.is_valid_host(host_part):
         raise HostValidationError("Host contains invalid characters.", value=host_part, component="host")
-    if not host_part.isascii():
-        # Route through the one IDNA entry point (see _unicode/uts46.py) so
-        # the parser and Validator can never disagree on a host's ASCII form.
-        try:
-            ascii_host = to_ascii(host_part)
-        except IdnaError as exc:
-            raise HostValidationError(f"Unable to IDNA-encode host: {exc}", value=host_part, component="host") from exc
-    else:
-        ascii_host = host_part
-    return normalize_host(ascii_host), parse_port(port_part) if sep else None
+    # The one IDNA entry point (see _unicode/uts46.py), so the parser,
+    # derived URLs and the security checks never disagree on a host's form.
+    try:
+        host = canonical_host(host_part)
+    except IdnaError as exc:
+        raise HostValidationError(f"Unable to IDNA-encode host: {exc}", value=host_part, component="host") from exc
+    return host, parse_port(port_part) if sep else None
 
 
 def parse_host(host_candidate: str, require_host: bool = False) -> tuple[str | None, int | None]:
@@ -252,25 +248,6 @@ def normalize_path(path_candidate: str) -> str:
     return normalized
 
 
-def _fast_unquote_plus(value: str) -> str:
-    """Optimized URL decoding with fast-path for strings without encoding.
-
-    Performance: Skips expensive unquote_plus() for strings without % or +.
-    """
-    if "%" not in value and "+" not in value:
-        return value
-    return unquote_plus(value)
-
-
-def _validate_query_string_batch(query: str) -> bool:
-    """Batch validation of entire query string for control characters.
-
-    Performance: Single regex pass instead of per-parameter validation.
-    Returns True if valid, False otherwise.
-    """
-    return Validator.is_url_safe_string(query)
-
-
 def parse_query_string(query_candidate: str | None) -> tuple[str | None, QueryPairs]:
     """Parse a query string into its original form plus decoded pairs.
 
@@ -285,9 +262,6 @@ def parse_query_string(query_candidate: str | None) -> tuple[str | None, QueryPa
     Re-encoding is now performed only where the caller explicitly asks for a
     different query (see ``URL.with_query_param`` / ``canonicalize``).
 
-    Performance optimizations:
-    - Batch validation of entire query string
-    - Fast-path decoding for strings without percent-encoding
     """
     if query_candidate is None:
         return None, []
@@ -298,20 +272,10 @@ def parse_query_string(query_candidate: str | None) -> tuple[str | None, QueryPa
             f"Query exceeds maximum length of {MAX_QUERY_LENGTH}.", value=query_candidate, component="query"
         )
 
-    if not _validate_query_string_batch(query_candidate):
+    if not Validator.is_url_safe_string(query_candidate):
         raise QueryParsingError("Query string contains invalid characters.", value=query_candidate, component="query")
 
-    pairs: QueryPairs = []
-    for chunk in query_candidate.split("&"):
-        if not chunk:
-            continue
-        key_raw, sep, value_raw = chunk.partition("=")
-        key = _fast_unquote_plus(key_raw)
-        if not key:
-            raise QueryParsingError("Query keys must be non-empty.", value=chunk, component="query")
-        pairs.append((key, _fast_unquote_plus(value_raw) if sep else None))
-
-    return query_candidate, pairs
+    return query_candidate, decode_query_pairs(query_candidate, error=QueryParsingError)
 
 
 def parse_fragment_string(fragment_candidate: str | None) -> str | None:

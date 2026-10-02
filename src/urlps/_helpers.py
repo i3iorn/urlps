@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._host import is_ascii_digits, port_number
 from .exceptions import InvalidURLError
 
 
@@ -15,14 +16,11 @@ def _normalize_port(value: Any | None) -> int | None:
     """Normalize port value to int or None."""
     if value is None or value == "":
         return None
-    if isinstance(value, str):
-        if not value.isdigit():
-            raise InvalidURLError("Port must be numeric.")
-        candidate = int(value)
-    elif isinstance(value, int):
-        candidate = value
-    else:
+    if isinstance(value, str) and not is_ascii_digits(value):
+        raise InvalidURLError("Port must be numeric.")
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise InvalidURLError("Port must be an integer or numeric string.")
-    if not 0 < candidate < 65536:
-        raise InvalidURLError("Port must be between 1 and 65535.")
-    return int(candidate)
+    try:
+        return port_number(value)
+    except ValueError:
+        raise InvalidURLError("Port must be between 1 and 65535.") from None

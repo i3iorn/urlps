@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 
+from .._host import ip_literal_text
 from ..constants import (
     DEFAULT_DNS_CACHE_TTL_SECONDS,
     DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS,
@@ -35,7 +36,6 @@ from .ip_utils import (
     IpAddress,
     _check_direct_ip_safe,
     _check_resolved_ips_safe,
-    _strip_ipv6_brackets,
 )
 
 logger = logging.getLogger(__name__)
@@ -307,7 +307,7 @@ def _validate_host(host: str) -> str | None:
     stripped = host.strip()
     if not stripped:
         return None
-    return _strip_ipv6_brackets(stripped)
+    return ip_literal_text(stripped)
 
 
 def _resolve_addr_info(
