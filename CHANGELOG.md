@@ -2,6 +2,15 @@
 
 All notable changes to `urlps` are documented here.
 
+## [1.2.1](https://github.com/i3iorn/urlps/compare/v1.2.0...v1.2.1) (2026-10-02)
+
+
+### Fixed
+
+* **compat:** keep 1.2.0's limiter cache and ip_is_permitted APIs working ([41cc9c6](https://github.com/i3iorn/urlps/commit/41cc9c6abbeeed5cb1ee3f05a0a341be4a9b416c))
+* **compat:** keep 1.2.0's limiter cache and ip_is_permitted APIs working ([4de0fb8](https://github.com/i3iorn/urlps/commit/4de0fb8e5f1adfeb2abf6dafe11d9265adb9e537))
+* **unicode:** regenerate the script table for the regex 2026.9.29 pin ([1afe2e6](https://github.com/i3iorn/urlps/commit/1afe2e6d0b7e691e2130fd94dc0f5610f9a4bd79))
+
 ## [1.2.0](https://github.com/i3iorn/urlps/compare/v1.1.4...v1.2.0) (2026-10-02)
 
 
