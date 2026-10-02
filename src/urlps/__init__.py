@@ -68,7 +68,7 @@ Performance:
 from __future__ import annotations
 
 # x-release-please-start-version
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 # x-release-please-end
 
 from ._audit import AuditCallback, AuditConfig, AuditEventCallback, AuditManager
