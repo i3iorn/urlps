@@ -482,12 +482,15 @@ def check_dns_rebinding_detailed(
         return False, ErrorCode.DNS_RATE_LIMITED
 
     effective_deadline = DEFAULT_DNS_DEADLINE_SECONDS if deadline_seconds is None else deadline_seconds
-    deadline = time.monotonic() + max(0.0, effective_deadline)
+    budget = max(0.0, effective_deadline)
+    deadline = time.monotonic() + budget
     last_error: ErrorCode | None = None
     max_attempts = max(1, retries + 1)
 
     for attempt_index in range(max_attempts):
-        remaining = deadline - time.monotonic()
+        # Clamp to the budget: on a coarse clock (Windows) the float
+        # arithmetic can otherwise hand the first attempt budget + epsilon.
+        remaining = min(budget, deadline - time.monotonic())
         if remaining <= 0:
             last_error = last_error or ErrorCode.DNS_CONNECTION_FAILED
             break

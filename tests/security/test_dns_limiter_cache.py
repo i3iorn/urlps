@@ -208,6 +208,19 @@ def test_deadline_bounds_total_time_across_retries() -> None:
     assert resolver.call_args_list[0].args[1] <= 0.3
 
 
+def test_attempt_timeout_never_exceeds_the_deadline_on_a_coarse_clock() -> None:
+    """A frozen clock (as on Windows) must not let float error stretch the first attempt.
+
+    With monotonic() fixed at 1.0, ``(1.0 + 0.3) - 1.0`` is 0.30000000000000004.
+    """
+    resolver = MagicMock(side_effect=socket.gaierror)
+    with patch(RESOLVER, resolver), patch("urlps._security.dns_guard.time.monotonic", return_value=1.0):
+        check_dns_rebinding_detailed(
+            "coarse-clock.example", timeout_seconds=2.0, retries=0, enforce_rate_limit=False, deadline_seconds=0.3
+        )
+    assert resolver.call_args_list[0].args[1] <= 0.3
+
+
 def test_policy_deadline_reaches_the_dns_check() -> None:
     policy = SecurityPolicy(name="custom", check_dns=True, dns_deadline_seconds=1.25)
     with patch("urlps._security.check_dns_rebinding_detailed", return_value=(True, None)) as check:
