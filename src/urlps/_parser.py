@@ -10,6 +10,7 @@ from ._cache_config import PARSER_CACHE_SIZE, bounded_lru_cache
 from ._components import ParseResult
 from ._host import is_ascii_digits, looks_like_ipv4, port_number
 from ._normalize import normalize_host, normalize_percent_encoding, normalize_userinfo
+from ._resolve import normalize_dot_segments
 from ._security._unicode.uts46 import IdnaError, canonical_host
 from ._validation import Validator, is_valid_userinfo
 from .constants import (
@@ -215,7 +216,13 @@ def parse_host(host_candidate: str, require_host: bool = False) -> tuple[str | N
 
 @bounded_lru_cache(maxsize=PARSER_CACHE_SIZE)
 def normalize_path(path_candidate: str) -> str:
-    """Normalize URL path by resolving . and .. segments.
+    """RFC 3986 §6.2.2 path normalization: percent-encoding, then dot segments.
+
+    In that order, as §6.2.2 lists them, so ``%2E%2E`` is removed as the
+    ``..`` it denotes rather than decoded into one afterwards (which stored
+    ``/a/../b`` while ``str(url)`` said ``/b``). The dot-segment step is the
+    RFC algorithm shared with the builder and :func:`urlps.join`; it keeps
+    empty segments (``/a//b``) and the trailing slash ``/a/b/..`` leaves.
 
     Performance: LRU cached to avoid re-normalizing common paths.
     """
@@ -227,25 +234,7 @@ def normalize_path(path_candidate: str) -> str:
         raise URLParseError(
             f"Path exceeds maximum length of {MAX_PATH_LENGTH}.", value=path_candidate, component="path"
         )
-    absolute = path_candidate.startswith("/")
-    trailing = path_candidate.endswith("/") or path_candidate.endswith("/.") or path_candidate.endswith("/./")
-    segments: list[str] = []
-    for seg in path_candidate.split("/"):
-        if not seg or seg == ".":
-            continue
-        elif seg == "..":
-            if segments:
-                segments.pop()
-        else:
-            segments.append(seg)
-    if not segments:
-        return "/" if absolute else ""
-    normalized = "/".join(segments)
-    if absolute:
-        normalized = "/" + normalized
-    if trailing and normalized != "/":
-        normalized += "/"
-    return normalized
+    return normalize_dot_segments(normalize_percent_encoding(path_candidate))
 
 
 def parse_query_string(query_candidate: str | None) -> tuple[str | None, QueryPairs]:
@@ -330,7 +319,7 @@ def parse_url(url: str, allow_custom_scheme: bool = False) -> ParseResult:
     require_host = scheme is not None and scheme.lower() != "file" and has_authority
     host, port = parse_host(host_candidate, require_host=require_host)
     port = apply_port_defaults(scheme, port, host)
-    path = normalize_percent_encoding(normalize_path(path_candidate))
+    path = normalize_path(path_candidate)
     if host and not path:
         path = "/"
     query, query_pairs = parse_query_string(query_str)

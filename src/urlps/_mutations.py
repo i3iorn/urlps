@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from ._helpers import _normalize_port
 from ._normalize import normalize_percent_encoding, normalize_userinfo
+from ._parser import normalize_path
 from ._security._unicode.uts46 import canonical_host
 from .constants import DEFAULT_PORTS, OFFICIAL_SCHEMES
 from .exceptions import InvalidURLError
@@ -80,6 +81,10 @@ class _URLMutations:
             components["query"] = normalize_percent_encoding(overrides["query"])
         if overrides.get("fragment") is not None:
             components["fragment"] = normalize_percent_encoding(overrides["fragment"])
+        if isinstance(overrides.get("path"), str):
+            # Exactly the parser's path normalization: .path, str(url) and a
+            # re-parse of it then agree ("/a/../b" is "/b" in all three).
+            components["path"] = normalize_path(overrides["path"])
 
         # copy() does not go through the parser, so the RFC 3986 §6.2.2
         # host normalization applied there has to be re-applied here --
@@ -128,8 +133,9 @@ class _URLMutations:
         when it does not, the security checks validated one URL and the
         caller sends another. What decides the destination is the scheme and
         authority, plus the query not swallowing a "#". The path cannot move
-        either (the builder escapes "?" and "#" in it and collapses a leading
-        "//"), and the fragment comes last, so they are left out -- which also
+        either (the builder escapes "?" and "#" in it, and a "//" path is only
+        ever emitted after an authority or behind a "/." prefix), and the
+        fragment comes last, so they are left out -- which also
         keeps a long percent-encoded path or fragment, longer serialized than
         the parse limits allow, from failing a derivation. Scheme-less URLs
         are skipped: they serialize without "//" by design (``build()``).

@@ -11,8 +11,9 @@ from ._cache_config import (
     bounded_lru_cache,
 )
 from ._host import looks_like_ipv4
-from ._normalize import normalize_fragment, normalize_host, normalize_userinfo
+from ._normalize import normalize_fragment, normalize_host, normalize_percent_encoding, normalize_userinfo
 from ._patterns import PATTERNS
+from ._resolve import normalize_dot_segments
 from ._validation import Validator
 from .constants import DEFAULT_PORTS, OfficialSchemes
 from .exceptions import (
@@ -154,6 +155,11 @@ class Builder:
         elif scheme and scheme.lower() not in {OfficialSchemes.FILE.value}:
             raise URLBuildError("Host is required when building absolute URLs.")
 
+        if not netloc and not scheme and normalized_path.startswith("//"):
+            # RFC 3986 §3.3: without an authority a path cannot begin with
+            # "//" -- it would be read back as one. "/." is the RFC-neutral
+            # prefix: dot-segment removal turns it back into the same path.
+            normalized_path = "/." + normalized_path
         url += normalized_path
 
         if serialized_query is not None:
@@ -245,12 +251,9 @@ class Builder:
     def normalize_path(self, path: str | None) -> str:
         """Normalize a URL path according to RFC 3986.
 
-        Performs the following normalizations:
-        - Resolves '.' (current directory) segments
-        - Resolves '..' (parent directory) segments
-        - Percent-encodes characters that need encoding
-        - Preserves trailing slashes when appropriate
-        - Normalizes percent-encoding to uppercase
+        Percent-encodes characters that may not appear raw, then applies the
+        parser's RFC 3986 §6.2.2 normalization: unreserved escapes decoded,
+        hex upper-cased, then dot segments removed. Empty segments are kept.
 
         Args:
             path: The path string to normalize, or None/empty string.
@@ -267,35 +270,16 @@ class Builder:
             '/a/b'
             >>> builder.normalize_path('/a/b/')
             '/a/b/'
+            >>> builder.normalize_path('/a/b/..')
+            '/a/'
         """
         if path is None or path == "":
             return ""
-        absolute = path.startswith("/")
-        trailing_slash = path.endswith("/")
-
-        # Check if path ends with "." or "./" which should result in trailing slash
-        ends_with_dot_segment = path.endswith("/.") or path.endswith("/./")
-
-        segments: list[str] = []
-        for segment in path.split("/"):
-            if not segment or segment == ".":
-                continue
-            elif segment == "..":
-                if segments:
-                    segments.pop()
-            else:
-                segments.append(self.percent_encode(segment, safe=self.PATH_SAFE))
-
-        if not segments:
-            return "/" if absolute else ""
-
-        normalized = "/".join(segments)
-        if absolute:
-            normalized = "/" + normalized
-        # Preserve trailing slash when originally present, or when path ends with "." segment
-        if (trailing_slash or ends_with_dot_segment) and normalized != "/":
-            normalized += "/"
-        return normalized
+        # Encode what may not appear raw, then exactly the parser's
+        # normalization (escapes, then dot segments), so a built URL and the
+        # same URL parsed from a string are spelled identically.
+        encoded = "/".join(self.percent_encode(segment, safe=self.PATH_SAFE) for segment in path.split("/"))
+        return normalize_dot_segments(normalize_percent_encoding(encoded))
 
     def percent_encode(self, value: str, *, safe: str) -> str:
         # Use urllib.quote to percent-encode then normalize percent-encoding to uppercase hex

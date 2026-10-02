@@ -160,11 +160,10 @@ class TestPathSegmentRFC3986:
     """RFC 3986 § 3.3: Path Component"""
 
     def test_path_empty_segment(self):
-        """Empty path segments are allowed (creates //)"""
+        """Empty path segments are significant and kept, as RFC 3986 requires."""
         url = parse_url("http://example.com/a//b")
-        # Empty segments between slashes should be normalized
-        # RFC 3986 doesn't require removing them, but our implementation does
-        assert "//" not in url.path or url.path == "/a/b"
+        assert url.path == "/a//b"
+        assert str(url) == "http://example.com/a//b"
 
     def test_path_dot_segment(self):
         """Single dot represents current directory"""

@@ -191,7 +191,8 @@ def test_single_character_scheme() -> None:
 def test_parse_path_with_multiple_consecutive_slashes() -> None:
     parser = Parser()
     parsed = parser.parse("http://example.com//a///b/c")
-    assert parsed["path"] == "/a/b/c"
+    # RFC 3986: empty segments are significant and kept (B5).
+    assert parsed["path"] == "//a///b/c"
 
 
 def test_parse_path_with_only_dots() -> None:

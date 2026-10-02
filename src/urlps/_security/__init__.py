@@ -128,21 +128,24 @@ def _finding(severity: str, code: ErrorCode, message: str, component: str | None
     )
 
 
-class ParsedAuthority(NamedTuple):
-    """The authority exactly as the parser produced it.
+class ParsedComponents(NamedTuple):
+    """The components exactly as the parser produced them.
 
-    This is what ``URL.host``/``URL.port``/``URL.userinfo`` expose and what
-    ``str(url)`` serializes, so it -- not a re-extraction from the raw string
-    -- is what the host- and port-based checks must validate. Validating a
-    second, independently parsed copy of the host is a parser differential:
+    This is what ``URL.host``/``URL.port``/``URL.userinfo``/``URL.path``
+    expose and what ``str(url)`` serializes, so it -- not a re-extraction
+    from the raw string -- is what the checks must validate. Validating a
+    second, independently parsed copy is a parser differential:
     ``http://169.254.169.254?`` and ``127.0.0.1`` written with ideographic
     full stops (U+3002) both passed the SSRF check, while the parser handed
-    the caller a metadata/loopback host.
+    the caller a metadata/loopback host. The path matters for the same
+    reason: ``/.//evil.com`` has no leading ``//`` as written, but
+    normalizes to ``//evil.com``, a protocol-relative redirect target.
     """
 
     host: str | None
     port: int | None
     userinfo: str | None
+    path: str | None = None
 
 
 def _canonical_host(raw_host: str) -> str:
@@ -170,7 +173,7 @@ def collect_security_findings(
     policy: PolicyInput = None,
     check_dns: bool | None = None,
     check_phishing: bool | None = None,
-    parsed: ParsedAuthority | None = None,
+    parsed: ParsedComponents | None = None,
 ) -> list[SecurityFinding]:
     """Collect policy-aware security findings without raising exceptions.
 
@@ -275,15 +278,17 @@ def collect_security_findings(
                     findings.append(_finding(severity, code, message, "host"))
 
     # --- Path-related checks ---
-    if path:
-        if effective_policy.enforce_path_traversal and has_path_traversal(path):
-            findings.append(
-                _finding("critical", ErrorCode.PATH_TRAVERSAL, "URL path contains path traversal patterns.", "path")
-            )
-        if effective_policy.enforce_open_redirect and is_open_redirect_risk(path):
-            findings.append(
-                _finding("major", ErrorCode.OPEN_REDIRECT, "URL path contains open redirect risk patterns.", "path")
-            )
+    # The raw path (what the heuristics were written for) and the parsed
+    # path (what the caller sees and sends) -- see ParsedComponents.
+    path_spellings = tuple(dict.fromkeys(p for p in (path, parsed.path if parsed is not None else None) if p))
+    if effective_policy.enforce_path_traversal and any(has_path_traversal(p) for p in path_spellings):
+        findings.append(
+            _finding("critical", ErrorCode.PATH_TRAVERSAL, "URL path contains path traversal patterns.", "path")
+        )
+    if effective_policy.enforce_open_redirect and any(is_open_redirect_risk(p) for p in path_spellings):
+        findings.append(
+            _finding("major", ErrorCode.OPEN_REDIRECT, "URL path contains open redirect risk patterns.", "path")
+        )
 
     # --- URL structural checks ---
     if effective_policy.enforce_parser_confusion and has_parser_confusion(normalized_url):
@@ -413,7 +418,7 @@ def validate_url_security(
     check_dns: bool | None = None,
     check_phishing: bool | None = None,
     raise_on_error: bool = True,
-    parsed: ParsedAuthority | None = None,
+    parsed: ParsedComponents | None = None,
     debug: bool = False,
 ) -> list[SecurityFinding]:
     """Run policy-based security validation, raising on the first blocking finding.
@@ -497,7 +502,7 @@ def clear_caches() -> dict:
 __all__ = [
     "DNSRateLimiter",
     "DNSRateLimiterConfig",
-    "ParsedAuthority",
+    "ParsedComponents",
     "PolicyInput",
     "SecurityPolicy",
     "SecurityPolicyError",
