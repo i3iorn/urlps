@@ -26,12 +26,29 @@ rejected. Each row says how to get the old behaviour back on purpose.
 | `check_phishing=True` also flags subdomains of listed domains, refreshes the list daily, and keeps the previous list when a refresh fails | Anyone relying on exact-match only | Nothing, unless a listed parent domain covers hosts you trust. `phishing_fail_closed=True` on the policy rejects when the feed is unavailable. |
 | Caches do not retain keys longer than `URLPS_CACHE_MAX_KEY_LENGTH` (1024) / `URLPS_CACHE_MAX_VALUE_KEY_LENGTH` (128) | Nobody (results are identical) | Raise them if profiling shows misses on long, repeated URLs. |
 | `urlps check` escapes non-printable characters in its output | Scripts parsing raw control characters out of the CLI's stderr | Nothing reasonable depends on this. |
+| Paths are normalized exactly as RFC 3986 says: empty segments are kept (`/a//b` is no longer `/a/b`), `/a/b/..` is `/a/` (was `/a`), and `%2E%2E` is decoded *before* dot segments are removed (`/a/%2e%2e/b` is `/b`, where `.path` used to say `/a/../b` while `str()` said `/b`) | Anyone relying on `//` being collapsed | Collapse it yourself if your server treats `//` as `/`. Keeping it is what signed URLs and S3-style keys need. A path that normalizes to a leading `//` is reported as an open redirect under `strict`/`balanced`. |
+| Derived URLs are normalized exactly like a parse: `with_path("/a/../b").path` is `/b`, and `with_port(None)` leaves the scheme's default port (`.port == 443` for https, as for `parse_url("https://h/")`), not `None` | Anyone reading `.path`/`.port` back after `with_*()` | `str(url)` is unchanged. Use `effective_port` if you need the port either way. |
+| A relative path after an authority gets its leading `/`: `with_path("x")` on `https://h/` is `https://h/x`; `build("https", "h", path="api")` is `https://h/api` | Nobody legitimate | Nothing. Before, the path ran into the authority (`https://hx`) and changed the host. |
+| Clearing the host of an absolute URL (`with_host("")`) raises `MissingHostError`, as a parse does; `with_port()` on a scheme that takes no port (`file`) raises | Anyone relying on the later serialization error | Catch `InvalidURLError` as before. |
+| `with_port()`/`Validator.is_valid_port()` reject `True`, fullwidth digits, `" 80"` and `80.0` | Nobody legitimate | Pass an `int`. |
+| `UnsupportedSchemeError` is now a `URLParseError` too, and is what a disallowed scheme raises everywhere (`javascript:` raised a plain `URLParseError` in 1.1) | Nobody: `except URLParseError` still catches it | Tell the cases apart with `exc.code` (`unsafe_scheme`, `unsupported_scheme`). |
+| A custom scheme must be well-formed RFC 3986 even with `allow_custom_scheme=True` (`a_b://` is rejected) | Anyone using non-RFC schemes | Use a well-formed scheme. |
+| Under `local` (and `enforce_ssrf=False`), the `check_dns=True` check accepts a host that resolves to a private address, as `create_guarded_connection()` already did and as a private literal already was; metadata and link-local stay rejected | Anyone using `local` + `check_dns` to keep internal names out | Use `strict`, or `denied_addresses=[...]`. |
+| `parse_url_local(..., policy=..., check_dns=...)` honours `check_dns` (it was ignored whenever a policy was passed) | Anyone passing both | Drop the argument if you relied on it being ignored. |
+| The query length limit counts decoded characters, like the path's | Nobody (a re-serialized query must still parse) | Nothing. |
+| `hash(url)` hashes the serialized URL, so equal URLs hash equal (two URLs serializing identically used to hash apart) and a URL hashes like its string | Anyone persisting `hash(url)` | Hashes were never stable across processes. |
 
 ### Renamed and deprecated
 
 | Old | New | Status |
 |---|---|---|
 | `dns_fail_open_on_connect_error=` on the policy presets | nothing (it governed the removed verification connect) | Passing it emits `DeprecationWarning` and has no effect. Removed in 2.0. |
+| `URL(..., parser=Parser())` | `URL(..., allow_custom_scheme=...)` (all a parser was ever used for) | Emits `DeprecationWarning`; still works. Removed in 2.0. |
+| `URL(..., builder=Builder())` | nothing | Emits `DeprecationWarning`; still works. Removed in 2.0. |
+| `urlps._security.has_mixed_scripts()`, `get_canonical_url()` | `host_analysis.analyze_host()`; `str(parse_url(url).canonicalize())` | Emit `DeprecationWarning`. Removed in 2.0. |
+| `Builder.compose_secure()`, `Builder.merge_params()`, `Validator.is_valid_path()`/`is_valid_query_param()`/`is_standard_port()`, `urlps.constants.STANDARD_PORTS`, `_components.URLComponents` | `build_secure()`; nothing | Removed: unused internals (private modules, except `STANDARD_PORTS`). |
+| The redaction helpers in `urlps._security.url_checks` | `urlps._redaction` | Re-exported from the old place. |
+| `urlps._security._unicode` | `urlps._unicode` | Private module, moved. |
 
 ### New
 
@@ -43,6 +60,13 @@ rejected. Each row says how to get the old behaviour back on purpose.
 | `DNSResolutionCache`/`DNSCacheConfig(ttl_seconds=, negative_ttl_seconds=, max_hosts=)`, `SecurityPolicy.dns_deadline_seconds`, `DNSRateLimitError.retry_after` | DNS check tuning. |
 | `SecurityPolicy.phishing_fail_closed`, `URLPS_PHISHING_DATABASE_REFRESH_SECONDS`, `URLPS_PHISHING_DATABASE_SHA256` | Phishing feed behaviour. |
 | `AuditConfig(sensitive_keys=...)` | Extra query-key fragments to redact in audit logs. |
+| `SecurityServices(resolver=, resolution_cache=, dns_rate_limiter=, phishing_feed=)`, accepted as `services=` by every entry point and by `URL()` | Your own resolver, cache, limiter or phishing feed -- per tenant, a mirror, or fakes in tests -- instead of the process-global ones. |
+| `PhishingDatabaseManager(PhishingFeedConfig(url=, sha256=, refresh_seconds=, ...), fetch=, clock=)`, the `PhishingFeed` protocol (`lookup(host) -> bool \| None`) | A configurable or custom phishing feed. |
+| `SecurityPolicy(allowed_schemes={...}, allow_custom_scheme=...)` | The scheme allowlist as policy: narrow it (`{"https"}`), widen it, and have `validate(policy=...)` and derived URLs follow it. |
+| Every preset takes any field as an override: `SecurityPolicy.strict(dns_deadline_seconds=2.0)` | Tuning a preset without constructing the whole policy. |
+| `audit=AuditManager(...)` on every entry point | Share one manager and read its `get_failure_metrics()`. |
+| `URL(..., allow_custom_scheme=True)`, `URL.security_policy`, `build_secure(..., allow_custom_scheme=True)` | Parity with `parse_url()`. |
+| `SecurityPolicy.permits_address(ip)` | The one rule both the DNS check and `create_guarded_connection()` apply to an address. |
 
 ## 1.0.x → 1.1.0
 
