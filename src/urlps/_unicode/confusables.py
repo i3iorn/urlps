@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import unicodedata
 
-from ..._cache_config import SECURITY_CACHE_SIZE, lru_cache
+from .._cache_config import SECURITY_CACHE_SIZE, lru_cache
 from .scripts import scripts_of
 
 __all__ = ["is_whole_script_confusable", "skeleton"]

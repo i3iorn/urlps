@@ -1,4 +1,4 @@
-"""Coverage for the stdlib IDNA fallback path in _security/_unicode/uts46.py.
+"""Coverage for the stdlib IDNA fallback path in _unicode/uts46.py.
 
 These branches only run when the optional ``idna`` package is absent, which
 this environment installs. Simulate that by patching UTS46_AVAILABLE off.
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from urlps._security._unicode import uts46
+from urlps._unicode import uts46
 
 
 @pytest.fixture(autouse=True)

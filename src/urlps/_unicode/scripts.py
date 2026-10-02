@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 
-from ..._cache_config import SECURITY_CACHE_SIZE, lru_cache
+from .._cache_config import SECURITY_CACHE_SIZE, lru_cache
 from ._tables import (
     _RANGE_ENDS,
     _RANGE_SCRIPTS,

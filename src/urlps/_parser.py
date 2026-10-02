@@ -13,7 +13,7 @@ from ._components import ParseResult, URLParts
 from ._host import is_ascii_digits, looks_like_ipv4, port_number
 from ._normalize import normalize_host, normalize_percent_encoding, normalize_userinfo
 from ._resolve import normalize_dot_segments
-from ._security._unicode.uts46 import IdnaError, canonical_host
+from ._unicode.uts46 import IdnaError, canonical_host
 from ._validation import Validator, is_valid_userinfo, scheme_rejection
 from .constants import (
     DEFAULT_PORTS,

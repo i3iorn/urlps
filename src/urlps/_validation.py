@@ -30,7 +30,7 @@ from ._cache_config import VALIDATION_CACHE_SIZE, bounded_lru_cache, cache_info,
 from ._cache_config import clear_caches as clear_registered_caches
 from ._host import port_number
 from ._patterns import PATTERNS
-from ._security._unicode.uts46 import to_ascii
+from ._unicode.uts46 import to_ascii
 from .constants import (
     MAX_FRAGMENT_LENGTH,
     MAX_HOST_LENGTH,

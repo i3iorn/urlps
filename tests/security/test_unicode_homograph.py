@@ -12,7 +12,7 @@ import pytest
 
 import urlps
 from urlps import ErrorCode, SecurityPolicy, parse_url
-from urlps._security._unicode import (
+from urlps._unicode import (
     is_single_script_label,
     is_whole_script_confusable,
     script_of,

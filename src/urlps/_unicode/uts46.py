@@ -21,8 +21,8 @@ from __future__ import annotations
 
 import warnings
 
-from ..._cache_config import VALIDATION_CACHE_SIZE, lru_cache
-from ..._normalize import normalize_host
+from .._cache_config import VALIDATION_CACHE_SIZE, lru_cache
+from .._normalize import normalize_host
 
 __all__ = [
     "UTS46_AVAILABLE",

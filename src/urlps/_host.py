@@ -9,7 +9,7 @@ stripper kept the zone ID another dropped. A rule that decides what a host
 Bottom layer: imports nothing from the rest of the package, so anything
 (including :mod:`urlps._security`) can use it without an import cycle. The
 IDNA-aware ``canonical_host`` lives next to the IDNA encoder in
-:mod:`urlps._security._unicode.uts46` for the same reason.
+:mod:`urlps._unicode.uts46` for the same reason.
 """
 
 from __future__ import annotations

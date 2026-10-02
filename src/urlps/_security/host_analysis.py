@@ -1,6 +1,6 @@
 """Unicode-aware host findings: mixed scripts, confusables, invisible characters.
 
-Policy-facing layer over :mod:`urlps._security._unicode`. Punycode is ASCII,
+Policy-facing layer over :mod:`urlps._unicode`. Punycode is ASCII,
 and homograph attacks are delivered A-label-encoded (that is what actually
 goes on the wire), so everything here decodes Punycode *first*, then
 analyses per label -- never on the raw ASCII form.
@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from .._cache_config import SECURITY_CACHE_SIZE, lru_cache
 from .._host import strip_brackets
-from ..exceptions import ErrorCode
-from ._unicode import (
+from .._unicode import (
     is_single_script_label,
     is_whole_script_confusable,
     to_unicode,
 )
+from ..exceptions import ErrorCode
 
 __all__ = [
     "HostFinding",

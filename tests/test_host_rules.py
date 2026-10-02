@@ -9,7 +9,7 @@ from urlps._builder import Builder, decode_query_pairs
 from urlps._helpers import _normalize_port
 from urlps._host import ip_literal_text, is_ascii_digits, looks_like_ipv4, port_number, strip_brackets
 from urlps._parser import parse_port
-from urlps._security._unicode import IdnaError, canonical_host
+from urlps._unicode import IdnaError, canonical_host
 from urlps._validation import Validator
 from urlps.exceptions import QueryParsingError, URLBuildError
 

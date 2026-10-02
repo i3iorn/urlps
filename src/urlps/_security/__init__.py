@@ -9,6 +9,7 @@ from .._cache_config import cache_info
 from .._cache_config import clear_caches as clear_registered_caches
 from .._components import SecurityFinding
 from .._redaction import redact_component, redact_url_for_logs
+from .._unicode import canonical_host
 from .._validation import scheme_rejection
 from ..exceptions import (
     DNSConnectionError,
@@ -19,7 +20,6 @@ from ..exceptions import (
     SecurityPolicyError,
     UnsupportedSchemeError,
 )
-from ._unicode import canonical_host
 from .dns_guard import (
     DNSCacheConfig,
     DNSCheckOptions,

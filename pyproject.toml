@@ -61,11 +61,13 @@ dev = [
     # end to end. urlps itself never imports urllib3.
     "urllib3>=2.0",
     # Generator-only: tools/gen_unicode_tables.py reads UCD Script data from
-    # regex to produce src/urlps/_security/_unicode/_tables.py, which is checked
+    # regex to produce src/urlps/_unicode/_tables.py, which is checked
     # in. urlps itself never imports regex at runtime. Pinned exactly (not
     # >=) because newer regex releases ship newer UCD data, which changes the
     # generated table and fails the CI freshness check non-deterministically.
     "regex==2026.7.19",
+    # CI-only: lint-imports checks the module layering contract below.
+    "import-linter>=2.11",
 ]
 
 [project.urls]
@@ -174,4 +176,31 @@ exclude_lines = [
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
+]
+
+# Module layering (docs/architecture.md), enforced in CI by `lint-imports`.
+# Higher layers may import lower ones, never the reverse, directly or through
+# a chain; modules sharing a line ("a | b") must not import each other.
+[tool.importlinter]
+root_package = "urlps"
+# Annotation-only imports (under TYPE_CHECKING) are not runtime dependencies.
+exclude_type_checking_imports = true
+
+[[tool.importlinter.contracts]]
+name = "urlps module layers"
+type = "layers"
+containers = ["urlps"]
+layers = [
+    "_cli",
+    "_entrypoints | _egress",
+    "url",
+    "_mutations | _serialization | _audit",
+    "_security",
+    "_parser",
+    "_builder",
+    "_validation",
+    "_unicode | _relative | _diagnostics",
+    "_normalize | _resolve | _redaction | _helpers",
+    "_host | _components | _cache_config | _patterns",
+    "constants | exceptions",
 ]

@@ -25,8 +25,8 @@ from dataclasses import dataclass
 
 from .._host import strip_brackets
 from .._patterns import PATTERNS
+from .._unicode import canonical_host
 from ..exceptions import SecurityPolicyError
-from ._unicode import canonical_host
 from .ip_utils import IpAddress, IpNetwork, _resolve_host_to_ip, embedded_ipv4, in_networks
 
 __all__ = ["NO_RULES", "AddressList", "AddressRule"]
