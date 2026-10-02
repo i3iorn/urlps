@@ -6,7 +6,7 @@ import pytest
 
 from urlps import parse_url
 from urlps._validation import Validator, _URLValidation
-from urlps.exceptions import InvalidURLError
+from urlps.exceptions import FragmentEncodingError, MissingHostError
 
 
 def test_is_valid_host_rejects_oversized_ascii_form(monkeypatch):
@@ -22,10 +22,12 @@ def test_is_valid_ipv4_rejects_wrong_regex_shape():
 
 def test_with_fragment_override_rejects_invalid_fragment():
     url = parse_url("https://example.com/")
-    with pytest.raises(InvalidURLError, match="Invalid fragment"):
+    with pytest.raises(FragmentEncodingError, match="invalid characters"):
         url.with_fragment("bad fragment with spaces and \x00 control char")
 
 
-def test_empty_host_override_is_valid():
-    """Clearing the host is allowed at the validation level; compose() enforces the rest."""
-    assert _URLValidation._is_valid_host_override("") is True
+def test_clearing_the_host_of_an_absolute_url_is_rejected_like_parsing():
+    url = parse_url("https://example.com/")
+    with pytest.raises(MissingHostError):
+        url.with_host("")
+    _URLValidation.validate_copy_overrides({"host": ""})  # the type check alone accepts it

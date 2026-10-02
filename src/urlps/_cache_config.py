@@ -107,8 +107,36 @@ class BoundedLRUCache(Protocol[P, R]):
     def cache_parameters(self) -> Any: ...
 
 
+#: Every cache in the package, by diagnostics group ("parser", "validation",
+#: "security", "builder") and name. The decorators below register what they
+#: wrap, so a new cache is reported and cleared by urlps.get_cache_info() /
+#: clear_all_caches() without anyone remembering to list it.
+_REGISTRY: dict[str, dict[str, Any]] = {}
+
+
+def _register(cached: Any, func: Callable[..., Any], group: str | None, name: str | None) -> None:
+    if group is None:
+        return
+    # First registration wins: reloading a module (as the IDNA fallback test
+    # does) must not swap in a function nobody else holds.
+    _REGISTRY.setdefault(group, {}).setdefault(name or func.__name__, cached)
+
+
+def lru_cache(
+    maxsize: int, *, group: str | None = None, name: str | None = None
+) -> Callable[[Callable[P, R]], BoundedLRUCache[P, R]]:
+    """``functools.lru_cache``, registered for diagnostics under ``group``."""
+
+    def decorator(func: Callable[P, R]) -> BoundedLRUCache[P, R]:
+        cached: Any = functools.lru_cache(maxsize=maxsize)(func)
+        _register(cached, func, group, name)
+        return cast(BoundedLRUCache[P, R], cached)
+
+    return decorator
+
+
 def bounded_lru_cache(
-    maxsize: int, *, max_key_length: int = CACHE_MAX_KEY_LENGTH
+    maxsize: int, *, max_key_length: int = CACHE_MAX_KEY_LENGTH, group: str | None = None, name: str | None = None
 ) -> Callable[[Callable[P, R]], BoundedLRUCache[P, R]]:
     """``functools.lru_cache`` that skips caching when the key argument is too long.
 
@@ -116,6 +144,7 @@ def bounded_lru_cache(
     (a URL, host, path, label or value); the others are flags or short
     constants. Only that argument is checked, which keeps the per-call cost
     to one length test -- these caches sit on the hot path of every parse.
+    Registered for diagnostics under ``group``.
     """
 
     def decorator(func: Callable[P, R]) -> BoundedLRUCache[P, R]:
@@ -131,6 +160,26 @@ def bounded_lru_cache(
         wrapper.cache_info = cached.cache_info  # type: ignore[attr-defined]
         wrapper.cache_clear = cached.cache_clear  # type: ignore[attr-defined]
         wrapper.cache_parameters = cached.cache_parameters  # type: ignore[attr-defined]
+        _register(wrapper, func, group, name)
         return cast(BoundedLRUCache[P, R], wrapper)
 
     return decorator
+
+
+def cache_info(group: str) -> dict[str, dict[str, Any]]:
+    """Hits, misses, maxsize and current size of every registered cache in ``group``."""
+    return {name: cached.cache_info()._asdict() for name, cached in _REGISTRY.get(group, {}).items()}
+
+
+def clear_caches(group: str) -> dict[str, int]:
+    """Clear every registered cache in ``group``; return their previous sizes."""
+    previous: dict[str, int] = {}
+    for name, cached in _REGISTRY.get(group, {}).items():
+        previous[name] = cached.cache_info().currsize
+        cached.cache_clear()
+    return previous
+
+
+def cache_groups() -> tuple[str, ...]:
+    """The registered groups, in registration order."""
+    return tuple(_REGISTRY)

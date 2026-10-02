@@ -119,6 +119,27 @@ def remove_dot_segments(path: str) -> str:
     return "".join(output_segments)
 
 
+def normalize_dot_segments(path: str) -> str:
+    """RFC 3986 §6.2.2.3 path segment normalization, for any path.
+
+    The single dot-segment algorithm for the parser, the builder and
+    reference resolution. An absolute path goes straight through
+    :func:`remove_dot_segments`. A relative path stays relative: it is
+    resolved as if rooted and the root is removed again, so ``..`` can
+    never climb above where it started and ``a/..`` is ``""`` (the raw
+    algorithm would turn it into the absolute ``/``).
+
+    Empty segments are kept: ``/a//b`` names a different resource from
+    ``/a/b`` for many servers (S3 keys, signed URLs), so they are not dot
+    segments to remove.
+    """
+    if not path:
+        return ""
+    if path.startswith("/"):
+        return remove_dot_segments(path)
+    return remove_dot_segments("/" + path)[1:]
+
+
 def merge_paths(base_authority: str | None, base_path: str, reference_path: str) -> str:
     """Merge a relative reference path onto a base path (RFC 3986 Section 5.2.3)."""
     if base_authority is not None and base_path == "":

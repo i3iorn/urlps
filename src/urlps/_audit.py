@@ -12,7 +12,7 @@ from threading import Lock
 from time import time
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ._security import redact_url_for_logs
+from ._redaction import redact_url_for_logs
 
 if TYPE_CHECKING:
     from .url import URL

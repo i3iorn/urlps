@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import pytest
 
 
@@ -162,17 +160,30 @@ class TestInitAdditional:
         assert parsed.host == "localhost"
         assert parsed.path == "/admin"
 
-    def test_parse_url_unsafe_honors_explicit_policy_exactly(self):
+    def test_parse_url_unsafe_honors_explicit_policy_exactly(self, fakes):
         """Explicit policy should keep phishing checks instead of being silently overridden."""
         from urlps import parse_url_unsafe
         from urlps._security import SecurityPolicy
         from urlps.exceptions import InvalidURLError
 
         policy = SecurityPolicy.strict(check_phishing=True)
-        # (is_phishing, database_available)
-        with patch(
-            "urlps._security.check_against_phishing_db_detailed",
-            return_value=(True, True),
-        ):
-            with pytest.raises(InvalidURLError):
-                parse_url_unsafe("https://example.com/", policy=policy)
+        services = fakes.services(feed=fakes.Feed(listed=("example.com",)))
+        with pytest.raises(InvalidURLError):
+            parse_url_unsafe("https://example.com/", policy=policy, services=services)
+
+
+def test_parse_url_local_check_dns_overrides_an_explicit_policy_like_parse_url(fakes) -> None:
+    """It used to be silently ignored whenever a policy was passed."""
+    from urlps import parse_url_local
+
+    resolver = fakes.Resolver()
+    parse_url_local(
+        "https://api.example.com/", policy="strict", check_dns=True, services=fakes.services(resolver=resolver)
+    )
+    assert resolver.calls == ["api.example.com"]
+
+
+def test_build_secure_accepts_custom_schemes() -> None:
+    from urlps import build_secure
+
+    assert build_secure("myapp", "open", path="/item", allow_custom_scheme=True) == "myapp://open/item"

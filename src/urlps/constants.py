@@ -48,7 +48,9 @@ UNSAFE_SCHEMES: Final[frozenset[str]] = frozenset(
     }
 )
 
-STANDARD_PORTS: Final[frozenset[int]] = frozenset([80, 443, 21, 22, 25, 110, 143, 53])
+#: What every preset policy accepts by default: the official schemes that
+#: neither execute code nor reach local resources.
+STANDARD_SCHEMES: Final[frozenset[str]] = OFFICIAL_SCHEMES - UNSAFE_SCHEMES
 
 DANGEROUS_PORTS: Final[frozenset[int]] = frozenset(
     {
@@ -268,6 +270,9 @@ PHISHING_DATABASE_URL: Final[str] = _get_url_from_env(
     "URLPS_PHISHING_DATABASE_URL", "https://phish.co.za/latest/ALL-phishing-domains.lst"
 )
 DEFAULT_PHISHING_DATABASE_MAX_BYTES: Final[int] = 25 * 1024 * 1024
+# Socket timeout for the feed download. It used to borrow DEFAULT_DNS_TIMEOUT,
+# coupling two unrelated settings; the value is unchanged.
+DEFAULT_PHISHING_DATABASE_TIMEOUT_SECONDS: Final[float] = 2.0
 # How old a successfully loaded phishing list may get before the next check
 # triggers a re-download. A list loaded once used to be kept for the life of
 # the process, so a long-running service checked against an ever older feed.
@@ -301,6 +306,7 @@ __all__ = [
     "DEFAULT_PHISHING_DATABASE_MAX_BYTES",
     "DEFAULT_PHISHING_DATABASE_REFRESH_SECONDS",
     "DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS",
+    "DEFAULT_PHISHING_DATABASE_TIMEOUT_SECONDS",
     "DEFAULT_PORTS",
     "LOOPBACK_HOSTNAMES",
     "MAX_FRAGMENT_LENGTH",
@@ -319,7 +325,26 @@ __all__ = [
     "PHISHING_DATABASE_SHA256",
     "PHISHING_DATABASE_URL",
     "SCHEMES_NO_PORT",
-    "STANDARD_PORTS",
+    "STANDARD_SCHEMES",
     "UNSAFE_SCHEMES",
     "OfficialSchemes",
 ]
+
+
+# Removed from use in 1.2 (nothing in urlps read it, and "standard" was never
+# defined anywhere), kept importable until 2.0 so upgrading is not a break.
+_DEPRECATED = {
+    "STANDARD_PORTS": frozenset([80, 443, 21, 22, 25, 110, 143, 53]),
+}
+
+
+def __getattr__(name: str) -> object:
+    if name in _DEPRECATED:
+        warnings.warn(
+            f"urlps.constants.{name} is deprecated and unused by urlps; it will be removed in 2.0. "
+            "Use DEFAULT_PORTS for the default port of each scheme.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _DEPRECATED[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

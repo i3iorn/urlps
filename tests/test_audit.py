@@ -156,3 +156,27 @@ def test_invoke_both_callbacks_run_independently_on_failure() -> None:
 
     assert manager.get_failure_metrics().failure_count == 1
     assert len(events) == 1
+
+
+def test_an_injected_audit_manager_is_used_and_its_metrics_are_observable() -> None:
+    """URL used to build a fresh AuditManager from the config, so its metrics were unreachable."""
+    from urlps import AuditConfig, AuditManager, parse_url
+
+    def failing(logged_url, parsed_url, exception):
+        raise RuntimeError("sink down")
+
+    manager = AuditManager(AuditConfig(callback=failing))
+    parse_url("https://example.com/", audit=manager)
+    parse_url("https://example.org/", audit=manager)
+    metrics = manager.get_failure_metrics()
+    assert metrics.failure_count == 2
+    assert isinstance(metrics.last_error, RuntimeError)
+
+
+def test_audit_rejects_other_types() -> None:
+    import pytest
+
+    from urlps import parse_url
+
+    with pytest.raises(TypeError, match="AuditConfig or AuditManager"):
+        parse_url("https://example.com/", audit=object())  # type: ignore[arg-type]

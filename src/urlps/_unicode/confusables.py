@@ -23,9 +23,8 @@ single-script domains stay near zero.
 from __future__ import annotations
 
 import unicodedata
-from functools import lru_cache
 
-from ..._cache_config import SECURITY_CACHE_SIZE
+from .._cache_config import SECURITY_CACHE_SIZE, lru_cache
 from .scripts import scripts_of
 
 __all__ = ["is_whole_script_confusable", "skeleton"]
@@ -91,7 +90,7 @@ _CONFUSABLE_TO_LATIN: dict[str, str] = {
 }
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@lru_cache(maxsize=SECURITY_CACHE_SIZE, group="security")
 def skeleton(text: str) -> str:
     """UTS-39 §4 skeleton: the form two confusable strings share.
 
@@ -104,7 +103,7 @@ def skeleton(text: str) -> str:
     return unicodedata.normalize("NFD", substituted).casefold()
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@lru_cache(maxsize=SECURITY_CACHE_SIZE, group="security")
 def is_whole_script_confusable(label: str) -> bool:
     """Whether ``label`` is a non-Latin label disguised as a Latin one.
 

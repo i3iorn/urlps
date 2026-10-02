@@ -239,8 +239,8 @@ class TestCopyQueryCoherence:
         assert result.query == "q=C%2B%2B"
         assert result.query_params == [("q", "C++")]
 
-    def test_copy_initialises_audit_manager(self):
-        """copy() left _audit_manager unset, so touching it raised AttributeError."""
+    def test_copy_carries_the_audit_manager(self):
+        """copy() once left the audit manager unset; derived URLs now share the source's context."""
         url = parse_url(f"{BASE}?a=1")
-        assert hasattr(url.copy(), "_audit_manager")
-        assert hasattr(url.with_query_param("b", "2"), "_audit_manager")
+        assert url.copy()._context.audit_manager is url._context.audit_manager
+        assert url.with_query_param("b", "2")._context.audit_manager is url._context.audit_manager

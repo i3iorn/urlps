@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import quote, quote_plus, unquote_plus
 
@@ -10,12 +10,15 @@ from ._cache_config import (
     CACHE_MAX_VALUE_KEY_LENGTH,
     bounded_lru_cache,
 )
-from ._normalize import normalize_fragment, normalize_host, normalize_userinfo
+from ._host import looks_like_ipv4
+from ._normalize import normalize_fragment, normalize_host, normalize_percent_encoding, normalize_userinfo
 from ._patterns import PATTERNS
+from ._resolve import normalize_dot_segments
 from ._validation import Validator
 from .constants import DEFAULT_PORTS, OfficialSchemes
 from .exceptions import (
     HostValidationError,
+    InvalidURLError,
     PortValidationError,
     URLBuildError,
 )
@@ -25,7 +28,12 @@ QueryPairs = list[tuple[str, str | None]]
 _PERCENT_ENCODE_PATTERN = PATTERNS["percent_encode"]
 
 
-@bounded_lru_cache(maxsize=BUILDER_QUERY_ENCODE_CACHE_SIZE, max_key_length=CACHE_MAX_VALUE_KEY_LENGTH)
+@bounded_lru_cache(
+    maxsize=BUILDER_QUERY_ENCODE_CACHE_SIZE,
+    max_key_length=CACHE_MAX_VALUE_KEY_LENGTH,
+    group="builder",
+    name="encode_for_query",
+)
 def _encode_for_query(value: str, safe: str) -> str:
     """Encode a query component with quote_plus and normalize percent-encodings to uppercase.
 
@@ -34,6 +42,32 @@ def _encode_for_query(value: str, safe: str) -> str:
     """
     encoded = quote_plus(value, safe=safe)
     return _PERCENT_ENCODE_PATTERN.sub(lambda m: m.group(0).upper(), encoded)
+
+
+def _fast_unquote_plus(value: str) -> str:
+    """``unquote_plus`` with a fast path for the common case of nothing to decode."""
+    if "%" not in value and "+" not in value:
+        return value
+    return unquote_plus(value)
+
+
+def decode_query_pairs(query: str, *, error: type[InvalidURLError]) -> QueryPairs:
+    """Split a query string into decoded ``(key, value)`` pairs.
+
+    The single decoder for the parser and the builder; ``error`` is the
+    exception each raises for an empty key (``?=x``). A key with no ``=``
+    has the value ``None``, distinct from an empty value (``?k=``).
+    """
+    pairs: QueryPairs = []
+    for chunk in query.split("&"):
+        if not chunk:
+            continue
+        key_raw, sep, value_raw = chunk.partition("=")
+        key = _fast_unquote_plus(key_raw)
+        if not key:
+            raise error("Query keys must be non-empty.", value=chunk, component="query")
+        pairs.append((key, _fast_unquote_plus(value_raw) if sep else None))
+    return pairs
 
 
 class Builder:
@@ -104,6 +138,11 @@ class Builder:
         query = components.get("query")
         query_pairs: QueryPairs = components.get("query_pairs") or []
 
+        if host and path and not path.startswith("/"):
+            # RFC 3986 §3.3: after an authority the path must start with "/";
+            # build("https", "example.com", path="api") used to emit
+            # "https://example.comapi", a different host.
+            path = "/" + path
         normalized_path = self.normalize_path(path)
         if not normalized_path and host:
             normalized_path = "/"
@@ -126,6 +165,11 @@ class Builder:
         elif scheme and scheme.lower() not in {OfficialSchemes.FILE.value}:
             raise URLBuildError("Host is required when building absolute URLs.")
 
+        if not netloc and not scheme and normalized_path.startswith("//"):
+            # RFC 3986 §3.3: without an authority a path cannot begin with
+            # "//" -- it would be read back as one. "/." is the RFC-neutral
+            # prefix: dot-segment removal turns it back into the same path.
+            normalized_path = "/." + normalized_path
         url += normalized_path
 
         if serialized_query is not None:
@@ -139,28 +183,6 @@ class Builder:
             except UnicodeEncodeError as exc:
                 raise URLBuildError("Fragment is not valid Unicode.", component="fragment") from exc
         return url
-
-    def compose_secure(
-        self,
-        components: Mapping[str, Any],
-        *,
-        policy: Any = None,
-        check_dns: bool = False,
-        check_phishing: bool = False,
-        correlation_id: str | None = None,
-    ) -> str:
-        """Compose then validate a URL under a security policy."""
-        from . import parse_url
-
-        url = self.compose(components)
-        validated = parse_url(
-            url,
-            policy=policy,
-            check_dns=check_dns,
-            check_phishing=check_phishing,
-            correlation_id=correlation_id,
-        )
-        return validated.as_string()
 
     def build_netloc(self, userinfo: str | None, host: str | None, port: int | None, scheme: str | None) -> str:
         """Build the network location (authority) component of a URL.
@@ -229,7 +251,7 @@ class Builder:
             if not Validator.is_valid_ipv6(normalized_host):
                 raise HostValidationError("Invalid IPv6 address format.", value=original, component="host")
             return
-        if "." in normalized_host and normalized_host.replace(".", "").replace("-", "").isdigit():
+        if looks_like_ipv4(normalized_host):
             if not Validator.is_valid_ipv4(normalized_host):
                 raise HostValidationError("Invalid IPv4 address format.", value=original, component="host")
             return
@@ -239,12 +261,9 @@ class Builder:
     def normalize_path(self, path: str | None) -> str:
         """Normalize a URL path according to RFC 3986.
 
-        Performs the following normalizations:
-        - Resolves '.' (current directory) segments
-        - Resolves '..' (parent directory) segments
-        - Percent-encodes characters that need encoding
-        - Preserves trailing slashes when appropriate
-        - Normalizes percent-encoding to uppercase
+        Percent-encodes characters that may not appear raw, then applies the
+        parser's RFC 3986 §6.2.2 normalization: unreserved escapes decoded,
+        hex upper-cased, then dot segments removed. Empty segments are kept.
 
         Args:
             path: The path string to normalize, or None/empty string.
@@ -261,57 +280,33 @@ class Builder:
             '/a/b'
             >>> builder.normalize_path('/a/b/')
             '/a/b/'
+            >>> builder.normalize_path('/a/b/..')
+            '/a/'
         """
         if path is None or path == "":
             return ""
-        absolute = path.startswith("/")
-        trailing_slash = path.endswith("/")
-
-        # Check if path ends with "." or "./" which should result in trailing slash
-        ends_with_dot_segment = path.endswith("/.") or path.endswith("/./")
-
-        segments: list[str] = []
-        for segment in path.split("/"):
-            if not segment or segment == ".":
-                continue
-            elif segment == "..":
-                if segments:
-                    segments.pop()
-            else:
-                segments.append(self.percent_encode(segment, safe=self.PATH_SAFE))
-
-        if not segments:
-            return "/" if absolute else ""
-
-        normalized = "/".join(segments)
-        if absolute:
-            normalized = "/" + normalized
-        # Preserve trailing slash when originally present, or when path ends with "." segment
-        if (trailing_slash or ends_with_dot_segment) and normalized != "/":
-            normalized += "/"
-        return normalized
+        # Encode what may not appear raw, then exactly the parser's
+        # normalization (escapes, then dot segments), so a built URL and the
+        # same URL parsed from a string are spelled identically.
+        encoded = "/".join(self.percent_encode(segment, safe=self.PATH_SAFE) for segment in path.split("/"))
+        return normalize_dot_segments(normalize_percent_encoding(encoded))
 
     def percent_encode(self, value: str, *, safe: str) -> str:
         # Use urllib.quote to percent-encode then normalize percent-encoding to uppercase hex
         return self._percent_encode_cached(value, safe)
 
     @staticmethod
-    @bounded_lru_cache(maxsize=BUILDER_PATH_ENCODE_CACHE_SIZE, max_key_length=CACHE_MAX_VALUE_KEY_LENGTH)
+    @bounded_lru_cache(
+        maxsize=BUILDER_PATH_ENCODE_CACHE_SIZE,
+        max_key_length=CACHE_MAX_VALUE_KEY_LENGTH,
+        group="builder",
+        name="percent_encode",
+    )
     def _percent_encode_cached(value: str, safe: str) -> str:
         """Cached percent-encoding with uppercase hex normalization."""
         encoded = quote(value, safe=safe)
         # Uppercase percent-encodings to canonical form using pre-compiled pattern
         return _PERCENT_ENCODE_PATTERN.sub(lambda m: m.group(0).upper(), encoded)
-
-    @staticmethod
-    def _fast_unquote_plus(value: str) -> str:
-        """Optimized URL decoding with fast-path for strings without encoding.
-
-        Performance: Skips expensive unquote_plus() for strings without % or +.
-        """
-        if "%" not in value and "+" not in value:
-            return value
-        return unquote_plus(value)
 
     def parse_query(self, query: str | None) -> QueryPairs:
         """Parse a query string into a list of key-value pairs.
@@ -342,18 +337,7 @@ class Builder:
         """
         if query is None or query == "":
             return []
-        pairs: QueryPairs = []
-        for chunk in query.split("&"):
-            if chunk == "":
-                continue
-            # Use partition for better performance
-            key_raw, sep, value_raw = chunk.partition("=")
-            key = self._fast_unquote_plus(key_raw)
-            if not key:
-                raise URLBuildError("Query keys must be non-empty.", value=chunk, component="query")
-            value = self._fast_unquote_plus(value_raw) if sep else None
-            pairs.append((key, value))
-        return pairs
+        return decode_query_pairs(query, error=URLBuildError)
 
     def serialize_query(self, params: QueryPairs) -> str:
         """Serialize query pairs to a query string."""
@@ -420,38 +404,6 @@ class Builder:
             'a=1&b=2'
         """
         pairs = [(k, v) for k, v in self.parse_query(query) if k != key]
-        return self.serialize_query(pairs)
-
-    def merge_params(self, query: str | None, updates: Mapping[str, Any]) -> str:
-        """Merge new parameters into a query string.
-
-        Adds new key-value pairs from the updates mapping. Does not remove
-        or replace existing parameters with the same keys.
-
-        Args:
-            query: The existing query string (without '?'), or None.
-            updates: A mapping of keys to values. Values can be:
-                - str: Added as a single parameter
-                - None: Added as a value-less key
-                - Iterable (not str/bytes): Each item added as separate parameter
-
-        Returns:
-            The new query string with merged parameters.
-
-        Example:
-            >>> builder = Builder()
-            >>> builder.merge_params('a=1', {'b': '2', 'c': '3'})
-            'a=1&b=2&c=3'
-            >>> builder.merge_params('a=1', {'arr': ['x', 'y']})
-            'a=1&arr=x&arr=y'
-        """
-        pairs = self.parse_query(query)
-        for key, value in updates.items():
-            if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
-                for child in value:
-                    pairs.append((key, None if child is None else str(child)))
-            else:
-                pairs.append((key, None if value is None else str(value)))
         return self.serialize_query(pairs)
 
 

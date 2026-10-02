@@ -23,10 +23,10 @@ import ipaddress
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from .._normalize import normalize_host
+from .._host import strip_brackets
 from .._patterns import PATTERNS
+from .._unicode import canonical_host
 from ..exceptions import SecurityPolicyError
-from ._unicode import to_ascii
 from .ip_utils import IpAddress, IpNetwork, _resolve_host_to_ip, embedded_ipv4, in_networks
 
 __all__ = ["NO_RULES", "AddressList", "AddressRule"]
@@ -35,14 +35,8 @@ __all__ = ["NO_RULES", "AddressList", "AddressRule"]
 AddressRule = str | ipaddress.IPv4Address | ipaddress.IPv6Address | ipaddress.IPv4Network | ipaddress.IPv6Network
 
 
-def _normalize_hostname(name: str) -> str:
-    """IDNA-encode and normalize a hostname the way the parser stores hosts."""
-    ascii_name = name if name.isascii() else to_ascii(name)
-    return normalize_host(ascii_name)
-
-
 def _parse_network(text: str) -> IpNetwork | None:
-    candidate = text[1:-1] if text.startswith("[") and text.endswith("]") else text
+    candidate = strip_brackets(text)
     try:
         return ipaddress.ip_network(candidate, strict=True)
     except ValueError:
@@ -110,7 +104,7 @@ class AddressList:
                     "use a leading dot ('.example.com') to match a domain and its subdomains."
                 )
             try:
-                normalized = _normalize_hostname(name)
+                normalized = canonical_host(name)
             except ValueError as exc:  # IdnaError
                 raise SecurityPolicyError(f"Invalid hostname in address rule: {rule!r}") from exc
             if not normalized or not PATTERNS["host"].fullmatch(normalized):
@@ -141,7 +135,7 @@ class AddressList:
         if not (self.hostnames or self.domains):
             return False
         try:
-            name = _normalize_hostname(host)
+            name = canonical_host(host)
         except ValueError:  # IdnaError: not a host the parser would accept either
             return False
         if name in self.hostnames:

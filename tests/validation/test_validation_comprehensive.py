@@ -220,15 +220,6 @@ class TestPortValidationComprehensive:
         for port in invalid_ports:
             assert not Validator.is_valid_port(port), f"Should fail for {port}"
 
-    def test_standard_ports(self):
-        """Test standard port recognition"""
-        assert Validator.is_standard_port(80)
-        assert Validator.is_standard_port(443)
-        assert Validator.is_standard_port(21)
-        assert Validator.is_standard_port(22)
-        assert not Validator.is_standard_port(8080)
-        assert not Validator.is_standard_port(3000)
-
 
 class TestFragmentValidationComprehensive:
     """Comprehensive fragment validation tests."""

@@ -214,24 +214,38 @@ busy host repeatedly costs one lookup per TTL. A rate-limited check raises
 `DNSRateLimitError` with `retry_after` set. Each check is bounded by
 `SecurityPolicy.dns_deadline_seconds` (default 5 s) across retries.
 
-The default limiter is process-wide. In multi-tenant or concurrent
-applications, inject one per tenant so one tenant's traffic can never spend
-another's budget:
+The default limiter and resolution cache are process-wide. In multi-tenant
+or concurrent applications, inject a limiter per tenant so one tenant's
+traffic can never spend another's budget. Everything the checks do I/O
+through -- the resolver, the resolution cache, the limiter and the phishing
+feed -- is one `SecurityServices` value, accepted by every entry point:
 
 ```python
-from urlps import DNSRateLimiter, DNSRateLimiterConfig, parse_url
+from urlps import (
+    DNSCacheConfig,
+    DNSRateLimiter,
+    DNSRateLimiterConfig,
+    DNSResolutionCache,
+    SecurityServices,
+    parse_url,
+)
 
-limiter = DNSRateLimiter(
-    DNSRateLimiterConfig(max_lookups_per_second=20, max_lookups_per_host=50, cache_ttl_seconds=60)
+tenant_services = SecurityServices(
+    dns_rate_limiter=DNSRateLimiter(DNSRateLimiterConfig(max_lookups_per_second=20, max_lookups_per_host=50)),
+    resolution_cache=DNSResolutionCache(DNSCacheConfig(ttl_seconds=60)),
 )
 
 url = parse_url(
     "https://api.example.com",
     policy="strict",
     check_dns=True,
-    dns_rate_limiter=limiter,
+    services=tenant_services,
 )
 ```
+
+`SecurityServices(phishing_feed=...)` takes any object with a
+`lookup(host) -> bool | None` method (`None` meaning "could not check"), or a
+`PhishingDatabaseManager(PhishingFeedConfig(url=...))` pointed at a mirror.
 
 A limiter (or `check_dns=True`) set on the `SecurityPolicy` is honoured by
 `parse_url()`, `join()` and `build_secure()`; an explicit `check_dns=`

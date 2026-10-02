@@ -24,6 +24,7 @@ from urlps import (
     parse_url,
 )
 from urlps._security.address_rules import AddressList
+from urlps._security.dns_guard import reset_resolution_cache
 
 
 def _accepted(url: str, policy: SecurityPolicy) -> bool:
@@ -232,6 +233,9 @@ def _resolves_to(address: str):
 
 
 def _dns_accepted(url: str, **policy_kwargs) -> bool:
+    # A fresh cache each time: one host is made to resolve to several
+    # addresses in turn, and a cached answer would hide the change.
+    reset_resolution_cache()
     policy = SecurityPolicy.strict(check_dns=True, dns_rate_limiter=DNSRateLimiter(), **policy_kwargs)
     return _accepted(url, policy)
 

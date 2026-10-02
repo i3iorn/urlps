@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate ``src/urlps/_security/_unicode/_tables.py``.
+"""Regenerate ``src/urlps/_unicode/_tables.py``.
 
 Development-only; not shipped in the wheel. The generated module is checked in
 so that ``urlps`` itself needs no Unicode data dependency at runtime.
@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover - dev tool
 MAX_CODEPOINT = 0x110000
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = REPO_ROOT / "src" / "urlps" / "_security" / "_unicode" / "_tables.py"
+OUTPUT = REPO_ROOT / "src" / "urlps" / "_unicode" / "_tables.py"
 
 #: Scripts that carry no identity of their own for UTS-39 purposes: Common
 #: (digits, punctuation) and Inherited (combining marks) legitimately appear

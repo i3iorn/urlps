@@ -20,13 +20,14 @@ cannot be done without it instead of quietly returning a different answer.
 from __future__ import annotations
 
 import warnings
-from functools import lru_cache
 
-from ..._cache_config import VALIDATION_CACHE_SIZE
+from .._cache_config import VALIDATION_CACHE_SIZE, lru_cache
+from .._normalize import normalize_host
 
 __all__ = [
     "UTS46_AVAILABLE",
     "IdnaError",
+    "canonical_host",
     "to_ascii",
 ]
 
@@ -58,7 +59,7 @@ if not UTS46_AVAILABLE:
     warnings.warn(_FALLBACK_WARNING, RuntimeWarning, stacklevel=2)
 
 
-@lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+@lru_cache(maxsize=VALIDATION_CACHE_SIZE, group="security")
 def to_ascii(host: str) -> str:
     """Encode ``host`` to its A-label (Punycode) form.
 
@@ -87,7 +88,22 @@ def to_ascii(host: str) -> str:
         raise IdnaError(str(exc)) from exc
 
 
-@lru_cache(maxsize=VALIDATION_CACHE_SIZE)
+def canonical_host(host: str) -> str:
+    """``host`` exactly as the parser stores it: IDNA-encoded, then RFC 3986 §6.2.2-normalized.
+
+    The one definition every layer uses -- the parser, derived URLs, the
+    security checks and the address rules each used to repeat these two
+    steps with their own error handling.
+
+    Raises:
+        IdnaError: IDNA refuses the host.
+    """
+    if not host:
+        return host
+    return normalize_host(host if host.isascii() else to_ascii(host))
+
+
+@lru_cache(maxsize=VALIDATION_CACHE_SIZE, group="security")
 def to_unicode(host: str) -> str:
     """Decode ``host`` from its A-label form back to U-labels.
 

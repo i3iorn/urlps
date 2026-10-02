@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Set as AbstractSet
 from typing import Any
-from urllib.parse import unquote, unquote_plus
+from urllib.parse import unquote
 
-from ._builder import Builder, QueryPairs
-from ._cache_config import PARSER_CACHE_SIZE, bounded_lru_cache
-from ._components import ParseResult
+from ._builder import QueryPairs, decode_query_pairs
+from ._cache_config import PARSER_CACHE_SIZE, bounded_lru_cache, cache_info
+from ._cache_config import clear_caches as clear_registered_caches
+from ._components import ParseResult, URLParts
+from ._host import is_ascii_digits, looks_like_ipv4, port_number
 from ._normalize import normalize_host, normalize_percent_encoding, normalize_userinfo
-from ._security._unicode.uts46 import IdnaError, to_ascii
-from ._validation import Validator, is_valid_userinfo
+from ._resolve import normalize_dot_segments
+from ._unicode.uts46 import IdnaError, canonical_host
+from ._validation import Validator, is_valid_userinfo, scheme_rejection
 from .constants import (
     DEFAULT_PORTS,
     MAX_FRAGMENT_LENGTH,
@@ -20,7 +24,7 @@ from .constants import (
     MAX_SCHEME_LENGTH,
     OFFICIAL_SCHEMES,
     SCHEMES_NO_PORT,
-    UNSAFE_SCHEMES,
+    STANDARD_SCHEMES,
 )
 from .exceptions import (
     FragmentEncodingError,
@@ -33,10 +37,10 @@ from .exceptions import (
     UserInfoParsingError,
 )
 
-_builder_singleton = Builder()
 
-
-def parse_scheme(url: str, allow_custom: bool = False) -> tuple[str | None, str, bool | None, bool]:
+def parse_scheme(
+    url: str, allow_custom: bool = False, *, allowed_schemes: AbstractSet[str] = STANDARD_SCHEMES
+) -> tuple[str | None, str, bool | None, bool]:
     """Parse scheme from URL.
 
     Returns (scheme, remainder, recognized_scheme, has_authority). The colon
@@ -75,27 +79,18 @@ def parse_scheme(url: str, allow_custom: bool = False) -> tuple[str | None, str,
         )
 
     scheme_lower = scheme_candidate.lower()
-    if scheme_lower in UNSAFE_SCHEMES and not allow_custom:
-        raise URLParseError(
-            f"Scheme '{scheme_candidate}' requires custom_scheme=True", value=scheme_candidate, component="scheme"
-        )
-    if scheme_lower in OFFICIAL_SCHEMES:
-        return scheme_lower, remainder, True, has_authority
-    if allow_custom:
-        return scheme_lower, remainder, False, has_authority
-    if Validator.is_valid_scheme(scheme_lower):
-        # Syntactically fine, but not one of the standard schemes. Accepting
-        # it by default (as this used to) let parse_url() vet links such as
-        # ms-msdt:, search-ms: or smb:// that hand the URL to an OS protocol
-        # handler; the allowlist is what allow_custom_scheme documents.
-        raise UnsupportedSchemeError(
-            f"Scheme '{scheme_candidate}' is not a standard scheme "
-            f"({', '.join(sorted(OFFICIAL_SCHEMES - UNSAFE_SCHEMES))}); "
-            "pass allow_custom_scheme=True to accept it.",
-            value=scheme_candidate,
-            component="scheme",
-        )
-    raise URLParseError(f"Invalid URL scheme: {scheme_candidate}", value=scheme_candidate, component="scheme")
+    # RFC 3986 grammar first, even for a custom scheme: "a_b" is no scheme.
+    if not Validator.is_valid_scheme(scheme_lower):
+        raise URLParseError(f"Invalid URL scheme: {scheme_candidate}", value=scheme_candidate, component="scheme")
+    # The policy's scheme rule, applied here so a dangerous scheme is refused
+    # before the rest of the URL is read. Accepting any well-formed scheme by
+    # default let parse_url() vet links such as ms-msdt:, search-ms: or
+    # smb:// that hand the URL to an OS protocol handler.
+    rejection = scheme_rejection(scheme_lower, allow_custom=allow_custom, allowed=allowed_schemes)
+    if rejection is not None:
+        code, message = rejection
+        raise UnsupportedSchemeError(message, value=scheme_candidate, component="scheme", code=code)
+    return scheme_lower, remainder, scheme_lower in OFFICIAL_SCHEMES, has_authority
 
 
 def split_fragment(url: str) -> tuple[str, str | None]:
@@ -120,21 +115,28 @@ def split_authority(url: str) -> tuple[str, str]:
     return authority, f"/{path}" if sep else ""
 
 
+def normalize_userinfo_component(userinfo: str) -> str:
+    """Validate a userinfo and store it the way the parser does.
+
+    Anything outside the RFC 3986 userinfo grammar is escaped, so str(url)
+    can only ever be read with this host. "http://169.254.169.254\\@example.com/"
+    is host example.com here but host 169.254.169.254 to a WHATWG parser
+    (browsers, Node), which treats "\\" as "/"; "%5C" is unambiguous.
+    """
+    if not is_valid_userinfo(userinfo):
+        raise UserInfoParsingError("Invalid authentication section in URL.", value=userinfo, component="userinfo")
+    try:
+        return normalize_userinfo(userinfo)
+    except UnicodeEncodeError as exc:
+        raise UserInfoParsingError("Userinfo is not valid Unicode.", component="userinfo") from exc
+
+
 def parse_userinfo(authority: str) -> tuple[str | None, str]:
     """Parse userinfo from authority."""
     if not authority or "@" not in authority:
         return None, authority or ""
     auth_segment, _, host = authority.partition("@")
-    if not is_valid_userinfo(auth_segment):
-        raise UserInfoParsingError("Invalid authentication section in URL.", value=auth_segment, component="userinfo")
-    # Escape anything outside the RFC 3986 userinfo grammar, so str(url) can
-    # only ever be read with this host. "http://169.254.169.254\\@example.com/"
-    # is host example.com here but host 169.254.169.254 to a WHATWG parser
-    # (browsers, Node), which treats "\\" as "/"; "%5C" is unambiguous.
-    try:
-        return normalize_userinfo(auth_segment), host
-    except UnicodeEncodeError as exc:
-        raise UserInfoParsingError("Userinfo is not valid Unicode.", component="userinfo") from exc
+    return normalize_userinfo_component(auth_segment), host
 
 
 def parse_port(candidate: str) -> int:
@@ -149,18 +151,44 @@ def parse_port(candidate: str) -> int:
     Raises:
         PortValidationError: If port is non-numeric or out of valid range (1-65535)
     """
-    # isascii() too: str.isdigit() accepts any Unicode digit (fullwidth "22",
-    # U+FF12 U+FF12), which int() reads as 22 while urlsplit() rejects it --
-    # one port meaning two different things to two parsers.
-    if not candidate or not candidate.isascii() or not candidate.isdigit():
+    if not is_ascii_digits(candidate):
         raise PortValidationError(
             f"Port must be a positive integer. Received: {candidate!r}", value=candidate, component="port"
         )
-    if not Validator.is_valid_port(candidate):
+    try:
+        return port_number(candidate)
+    except ValueError:
         raise PortValidationError(
             f"Port must be between 1 and 65535. Received: {candidate}", value=candidate, component="port"
-        )
-    return int(candidate)
+        ) from None
+
+
+def normalize_host_component(host: str) -> str:
+    """Validate one host (no port) and return it exactly as the parser stores it.
+
+    A bracketed IPv6 literal, a dotted IPv4 literal (anything shaped like
+    one must be a valid one), or a hostname -- IDNA-encoded through the one
+    entry point in _unicode/uts46.py, so the parser, derived URLs and the
+    security checks never disagree on a host's form.
+    """
+    if len(host) > MAX_HOST_LENGTH:
+        raise HostValidationError(f"Host exceeds maximum length of {MAX_HOST_LENGTH}.", value=host, component="host")
+    if host.startswith("["):
+        if not Validator.is_valid_ipv6(host):
+            raise HostValidationError("Invalid IPv6 address format.", value=host, component="host")
+        return normalize_host(host)
+    if not host:
+        raise MissingHostError("Host cannot be empty.", value=host, component="host")
+    if looks_like_ipv4(host):
+        if not Validator.is_valid_ipv4(host):
+            raise HostValidationError("Invalid IPv4 address format.", value=host, component="host")
+        return normalize_host(host)
+    if not Validator.is_valid_host(host):
+        raise HostValidationError("Host contains invalid characters.", value=host, component="host")
+    try:
+        return canonical_host(host)
+    except IdnaError as exc:
+        raise HostValidationError(f"Unable to IDNA-encode host: {exc}", value=host, component="host") from exc
 
 
 def parse_ipv6_host(host_candidate: str) -> tuple[str, int | None]:
@@ -168,39 +196,20 @@ def parse_ipv6_host(host_candidate: str) -> tuple[str, int | None]:
     closing = host_candidate.find("]")
     if closing == -1:
         raise HostValidationError("Invalid IPv6 host segment.", value=host_candidate, component="host")
-    host_literal = host_candidate[: closing + 1]
+    host = normalize_host_component(host_candidate[: closing + 1])
     remainder = host_candidate[closing + 1 :]
-    if not Validator.is_valid_ipv6(host_literal):
-        raise HostValidationError("Invalid IPv6 address format.", value=host_literal, component="host")
     port = None
     if remainder.startswith(":"):
         port = parse_port(remainder[1:])
     elif remainder:
         raise HostValidationError("Unexpected characters after IPv6 literal.", value=remainder, component="host")
-    return normalize_host(host_literal), port
+    return host, port
 
 
 def parse_regular_host(host_candidate: str) -> tuple[str, int | None]:
     """Parse regular hostname with optional port."""
     host_part, sep, port_part = host_candidate.partition(":")
-    if not host_part:
-        raise MissingHostError("Host cannot be empty.", value=host_part, component="host")
-    if "." in host_part and host_part.replace(".", "").replace("-", "").isdigit():
-        if not Validator.is_valid_ipv4(host_part):
-            raise HostValidationError("Invalid IPv4 address format.", value=host_part, component="host")
-        return normalize_host(host_part), parse_port(port_part) if sep else None
-    if not Validator.is_valid_host(host_part):
-        raise HostValidationError("Host contains invalid characters.", value=host_part, component="host")
-    if not host_part.isascii():
-        # Route through the one IDNA entry point (see _unicode/uts46.py) so
-        # the parser and Validator can never disagree on a host's ASCII form.
-        try:
-            ascii_host = to_ascii(host_part)
-        except IdnaError as exc:
-            raise HostValidationError(f"Unable to IDNA-encode host: {exc}", value=host_part, component="host") from exc
-    else:
-        ascii_host = host_part
-    return normalize_host(ascii_host), parse_port(port_part) if sep else None
+    return normalize_host_component(host_part), parse_port(port_part) if sep else None
 
 
 def parse_host(host_candidate: str, require_host: bool = False) -> tuple[str | None, int | None]:
@@ -219,9 +228,15 @@ def parse_host(host_candidate: str, require_host: bool = False) -> tuple[str | N
     return parse_regular_host(host_candidate)
 
 
-@bounded_lru_cache(maxsize=PARSER_CACHE_SIZE)
+@bounded_lru_cache(maxsize=PARSER_CACHE_SIZE, group="parser")
 def normalize_path(path_candidate: str) -> str:
-    """Normalize URL path by resolving . and .. segments.
+    """RFC 3986 §6.2.2 path normalization: percent-encoding, then dot segments.
+
+    In that order, as §6.2.2 lists them, so ``%2E%2E`` is removed as the
+    ``..`` it denotes rather than decoded into one afterwards (which stored
+    ``/a/../b`` while ``str(url)`` said ``/b``). The dot-segment step is the
+    RFC algorithm shared with the builder and :func:`urlps.join`; it keeps
+    empty segments (``/a//b``) and the trailing slash ``/a/b/..`` leaves.
 
     Performance: LRU cached to avoid re-normalizing common paths.
     """
@@ -233,44 +248,7 @@ def normalize_path(path_candidate: str) -> str:
         raise URLParseError(
             f"Path exceeds maximum length of {MAX_PATH_LENGTH}.", value=path_candidate, component="path"
         )
-    absolute = path_candidate.startswith("/")
-    trailing = path_candidate.endswith("/") or path_candidate.endswith("/.") or path_candidate.endswith("/./")
-    segments: list[str] = []
-    for seg in path_candidate.split("/"):
-        if not seg or seg == ".":
-            continue
-        elif seg == "..":
-            if segments:
-                segments.pop()
-        else:
-            segments.append(seg)
-    if not segments:
-        return "/" if absolute else ""
-    normalized = "/".join(segments)
-    if absolute:
-        normalized = "/" + normalized
-    if trailing and normalized != "/":
-        normalized += "/"
-    return normalized
-
-
-def _fast_unquote_plus(value: str) -> str:
-    """Optimized URL decoding with fast-path for strings without encoding.
-
-    Performance: Skips expensive unquote_plus() for strings without % or +.
-    """
-    if "%" not in value and "+" not in value:
-        return value
-    return unquote_plus(value)
-
-
-def _validate_query_string_batch(query: str) -> bool:
-    """Batch validation of entire query string for control characters.
-
-    Performance: Single regex pass instead of per-parameter validation.
-    Returns True if valid, False otherwise.
-    """
-    return Validator.is_url_safe_string(query)
+    return normalize_dot_segments(normalize_percent_encoding(path_candidate))
 
 
 def parse_query_string(query_candidate: str | None) -> tuple[str | None, QueryPairs]:
@@ -287,33 +265,23 @@ def parse_query_string(query_candidate: str | None) -> tuple[str | None, QueryPa
     Re-encoding is now performed only where the caller explicitly asks for a
     different query (see ``URL.with_query_param`` / ``canonicalize``).
 
-    Performance optimizations:
-    - Batch validation of entire query string
-    - Fast-path decoding for strings without percent-encoding
     """
     if query_candidate is None:
         return None, []
     if query_candidate == "":
         return "", []
-    if len(query_candidate) > MAX_QUERY_LENGTH:
+    # Decoded length, like the path, fragment and userinfo limits: a query
+    # re-serialized from its pairs (canonicalize(), with_query_param())
+    # percent-encodes non-ASCII up to 12x longer, and must still parse.
+    if len(unquote(query_candidate)) > MAX_QUERY_LENGTH:
         raise QueryParsingError(
             f"Query exceeds maximum length of {MAX_QUERY_LENGTH}.", value=query_candidate, component="query"
         )
 
-    if not _validate_query_string_batch(query_candidate):
+    if not Validator.is_url_safe_string(query_candidate):
         raise QueryParsingError("Query string contains invalid characters.", value=query_candidate, component="query")
 
-    pairs: QueryPairs = []
-    for chunk in query_candidate.split("&"):
-        if not chunk:
-            continue
-        key_raw, sep, value_raw = chunk.partition("=")
-        key = _fast_unquote_plus(key_raw)
-        if not key:
-            raise QueryParsingError("Query keys must be non-empty.", value=chunk, component="query")
-        pairs.append((key, _fast_unquote_plus(value_raw) if sep else None))
-
-    return query_candidate, pairs
+    return query_candidate, decode_query_pairs(query_candidate, error=QueryParsingError)
 
 
 def parse_fragment_string(fragment_candidate: str | None) -> str | None:
@@ -344,14 +312,22 @@ def apply_port_defaults(scheme: str | None, port: int | None, host: str | None) 
     return DEFAULT_PORTS.get(scheme.lower()) if scheme else None
 
 
-def parse_url(url: str, allow_custom_scheme: bool = False) -> ParseResult:
-    """Parse a URL string into a ParseResult with all components."""
+def parse_url(
+    url: str, allow_custom_scheme: bool = False, *, allowed_schemes: AbstractSet[str] = STANDARD_SCHEMES
+) -> ParseResult:
+    """Parse a URL string into a ParseResult with all components.
+
+    ``allow_custom_scheme`` accepts any well-formed scheme; otherwise the
+    scheme must be in ``allowed_schemes`` (a policy's, or the standard set).
+    """
     if not isinstance(url, str):
         raise URLParseError(f"URL must be a string, not {type(url).__name__}.", value=url, component="url")
     if not url.strip():
         raise URLParseError(f"URL cannot be empty or whitespace-only. Received: {url!r}", value=url, component="url")
     working = url.strip()
-    scheme, remainder, recognized, has_authority = parse_scheme(working, allow_custom_scheme)
+    scheme, remainder, recognized, has_authority = parse_scheme(
+        working, allow_custom_scheme, allowed_schemes=allowed_schemes
+    )
 
     if not scheme and remainder.startswith("//"):
         remainder = remainder[2:]
@@ -367,37 +343,103 @@ def parse_url(url: str, allow_custom_scheme: bool = False) -> ParseResult:
     userinfo, host_candidate = parse_userinfo(authority)
     require_host = scheme is not None and scheme.lower() != "file" and has_authority
     host, port = parse_host(host_candidate, require_host=require_host)
-    port = apply_port_defaults(scheme, port, host)
-    path = normalize_percent_encoding(normalize_path(path_candidate))
-    if host and not path:
-        path = "/"
-    query, query_pairs = parse_query_string(query_str)
-    # RFC 3986 §6.2.2.1/.2 applied to the stored components, not just at
-    # serialization time -- otherwise `url.path` and `str(url)` disagree
-    # about the same escape, and a caller comparing components sees a
-    # different answer than one comparing strings.
-    if query is not None:
-        query = normalize_percent_encoding(query)
-    fragment = parse_fragment_string(fragment_str)
-    if fragment is not None:
-        fragment = normalize_percent_encoding(fragment)
+    parts = _assemble(scheme, userinfo, host, port, path_candidate, query_str, fragment_str)
 
     return ParseResult(
-        scheme=scheme,
-        userinfo=userinfo,
-        host=host,
-        port=port,
-        path=path,
-        query=query,
-        fragment=fragment,
-        query_pairs=list(query_pairs),
+        scheme=parts.scheme,
+        userinfo=parts.userinfo,
+        host=parts.host,
+        port=parts.port,
+        path=parts.path,
+        query=parts.query,
+        fragment=parts.fragment,
+        query_pairs=list(parts.query_pairs),
         recognized_scheme=recognized,
         security_findings=[],
     )
 
 
+def normalize_components(
+    *,
+    scheme: str | None,
+    userinfo: str | None,
+    host: str | None,
+    port: int | None,
+    path: str,
+    query: str | None,
+    fragment: str | None,
+    require_host: bool = False,
+) -> URLParts:
+    """Run already-split components through the parser's own rules.
+
+    The single construction path: ``parse_url`` splits a string and then
+    applies exactly these steps, and every derived URL (``copy()``,
+    ``with_*()``) is built here too, so a derived URL means what parsing its
+    own string would. ``scheme`` must already be validated and lowercased.
+    """
+    if userinfo is not None:
+        userinfo = normalize_userinfo_component(userinfo)
+    if host:
+        host = normalize_host_component(host)
+    elif require_host:
+        raise MissingHostError("Host is required for absolute URLs.", value=host, component="host")
+    else:
+        host = None
+    return _assemble(scheme, userinfo, host, port, path, query, fragment)
+
+
+def _assemble(
+    scheme: str | None,
+    userinfo: str | None,
+    host: str | None,
+    port: int | None,
+    path: str,
+    query: str | None,
+    fragment: str | None,
+) -> URLParts:
+    """The steps after the authority: port defaults, path, query and fragment normalization."""
+    port = apply_port_defaults(scheme, port, host)
+    if host and path and not path.startswith("/"):
+        # RFC 3986 §3.3: with an authority the path is empty or starts with
+        # "/". A relative one would be serialized straight onto the
+        # authority -- with_path("evil.com/x") on https://example.com/ read
+        # back as host "example.comevil.com".
+        path = "/" + path
+    normalized_path = normalize_path(path)
+    if host and not normalized_path:
+        normalized_path = "/"
+    raw_query, query_pairs = parse_query_string(query)
+    # RFC 3986 §6.2.2.1/.2 applied to the stored components, not just at
+    # serialization time -- otherwise `url.path` and `str(url)` disagree
+    # about the same escape, and a caller comparing components sees a
+    # different answer than one comparing strings.
+    normalized_fragment = parse_fragment_string(fragment)
+    return URLParts(
+        scheme=scheme,
+        userinfo=userinfo,
+        host=host,
+        port=port,
+        path=normalized_path,
+        query=None if raw_query is None else normalize_percent_encoding(raw_query),
+        fragment=None if normalized_fragment is None else normalize_percent_encoding(normalized_fragment),
+        query_pairs=tuple(query_pairs),
+    )
+
+
+def parse_netloc(netloc: str, *, require_host: bool = False) -> tuple[str | None, str | None, int | None]:
+    """Parse ``userinfo@host:port`` into its three parts, exactly as an authority is parsed."""
+    userinfo, host_candidate = parse_userinfo(netloc)
+    host, port = parse_host(host_candidate, require_host=require_host)
+    return userinfo, host, apply_port_defaults(None, port, host)
+
+
 class Parser:
-    """URL parser class for backward compatibility."""
+    """Stateful wrapper around :func:`parse_url`, kept for backward compatibility.
+
+    ``URL`` no longer reads anything back off a parser instance; the module
+    functions are what the package itself uses. Passing a ``Parser`` to
+    ``URL(parser=...)`` is deprecated -- use ``allow_custom_scheme=``.
+    """
 
     __slots__ = ("_custom_scheme", "_port", "_query_pairs", "_recognized_scheme")
 
@@ -433,64 +475,39 @@ class Parser:
         self._recognized_scheme = result.recognized_scheme
         self._query_pairs = list(result.query_pairs)
         self._port = result.port
-        return result.to_dict()
+        # Everything a caller needs travels in the return value. URL used to
+        # read query_pairs/recognized_scheme back off this instance after the
+        # call, so a Parser shared between threads handed one URL the query
+        # pairs of another thread's parse.
+        components = result.to_dict()
+        components["query_pairs"] = list(result.query_pairs)
+        components["recognized_scheme"] = result.recognized_scheme
+        return components
 
     def parse_netloc(self, netloc: str, *, require_host: bool = False) -> tuple[str | None, str | None, int | None]:
         """Parse a netloc string into userinfo, host, and port."""
-        userinfo, host_candidate = parse_userinfo(netloc)
-        host, port = parse_host(host_candidate, require_host=require_host)
-        return userinfo, host, apply_port_defaults(None, port, host)
-
-
-#: Caches reported under the "parser" group. normalize_host and
-#: normalize_percent_encoding live in _normalize but run on every parse, so
-#: they are reported here rather than in a group of their own.
-_CACHED_FUNCTIONS: list[Any] = [normalize_path, normalize_host, normalize_percent_encoding]
+        return parse_netloc(netloc, require_host=require_host)
 
 
 def get_cache_info() -> dict:
-    """Get statistics about parser caches.
-
-    Returns:
-        Dictionary with cache statistics for cached functions.
-    """
-    stats = {}
-    for cached in _CACHED_FUNCTIONS:
-        if not hasattr(cached, "cache_info"):
-            continue
-        info = cached.cache_info()
-        stats[cached.__wrapped__.__name__] = {
-            "hits": info.hits,
-            "misses": info.misses,
-            "maxsize": info.maxsize,
-            "currsize": info.currsize,
-        }
-    return stats
+    """Statistics for the parser caches (path, host and percent-encoding normalization)."""
+    return cache_info("parser")
 
 
 def clear_caches() -> dict:
-    """Clear all parser caches and return previous sizes.
-
-    Returns:
-        Dictionary mapping function names to previous cache sizes.
-    """
-    previous = {}
-    for cached in _CACHED_FUNCTIONS:
-        if not hasattr(cached, "cache_info"):
-            continue
-        previous[cached.__wrapped__.__name__] = cached.cache_info().currsize
-        if hasattr(cached, "cache_clear"):
-            cached.cache_clear()
-    return previous
+    """Clear the parser caches and return their previous sizes."""
+    return clear_registered_caches("parser")
 
 
 __all__ = [
     "Parser",
     "clear_caches",
     "get_cache_info",
+    "normalize_components",
     "normalize_path",
     "parse_fragment_string",
     "parse_host",
+    "parse_netloc",
     "parse_query_string",
     "parse_scheme",
     "parse_url",

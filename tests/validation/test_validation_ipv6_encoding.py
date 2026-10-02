@@ -22,7 +22,7 @@ def test_path_and_query_percent_encoding_and_validator():
     normalized = b.normalize_path(raw_path)
     # ensure percent-encoding is present and Validator accepts it
     assert "%20" in normalized or "%25" in normalized
-    assert Validator.is_valid_path(normalized)
+    assert Validator.is_url_safe_string(normalized)
 
     # query serialization should percent-encode keys/values
     pairs = [("key name", "value/with/slash"), ("enc%", "v%")]
@@ -33,7 +33,7 @@ def test_path_and_query_percent_encoding_and_validator():
     for chunk in q.split("&"):
         if "=" in chunk:
             k, v = chunk.split("=", 1)
-            assert Validator.is_valid_query_param(k)
-            assert Validator.is_valid_query_param(v)
+            assert Validator.is_url_safe_string(k)
+            assert Validator.is_url_safe_string(v)
         else:
-            assert Validator.is_valid_query_param(chunk)
+            assert Validator.is_url_safe_string(chunk)

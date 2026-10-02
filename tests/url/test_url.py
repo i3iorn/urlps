@@ -35,11 +35,13 @@ def test_default_port_inferred_and_hidden() -> None:
     assert url.effective_port == 443
     assert url.as_string() == "https://example.org/resource"
 
-    # Use with_port to create a new URL with port=None
+    # with_port(None) means "the scheme's default", exactly as parsing a URL
+    # without a port does -- a derived URL is what its string would parse to.
     url2 = url.with_port(None)
-    assert url2.port is None
+    assert url2.port == 443
     assert url2.effective_port == 443
     assert url2.as_string() == "https://example.org/resource"
+    assert url2 == url
 
 
 def test_file_scheme_rejects_ports() -> None:
@@ -145,12 +147,32 @@ def test_with_query_and_query_params() -> None:
     assert url.query == "a=1"
 
 
-def test_allow_custom_scheme_via_parser_flag() -> None:
+def test_allow_custom_scheme_via_parser_flag_is_deprecated_but_works() -> None:
     parser = Parser()
     parser.custom_scheme = True
-    url = URL("foo+bar://example.com", parser=parser)
+    with pytest.warns(DeprecationWarning, match="allow_custom_scheme"):
+        url = URL("foo+bar://example.com", parser=parser)
     assert url.scheme == "foo+bar"
     assert url.recognized_scheme is False
+    # Derived URLs keep the setting.
+    assert url.with_path("/x").scheme == "foo+bar"
+
+
+def test_allow_custom_scheme_argument() -> None:
+    url = URL("foo+bar://example.com", allow_custom_scheme=True)
+    assert url.scheme == "foo+bar"
+    assert url.recognized_scheme is False
+    assert url.with_path("/x").scheme == "foo+bar"
+    with pytest.raises(InvalidURLError):
+        URL("foo+bar://example.com")
+
+
+def test_builder_injection_is_deprecated() -> None:
+    from urlps._builder import Builder
+
+    with pytest.warns(DeprecationWarning, match="builder"):
+        url = URL("https://example.com/", builder=Builder())
+    assert str(url) == "https://example.com/"
 
 
 def test_with_scheme_normalizes() -> None:
@@ -244,33 +266,3 @@ def test_without_query() -> None:
     assert clean.query is None
     assert clean.fragment is None
     assert clean.path == "/path"
-
-
-def test_url_components_with_updates() -> None:
-    """Test URLComponents.with_updates() works with partial kwargs."""
-    from urlps._components import URLComponents
-
-    # Create initial components
-    components = URLComponents(
-        scheme="https",
-        host="example.com",
-        port=443,
-        path="/original",
-    )
-
-    # Update only some fields - should not raise KeyError
-    updated = components.with_updates(path="/updated")
-    assert updated.scheme == "https"
-    assert updated.host == "example.com"
-    assert updated.port == 443
-    assert updated.path == "/updated"
-
-    # Update multiple fields
-    updated2 = components.with_updates(host="other.com", port=8080)
-    assert updated2.host == "other.com"
-    assert updated2.port == 8080
-    assert updated2.path == "/original"
-
-    # Update with None port
-    updated3 = components.with_updates(port=None)
-    assert updated3.port is None

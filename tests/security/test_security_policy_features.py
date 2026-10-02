@@ -1,3 +1,4 @@
+import socket
 from unittest.mock import patch
 
 import pytest
@@ -61,38 +62,25 @@ class TestSecurityAPIs:
         assert "abc" not in redacted
         assert "token=%2A%2A%2A" in redacted
 
-    def test_validate_honors_explicit_policy_dns_setting(self) -> None:
-        u = parse_url_unsafe("http://example.com/")
+    def test_validate_honors_explicit_policy_dns_setting(self, fakes) -> None:
+        resolver = fakes.Resolver(error=socket.gaierror(-2, "unknown"))
+        u = parse_url_unsafe("http://example.com/", services=fakes.services(resolver=resolver))
 
-        with patch(
-            "urlps._security.check_dns_rebinding_detailed",
-            return_value=(False, ErrorCode.DNS_RESOLUTION_FAILED),
-        ):
-            findings = u.validate(policy=SecurityPolicy.strict(check_dns=True), raise_on_error=False)
+        findings = u.validate(policy=SecurityPolicy.strict(check_dns=True), raise_on_error=False)
 
         assert any(f.code == ErrorCode.DNS_RESOLUTION_FAILED.value for f in findings)
 
-    def test_parse_url_passes_injected_dns_limiter(self) -> None:
+    def test_parse_url_passes_injected_dns_limiter(self, fakes) -> None:
         limiter = DNSRateLimiter()
-        with patch(
-            "urlps._security.check_dns_rebinding_detailed",
-            return_value=(True, None),
-        ) as dns_mock:
-            parse_url("http://example.com/", policy="strict", check_dns=True, dns_rate_limiter=limiter)
+        parse_url(
+            "http://example.com/", policy="strict", check_dns=True, dns_rate_limiter=limiter, services=fakes.services()
+        )
+        assert limiter.stats()["tracked_hosts"] == 1.0
 
-        assert dns_mock.call_count == 1
-        assert dns_mock.call_args.kwargs["limiter"] is limiter
-
-    def test_parse_url_unsafe_passes_injected_dns_limiter(self) -> None:
+    def test_parse_url_unsafe_passes_injected_dns_limiter(self, fakes) -> None:
         limiter = DNSRateLimiter()
-        with patch(
-            "urlps._security.check_dns_rebinding_detailed",
-            return_value=(True, None),
-        ) as dns_mock:
-            parse_url_unsafe("http://example.com/", check_dns=True, dns_rate_limiter=limiter)
-
-        assert dns_mock.call_count == 1
-        assert dns_mock.call_args.kwargs["limiter"] is limiter
+        parse_url_unsafe("http://example.com/", check_dns=True, dns_rate_limiter=limiter, services=fakes.services())
+        assert limiter.stats()["tracked_hosts"] == 1.0
 
 
 class TestSecureBuilder:

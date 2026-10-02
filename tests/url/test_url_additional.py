@@ -16,12 +16,12 @@ class TestURL:
 
     def test_effective_port_returns_none_without_scheme(self):
         """effective_port returns None when no scheme and no port."""
+        from urlps._components import URLParts
         from urlps.url import URL
 
         # Relative URL
         url = object.__new__(URL)
-        url._scheme = None
-        url._port = None
+        object.__setattr__(url, "_parts", URLParts())
         assert url.effective_port is None
 
     def test_origin_raises_for_relative_url(self):
@@ -70,19 +70,19 @@ class TestURL:
 
     def test_validate_copy_overrides_invalid_key(self):
         """Line 472: invalid override key raises InvalidURLError."""
+        from urlps._validation import _URLValidation
         from urlps.exceptions import InvalidURLError
-        from urlps.url import _validate_copy_overrides
 
         with pytest.raises(InvalidURLError, match="Invalid override"):
-            _validate_copy_overrides({"invalid_key": "value"})
+            _URLValidation.validate_copy_overrides({"invalid_key": "value"})
 
     def test_validate_copy_overrides_non_string_component(self):
         """Line 475: non-string value for string component raises InvalidURLError."""
+        from urlps._validation import _URLValidation
         from urlps.exceptions import InvalidURLError
-        from urlps.url import _validate_copy_overrides
 
         with pytest.raises(InvalidURLError, match="must be a string"):
-            _validate_copy_overrides({"scheme": 123})
+            _URLValidation.validate_copy_overrides({"scheme": 123})
 
     def test_as_string_mask_password_with_colon(self):
         """Line 399: mask_password masks the password part of userinfo."""
@@ -106,16 +106,6 @@ class TestURL:
         r = repr(url)
         assert r.startswith("URL(")
         assert "example.com" in r
-
-    def test_security_checks_method(self):
-        """Line 135: _security_checks() calls validate."""
-        from urlps._security.policy import SecurityPolicy
-        from urlps.url import URL
-
-        url = URL("https://example.com/", security_policy=SecurityPolicy.balanced())
-        # _security_checks() returns None; findings are stored on the instance.
-        assert url._security_checks() is None
-        assert isinstance(url.security_findings, list)
 
     def test_validate_with_explicit_policy(self):
         """Line 347: validate() with an explicit policy parameter."""
@@ -155,7 +145,7 @@ class TestURL:
             def parse(self, url):
                 raise ValueError("unexpected parse error")
 
-        with pytest.raises(ValueError, match="unexpected parse error"):
+        with pytest.raises(ValueError, match="unexpected parse error"), pytest.warns(DeprecationWarning):
             URL("https://example.com/", parser=BoguParser())
 
     def test_build_netloc_scheme_relative_fails_for_non_file(self):
@@ -275,11 +265,11 @@ class TestURLAdditional:
 
     def test_validate_copy_overrides_userinfo_non_string(self):
         """Line 475: non-string userinfo raises InvalidURLError."""
+        from urlps._validation import _URLValidation
         from urlps.exceptions import InvalidURLError
-        from urlps.url import _validate_copy_overrides
 
         with pytest.raises(InvalidURLError, match="userinfo must be"):
-            _validate_copy_overrides({"userinfo": 999})
+            _URLValidation.validate_copy_overrides({"userinfo": 999})
 
     def test_effective_port_falls_back_to_scheme_default(self):
         """effective_port returns scheme default when _port is None."""

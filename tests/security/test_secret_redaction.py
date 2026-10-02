@@ -54,7 +54,8 @@ def test_debug_true_keeps_the_raw_value() -> None:
     [
         lambda u: u.with_host("127.0.0.1"),
         lambda u: u.with_query("a=1#SECRET"),
-        lambda u: u.with_path("/%2e%2e/etc/passwd"),
+        # A dot-segment path no longer fails: it is normalized like a parse.
+        lambda u: u.with_path("//evil.example/x"),
         lambda u: u.validate(policy=SecurityPolicy(name="no-creds", reject_credentials=True), raise_on_error=True),
     ],
 )

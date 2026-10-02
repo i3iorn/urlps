@@ -8,9 +8,8 @@ UTS-39 §5.1 Highly Restrictive, applied per label -- so a legitimate IDN like
 from __future__ import annotations
 
 from bisect import bisect_right
-from functools import lru_cache
 
-from ..._cache_config import SECURITY_CACHE_SIZE
+from .._cache_config import SECURITY_CACHE_SIZE, lru_cache
 from ._tables import (
     _RANGE_ENDS,
     _RANGE_SCRIPTS,
@@ -46,7 +45,7 @@ def script_of(char: str) -> str | None:
     return SCRIPT_NAMES[_RANGE_SCRIPTS[index]]
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@lru_cache(maxsize=SECURITY_CACHE_SIZE, group="security")
 def scripts_of(label: str) -> frozenset[str]:
     """Scripts present in ``label``, excluding Common and Inherited.
 
@@ -62,7 +61,7 @@ def scripts_of(label: str) -> frozenset[str]:
     return frozenset(found)
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@lru_cache(maxsize=SECURITY_CACHE_SIZE, group="security")
 def is_single_script_label(label: str) -> bool:
     """Whether ``label`` satisfies UTS-39 §5.1 Highly Restrictive.
 

@@ -1,4 +1,4 @@
-"""Exercises the idna-absent fallback path in ``_security/_unicode/uts46.py``.
+"""Exercises the idna-absent fallback path in ``_unicode/uts46.py``.
 
 That path (stdlib-only IDNA 2003 encoding/decoding) previously had no test
 coverage at all: both branches are marked ``# pragma: no cover - depends on
@@ -25,7 +25,7 @@ import sys
 
 import pytest
 
-UTS46_MODULE_NAME = "urlps._security._unicode.uts46"
+UTS46_MODULE_NAME = "urlps._unicode.uts46"
 
 
 @pytest.fixture
@@ -73,7 +73,7 @@ class TestIdnaFallback:
         assert uts46_without_idna.to_ascii("straße.de") == "strasse.de"
 
     def test_to_ascii_raises_idna_error_for_invalid_host(self, uts46_without_idna):
-        from urlps._security._unicode.uts46 import IdnaError
+        from urlps._unicode.uts46 import IdnaError
 
         with pytest.raises(IdnaError):
             uts46_without_idna.to_ascii("☃" * 300)  # snowman, way past a label limit

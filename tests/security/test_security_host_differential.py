@@ -17,8 +17,6 @@ reviewable in source.
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import pytest
 
 from urlps import (
@@ -194,32 +192,28 @@ def test_userinfo_override_cannot_smuggle_a_metadata_authority(policy: str, user
 # ---------------------------------------------------------------------------
 
 
-def test_dns_check_resolves_the_host_the_url_exposes() -> None:
+def test_dns_check_resolves_the_host_the_url_exposes(fakes) -> None:
     """Not the raw spelling: getaddrinfo would IDNA-2003-encode it (faß.de -> fass.de)."""
-    with patch("urlps._security.check_dns_rebinding_detailed", return_value=(True, None)) as dns_check:
-        url = parse_url("https://faß.de/", check_dns=True)
-    dns_check.assert_called_once()
-    assert dns_check.call_args.args[0] == url.host
+    resolver = fakes.Resolver()
+    url = parse_url("https://faß.de/", check_dns=True, services=fakes.services(resolver=resolver))
+    assert resolver.calls == [url.host]
     assert url.host.isascii()
 
 
-def test_dns_check_sees_host_without_trailing_query() -> None:
-    with patch("urlps._security.check_dns_rebinding_detailed", return_value=(True, None)) as dns_check:
-        parse_url("https://api.example.com?x=1", check_dns=True)
-    assert dns_check.call_args.args[0] == "api.example.com"
+def test_dns_check_sees_host_without_trailing_query(fakes) -> None:
+    resolver = fakes.Resolver()
+    parse_url("https://api.example.com?x=1", check_dns=True, services=fakes.services(resolver=resolver))
+    assert resolver.calls == ["api.example.com"]
 
 
 @pytest.mark.parametrize(
     "url",
     ["https://phish.example?x", "https://phish.example#x", "https://PHISH.example./", "https://phish.example/"],
 )
-def test_phishing_check_matches_every_spelling(url: str) -> None:
-    with patch(
-        "urlps._security.check_against_phishing_db_detailed",
-        side_effect=lambda host: (host == "phish.example", True),
-    ):
-        with pytest.raises(InvalidURLError) as excinfo:
-            parse_url(url, check_phishing=True)
+def test_phishing_check_matches_every_spelling(url: str, fakes) -> None:
+    services = fakes.services(feed=fakes.Feed(listed=("phish.example",)))
+    with pytest.raises(InvalidURLError) as excinfo:
+        parse_url(url, check_phishing=True, services=services)
     assert excinfo.value.code is not None
     assert excinfo.value.code.value == "phishing_domain"
 

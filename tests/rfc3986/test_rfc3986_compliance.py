@@ -7,7 +7,7 @@ to ensure full compliance with the URI specification.
 
 import pytest
 
-from urlps import compose_url, parse_url, parse_url_unsafe
+from urlps import compose_url, parse_url, parse_url_local, parse_url_unsafe
 from urlps._builder import Builder
 from urlps._parser import Parser
 from urlps.exceptions import InvalidURLError
@@ -111,10 +111,9 @@ class TestPathNormalization:
             assert url.path == expected_path, f"Failed for {input_url}"
 
     def test_multiple_consecutive_slashes(self):
-        """Multiple slashes should be normalized"""
-        # Use parse_url_unsafe for RFC compliance tests with path patterns
-        url = parse_url_unsafe("http://example.com//a///b//c")
-        assert url.path == "/a/b/c"
+        """Empty segments are not dot segments: RFC 3986 §6.2.2.3 keeps them."""
+        url = parse_url_local("http://example.com//a///b//c")
+        assert url.path == "//a///b//c"
 
     def test_trailing_slash_preservation(self):
         """Trailing slashes should be preserved"""

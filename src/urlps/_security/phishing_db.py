@@ -1,3 +1,11 @@
+"""The phishing-domain feed: download, verify, refresh and match.
+
+``PhishingDatabaseManager`` takes its source (``fetch``), clock and limits
+(``PhishingFeedConfig``) as arguments, so a deployment can point it at a
+mirror or a local list and a test needs no monkeypatching. The module-level
+functions use one process-global manager with the default configuration.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -5,16 +13,17 @@ import ipaddress
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from urllib import request
 from urllib.error import URLError
 
 from .._patterns import PATTERNS
 from ..constants import (
-    DEFAULT_DNS_TIMEOUT,
     DEFAULT_PHISHING_DATABASE_MAX_BYTES,
     DEFAULT_PHISHING_DATABASE_REFRESH_SECONDS,
     DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS,
+    DEFAULT_PHISHING_DATABASE_TIMEOUT_SECONDS,
     PHISHING_DATABASE_SHA256,
     PHISHING_DATABASE_URL,
 )
@@ -41,15 +50,71 @@ class PhishingDatabase:
     last_success_epoch: float | None = None
 
 
+@dataclass(frozen=True)
+class PhishingFeedConfig:
+    """Where the feed comes from and how it is kept fresh."""
+
+    url: str = PHISHING_DATABASE_URL
+    timeout_seconds: float = DEFAULT_PHISHING_DATABASE_TIMEOUT_SECONDS
+    max_bytes: int = DEFAULT_PHISHING_DATABASE_MAX_BYTES
+    #: Re-download a successfully loaded list after this long.
+    refresh_seconds: float = DEFAULT_PHISHING_DATABASE_REFRESH_SECONDS
+    #: Never attempt a lazy download more often than this, success or not.
+    retry_cooldown_seconds: float = DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS
+    #: Reject a download whose SHA-256 differs (None: no pin).
+    sha256: str | None = PHISHING_DATABASE_SHA256
+
+
+def _wall_clock() -> float:
+    # Looked up at call time, so substituting time.time still takes effect.
+    return time.time()
+
+
+class FeedUnavailable(Exception):
+    """A fetch did not produce a feed; the message is the recorded reason."""
+
+
+#: (url, timeout_seconds, max_bytes) -> the feed body. Raises FeedUnavailable
+#: (or an OSError/ValueError) when there is nothing to load.
+Fetch = Callable[[str, float, int], bytes]
+
+
+def fetch_over_http(url: str, timeout_seconds: float, max_bytes: int) -> bytes:
+    """Download the feed with urllib, refusing a non-200 answer or more than ``max_bytes``."""
+    with request.urlopen(  # nosec B310 -- the configured feed URL, an https:// constant by default
+        url,
+        timeout=timeout_seconds,
+    ) as response:
+        if response.status != 200:
+            raise FeedUnavailable(f"unexpected_status:{response.status}")
+        body = response.read(max_bytes + 1)
+    if len(body) > max_bytes:
+        raise FeedUnavailable("download_too_large")
+    return bytes(body)
+
+
 # ---------------------------------------------------------------------------
 # Core Manager
 # ---------------------------------------------------------------------------
 
 
 class PhishingDatabaseManager:
-    """Manages secure retrieval and caching of phishing hostnames."""
+    """Manages secure retrieval and caching of phishing hostnames.
 
-    def __init__(self) -> None:
+    Implements the ``PhishingFeed`` interface (:meth:`lookup`) the security
+    checks use.
+    """
+
+    def __init__(
+        self,
+        config: PhishingFeedConfig | None = None,
+        *,
+        fetch: Fetch = fetch_over_http,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        self._config = config if config is not None else PhishingFeedConfig()
+        self._fetch = fetch
+        self._clock = clock if clock is not None else _wall_clock
         self._db: PhishingDatabase = PhishingDatabase()
         # Serialises the lazy refresh. Without it, every thread that arrives
         # while the database is empty starts its own multi-megabyte download.
@@ -61,6 +126,13 @@ class PhishingDatabaseManager:
     def is_available(self) -> bool:
         """Whether the database holds data, i.e. whether checks are meaningful."""
         return bool(self._db.hostnames)
+
+    def lookup(self, host: str) -> bool | None:
+        """True if ``host`` (or a parent domain) is listed, False if not, None if nothing could be checked."""
+        listed = self.check(host)
+        if listed:
+            return True
+        return False if self.is_available else None
 
     def check(self, host: str) -> bool:
         """Return True if host is present in the phishing database.
@@ -96,14 +168,14 @@ class PhishingDatabaseManager:
         refresh TTL. Explicit refresh() calls (refresh_phishing_db()) are
         unaffected -- they always attempt.
         """
-        now = time.time()
+        now = self._clock()
         last_attempt = self._db.last_refresh_epoch
-        if last_attempt is not None and (now - last_attempt) < DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS:
+        if last_attempt is not None and (now - last_attempt) < self._config.retry_cooldown_seconds:
             return False
         if not self._db.hostnames:
             return True
         last_success = self._db.last_success_epoch
-        return last_success is None or (now - last_success) >= DEFAULT_PHISHING_DATABASE_REFRESH_SECONDS
+        return last_success is None or (now - last_success) >= self._config.refresh_seconds
 
     def refresh(self) -> int:
         """Refresh the phishing database and return the number of entries."""
@@ -120,8 +192,8 @@ class PhishingDatabaseManager:
             "last_refresh_epoch": self._db.last_refresh_epoch,
             "last_success_epoch": last_success,
             "stale": bool(self._db.hostnames)
-            and (last_success is None or time.time() - last_success >= DEFAULT_PHISHING_DATABASE_REFRESH_SECONDS),
-            "sha256_pinned": PHISHING_DATABASE_SHA256 is not None,
+            and (last_success is None or self._clock() - last_success >= self._config.refresh_seconds),
+            "sha256_pinned": self._config.sha256 is not None,
             "last_error": self._db.last_error,
             "error_count": self._db.error_count,
         }
@@ -146,36 +218,29 @@ class PhishingDatabaseManager:
         """
         return PhishingDatabase(
             hostnames=self._db.hostnames,
-            last_refresh_epoch=time.time(),
+            last_refresh_epoch=self._clock(),
             last_error=reason,
             error_count=self._db.error_count + 1,
             last_success_epoch=self._db.last_success_epoch,
         )
 
     def _download(self) -> PhishingDatabase:
-        """Download and validate phishing hostnames."""
+        """Fetch, verify and parse the feed; on any failure keep what was loaded."""
+        config = self._config
         try:
-            with request.urlopen(  # nosec B310 -- PHISHING_DATABASE_URL is a fixed https:// constant, not user input
-                PHISHING_DATABASE_URL,
-                timeout=DEFAULT_DNS_TIMEOUT,
-            ) as response:
-                if response.status != 200:
-                    return self._failed(f"unexpected_status:{response.status}")
-
-                raw_bytes = response.read(DEFAULT_PHISHING_DATABASE_MAX_BYTES + 1)
-                if len(raw_bytes) > DEFAULT_PHISHING_DATABASE_MAX_BYTES:
-                    return self._failed("download_too_large")
-                if PHISHING_DATABASE_SHA256 is not None and hashlib.sha256(raw_bytes).hexdigest() != (
-                    PHISHING_DATABASE_SHA256
-                ):
-                    return self._failed("hash_mismatch")
-                content = raw_bytes.decode("utf-8", errors="ignore")
-
+            raw_bytes = self._fetch(config.url, config.timeout_seconds, config.max_bytes)
+        except FeedUnavailable as exc:
+            return self._failed(str(exc))
         except (TimeoutError, URLError, OSError, ValueError) as exc:
             return self._failed(f"download_error:{type(exc).__name__}")
+        if len(raw_bytes) > config.max_bytes:
+            return self._failed("download_too_large")
+        if config.sha256 is not None and hashlib.sha256(raw_bytes).hexdigest() != config.sha256:
+            return self._failed("hash_mismatch")
+        content = raw_bytes.decode("utf-8", errors="ignore")
 
         hostnames = self._parse_hostnames(content)
-        now = time.time()
+        now = self._clock()
         return PhishingDatabase(
             hostnames=hostnames,
             last_refresh_epoch=now,
@@ -238,6 +303,11 @@ def _is_ip_literal(host: str) -> bool:
 _GLOBAL_MANAGER = PhishingDatabaseManager()
 
 
+def default_phishing_feed() -> PhishingDatabaseManager:
+    """The process-global feed the module functions (and default services) use."""
+    return _GLOBAL_MANAGER
+
+
 def check_against_phishing_db(host: str) -> bool:
     """Check if host exists in the phishing database."""
     return _GLOBAL_MANAGER.check(host)
@@ -272,11 +342,15 @@ def clear_phishing_db() -> None:
 
 
 __all__ = [
+    "FeedUnavailable",
     "PhishingDatabase",
     "PhishingDatabaseManager",
+    "PhishingFeedConfig",
     "check_against_phishing_db",
     "check_against_phishing_db_detailed",
     "clear_phishing_db",
+    "default_phishing_feed",
+    "fetch_over_http",
     "get_phishing_db_info",
     "refresh_phishing_db",
 ]

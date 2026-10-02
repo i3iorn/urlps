@@ -204,42 +204,33 @@ class TestFailClosed:
 class TestPhishingDegradation:
     """Opting into a check and silently getting none is the worst failure mode."""
 
-    def test_unavailable_database_is_reported_not_hidden(self):
+    def test_unavailable_database_is_reported_not_hidden(self, fakes):
         from urlps._security import collect_security_findings
 
-        with patch(
-            "urlps._security.check_against_phishing_db_detailed",
-            return_value=(False, False),
-        ):
-            findings = collect_security_findings("https://example.com/", policy="strict", check_phishing=True)
+        findings = collect_security_findings(
+            "https://example.com/",
+            policy="strict",
+            check_phishing=True,
+            services=fakes.services(feed=fakes.Feed(available=False)),
+        )
         codes = {f.code for f in findings}
         assert "phishing_db_unavailable" in codes
 
-    def test_unavailable_database_does_not_reject_the_url(self):
+    def test_unavailable_database_does_not_reject_the_url(self, fakes):
         """A degraded optional check must not turn into a hard parse failure."""
-        with patch(
-            "urlps._security.check_against_phishing_db_detailed",
-            return_value=(False, False),
-        ):
-            url = parse_url("https://example.com/", check_phishing=True)
+        services = fakes.services(feed=fakes.Feed(available=False))
+        url = parse_url("https://example.com/", check_phishing=True, services=services)
         assert url.host == "example.com"
         assert any(f.code == "phishing_db_unavailable" for f in url.security_findings)
 
-    def test_available_database_with_clean_host_reports_nothing(self):
-        with patch(
-            "urlps._security.check_against_phishing_db_detailed",
-            return_value=(False, True),
-        ):
-            url = parse_url("https://example.com/", check_phishing=True)
+    def test_available_database_with_clean_host_reports_nothing(self, fakes):
+        url = parse_url("https://example.com/", check_phishing=True, services=fakes.services(feed=fakes.Feed()))
         assert url.security_findings == []
 
-    def test_detected_phishing_still_rejects(self):
-        with patch(
-            "urlps._security.check_against_phishing_db_detailed",
-            return_value=(True, True),
-        ):
-            with pytest.raises(InvalidURLError):
-                parse_url("https://example.com/", check_phishing=True)
+    def test_detected_phishing_still_rejects(self, fakes):
+        services = fakes.services(feed=fakes.Feed(listed=("example.com",)))
+        with pytest.raises(InvalidURLError):
+            parse_url("https://example.com/", check_phishing=True, services=services)
 
 
 class TestDNSResolutionTimeout:
@@ -284,29 +275,31 @@ class TestDNSExceptionTypes:
             ("DNS_CONNECTION_FAILED", "DNSConnectionError"),
         ],
     )
-    def test_dns_finding_raises_matching_subclass(self, error_code_name, exception_cls_name):
+    def test_dns_finding_raises_matching_subclass(self, error_code_name, exception_cls_name, fakes):
+        from urlps import DNSRateLimiter, DNSRateLimiterConfig
         from urlps import exceptions as exc_module
 
-        error_code = getattr(exc_module.ErrorCode, error_code_name)
         expected_cls = getattr(exc_module, exception_cls_name)
+        limiter = None
+        resolver = fakes.Resolver()
+        if error_code_name == "DNS_RATE_LIMITED":
+            limiter = DNSRateLimiter(DNSRateLimiterConfig(max_lookups_per_host=1))
+            assert limiter.is_allowed("example.com")  # spend the host's budget
+        elif error_code_name == "DNS_RESOLUTION_FAILED":
+            resolver = fakes.Resolver(error=socket.gaierror(-2, "Name or service not known"))
+        else:
+            resolver = fakes.Resolver(error=TimeoutError())
 
-        with patch(
-            "urlps._security.check_dns_rebinding_detailed",
-            return_value=(False, error_code),
-        ):
-            with pytest.raises(expected_cls):
-                parse_url("https://example.com/", check_dns=True)
+        services = fakes.services(resolver=resolver, limiter=limiter)
+        with pytest.raises(expected_cls) as excinfo:
+            parse_url("https://example.com/", check_dns=True, services=services)
+        assert excinfo.value.code is getattr(exc_module.ErrorCode, error_code_name)
 
-    def test_dns_exception_subclasses_remain_invalid_url_error(self):
+    def test_dns_exception_subclasses_remain_invalid_url_error(self, fakes):
         """Existing `except InvalidURLError` callers must be unaffected."""
-        from urlps.exceptions import ErrorCode
-
-        with patch(
-            "urlps._security.check_dns_rebinding_detailed",
-            return_value=(False, ErrorCode.DNS_RESOLUTION_FAILED),
-        ):
-            with pytest.raises(InvalidURLError):
-                parse_url("https://example.com/", check_dns=True)
+        services = fakes.services(resolver=fakes.Resolver(error=socket.gaierror(-2, "unknown")))
+        with pytest.raises(InvalidURLError):
+            parse_url("https://example.com/", check_dns=True, services=services)
 
 
 class TestConcurrency:

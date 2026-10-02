@@ -1,6 +1,6 @@
 """Unicode-aware host findings: mixed scripts, confusables, invisible characters.
 
-Policy-facing layer over :mod:`urlps._security._unicode`. Punycode is ASCII,
+Policy-facing layer over :mod:`urlps._unicode`. Punycode is ASCII,
 and homograph attacks are delivered A-label-encoded (that is what actually
 goes on the wire), so everything here decodes Punycode *first*, then
 analyses per label -- never on the raw ASCII form.
@@ -8,15 +8,14 @@ analyses per label -- never on the raw ASCII form.
 
 from __future__ import annotations
 
-from functools import lru_cache
-
-from .._cache_config import SECURITY_CACHE_SIZE
-from ..exceptions import ErrorCode
-from ._unicode import (
+from .._cache_config import SECURITY_CACHE_SIZE, lru_cache
+from .._host import strip_brackets
+from .._unicode import (
     is_single_script_label,
     is_whole_script_confusable,
     to_unicode,
 )
+from ..exceptions import ErrorCode
 
 __all__ = [
     "HostFinding",
@@ -61,13 +60,7 @@ _ZERO_WIDTH = frozenset(
 HostFinding = tuple[ErrorCode, str, str]
 
 
-def _strip_brackets(host: str) -> str:
-    if host.startswith("[") and host.endswith("]"):
-        return host[1:-1]
-    return host
-
-
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@lru_cache(maxsize=SECURITY_CACHE_SIZE, group="security")
 def analyze_host(host: str) -> tuple[HostFinding, ...]:
     """Return the Unicode-related findings for ``host``.
 
@@ -76,9 +69,8 @@ def analyze_host(host: str) -> tuple[HostFinding, ...]:
     if not host:
         return ()
 
-    inner = _strip_brackets(host)
     # An IPv6 literal has no labels to analyse and no scripts to mix.
-    if inner != host:
+    if strip_brackets(host) != host:
         return ()
 
     findings: list[HostFinding] = []

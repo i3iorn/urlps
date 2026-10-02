@@ -68,6 +68,11 @@ class ErrorCode(Enum):
     ZERO_WIDTH_IN_HOST = "zero_width_in_host"
     #: An "xn--" label that is not decodable Punycode.
     INVALID_PUNYCODE = "invalid_punycode"
+    #: A scheme the policy does not allow (``allowed_schemes``).
+    UNSUPPORTED_SCHEME = "unsupported_scheme"
+    #: A scheme that executes code or reaches local resources (javascript:,
+    #: data:, file:, ...), not allowed unless ``allow_custom_scheme``.
+    UNSAFE_SCHEME = "unsafe_scheme"
 
 
 class URLpError(Exception):
@@ -137,8 +142,13 @@ class URLBuildError(InvalidURLError):
     """Raised when constructing a URL from components fails."""
 
 
-class UnsupportedSchemeError(InvalidURLError):
-    """Raised when a scheme is unrecognized or disallowed."""
+class UnsupportedSchemeError(URLParseError):
+    """Raised when a scheme is unrecognized or disallowed.
+
+    A ``URLParseError`` too: urlps 1.1 raised ``URLParseError`` for an
+    unsafe scheme such as ``javascript:``, so handlers written for that keep
+    catching it.
+    """
 
 
 class RelativeReferenceError(InvalidURLError):

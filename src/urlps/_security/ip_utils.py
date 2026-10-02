@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import ipaddress
 from collections.abc import Callable, Iterable, Sequence
-from functools import lru_cache
 
-from .._cache_config import SECURITY_CACHE_SIZE, bounded_lru_cache
+from .._cache_config import SECURITY_CACHE_SIZE, bounded_lru_cache, lru_cache
+from .._host import ip_literal_text
 from ..constants import (
     BLOCKED_HOSTNAMES,
     LOOPBACK_HOSTNAMES,
@@ -93,22 +93,12 @@ def _check_ipv4_private(host: str) -> bool:
         return False
 
 
-def _strip_ipv6_brackets(host: str) -> str:
-    """Strip brackets and encoded zone ID from IPv6 address."""
-    if host.startswith("[") and host.endswith("]"):
-        inner = host[1:-1]
-        if "%25" in inner:
-            inner, _, _ = inner.partition("%25")
-        return inner
-    return host
-
-
 def _check_ipv6_private(host: str) -> bool:
     """Check if IPv6 address (bracketed) is private/reserved."""
     if not host.startswith("[") or not host.endswith("]"):
         return False
     try:
-        inner = _strip_ipv6_brackets(host)
+        inner = ip_literal_text(host)
         return not _is_ip_safe(ipaddress.IPv6Address(inner))
     except (ValueError, ipaddress.AddressValueError):
         return False
@@ -275,7 +265,7 @@ def _check_resolved_ips_safe(
     return checked_any
 
 
-@lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@lru_cache(maxsize=SECURITY_CACHE_SIZE, group="security")
 def is_private_ip(host: str) -> bool:
     """Check if host is a private/reserved IP address."""
     if not isinstance(host, str):
@@ -288,7 +278,7 @@ def _resolve_host_to_ip(host: str) -> IpAddress | None:
 
     Returns None for genuine hostnames (which need DNS, out of scope here).
     """
-    stripped = _strip_ipv6_brackets(host)
+    stripped = ip_literal_text(host)
     for factory in (ipaddress.IPv6Address, ipaddress.IPv4Address):
         try:
             return factory(stripped)
@@ -338,7 +328,7 @@ def _is_permitted_private_host(host: str, host_lower: str) -> bool:
     return host_lower in LOOPBACK_HOSTNAMES or host_lower.endswith((".local", ".localhost"))
 
 
-@bounded_lru_cache(maxsize=SECURITY_CACHE_SIZE)
+@bounded_lru_cache(maxsize=SECURITY_CACHE_SIZE, group="security")
 def is_ssrf_risk(host: str, *, allow_private: bool = False) -> bool:
     """Check if host poses SSRF risk (blocked hostnames, private IPs, and ambiguous IPs).
 
