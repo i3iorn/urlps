@@ -10,12 +10,13 @@ every serialization.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from urllib.parse import urlsplit
 
 import pytest
 
 from urlps import InvalidURLError, URLBuildError, build, parse_url, parse_url_local
-from urlps._mutations import _URLMutations
+from urlps._mutations import assert_round_trip
 
 # ---------------------------------------------------------------------------
 # with_scheme()
@@ -129,19 +130,21 @@ def test_with_fragment_normalizes_escapes() -> None:
 
 
 @pytest.mark.parametrize(
-    "component,value",
-    [("_query", "a#b"), ("_host", "other.example"), ("_userinfo", "a@b"), ("_port", 0), ("_scheme", "HTTPS")],
-)
-def test_round_trip_assertion_detects_a_disagreeing_component(component: str, value: object) -> None:
-    url = parse_url("https://user@example.com/x?q=1#f")
-    object.__setattr__(url, "_frozen", False)
-    object.__setattr__(url, component, value)
-    if component == "_host":
+    "changes",
+    [
+        {"query": "a#b"},
         # A host disagreement cannot arise from serialization; simulate the
         # parser seeing something else by changing the builder's view.
-        object.__setattr__(url, "_userinfo", "x@other.example")
+        {"host": "other.example", "userinfo": "x@other.example"},
+        {"userinfo": "a@b"},
+        {"port": 0},
+        {"scheme": "HTTPS"},
+    ],
+)
+def test_round_trip_assertion_detects_a_disagreeing_component(changes: dict) -> None:
+    url = parse_url("https://user@example.com/x?q=1#f")
     with pytest.raises(InvalidURLError, match=r"round-trip|re-parse"):
-        _URLMutations._assert_round_trip(url)
+        assert_round_trip(replace(url._parts, **changes), url._context)
 
 
 def test_round_trip_assertion_accepts_every_ordinary_derivation() -> None:

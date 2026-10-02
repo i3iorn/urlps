@@ -1,7 +1,8 @@
-"""URL mutation and derivation helpers.
+"""URL derivation: ``copy()`` and the ``with_*()`` methods.
 
-Internal module: handles copy(), with_*() methods that create new URL instances
-with modified components, while preserving immutability guarantees.
+Works on :class:`~urlps._components.URLParts` and the URL's context; a new
+URL is built through ``type(url)._from_parts`` -- the same constructor path
+every derived URL takes -- so this module never imports ``URL`` itself.
 """
 
 from __future__ import annotations
@@ -9,273 +10,150 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from ._components import URLParts
 from ._helpers import _normalize_port
 from ._normalize import normalize_percent_encoding, normalize_userinfo
-from ._parser import normalize_path
+from ._parser import normalize_path, parse_netloc
+from ._parser import parse_url as parse_components
 from ._security._unicode.uts46 import canonical_host
+from ._validation import _URLValidation
 from .constants import DEFAULT_PORTS, OFFICIAL_SCHEMES
 from .exceptions import InvalidURLError
 
 if TYPE_CHECKING:
-    from .url import URL
+    from ._builder import Builder
+    from .url import URL, _URLContext
 
 
-class _URLMutations:
-    """URL derivation methods (copy, with_*).
+def derive(url: URL, overrides: Mapping[str, Any]) -> URL:
+    """Return a new URL: ``url`` with ``overrides`` applied, validated under its own policy."""
+    context = url._context
+    _URLValidation.validate_copy_overrides(dict(overrides), allow_custom_scheme=context.allow_custom_scheme)
+    components = url._parts.as_mapping()
+    components.update(overrides)
+    components["port"] = _normalize_port(components.get("port"))
 
-    All methods return new URL instances. The original URL remains unchanged.
+    # The overridable components are stored the way the parser would
+    # store them, so the copy means exactly what its string means.
+    scheme = components.get("scheme")
+    if isinstance(scheme, str):
+        components["scheme"] = scheme = scheme.lower()
+    if "scheme" in overrides and "port" not in overrides:
+        # The old scheme's default port is not an explicit choice; carrying
+        # it over turned https://h/ into http://h:443/.
+        old_default = DEFAULT_PORTS.get((url._parts.scheme or "").lower())
+        if url._parts.port is not None and url._parts.port == old_default:
+            components["port"] = DEFAULT_PORTS.get(scheme or "")
+    if overrides.get("userinfo") is not None:
+        try:
+            components["userinfo"] = normalize_userinfo(overrides["userinfo"])
+        except UnicodeEncodeError as exc:
+            raise InvalidURLError("Userinfo is not valid Unicode.", component="userinfo") from exc
+    if overrides.get("query") is not None:
+        components["query"] = normalize_percent_encoding(overrides["query"])
+    if overrides.get("fragment") is not None:
+        components["fragment"] = normalize_percent_encoding(overrides["fragment"])
+    if isinstance(overrides.get("path"), str):
+        # Exactly the parser's path normalization: .path, str(url) and a
+        # re-parse of it then agree ("/a/../b" is "/b" in all three).
+        components["path"] = normalize_path(overrides["path"])
+
+    # The parser's host form (IDNA, then RFC 3986 §6.2.2): with_host("EXAMPLE.COM.")
+    # must not hand back a .host that defeats an allowlist, and a Unicode
+    # spelling of 127.0.0.1 must not stay un-encoded while every client maps
+    # it to loopback. validate_copy_overrides() has already proven the host
+    # encodes.
+    host = components.get("host")
+    if isinstance(host, str):
+        components["host"] = canonical_host(host)
+    _reconcile_query_components(components, overrides, context.builder)
+
+    parts = URLParts(
+        scheme=components.get("scheme"),
+        userinfo=components.get("userinfo"),
+        host=components.get("host"),
+        port=components.get("port"),
+        path=components.get("path") or "",
+        query=components.get("query"),
+        fragment=components.get("fragment"),
+        query_pairs=tuple(components.get("query_pairs") or ()),
+    )
+    assert_round_trip(parts, context)
+    recognized = (scheme in OFFICIAL_SCHEMES) if scheme else None
+    return type(url)._from_parts(parts, context, recognized_scheme=recognized)
+
+
+def assert_round_trip(parts: URLParts, context: _URLContext) -> None:
+    """Refuse derived parts whose string would name a different destination.
+
+    A copy is assembled from components rather than parsed, so nothing
+    else guarantees that ``str(url)`` goes where ``url`` reports -- and
+    when it does not, the security checks validated one URL and the
+    caller sends another. What decides the destination is the scheme and
+    authority, plus the query not swallowing a "#". The path cannot move
+    either (the builder escapes "?" and "#" in it, and a "//" path is only
+    ever emitted after an authority or behind a "/." prefix), and the
+    fragment comes last, so they are left out -- which also keeps a long
+    percent-encoded path or fragment, longer serialized than the parse
+    limits allow, from failing a derivation. Scheme-less URLs are skipped:
+    they serialize without "//" by design (``build()``).
     """
+    if parts.query is not None and "#" in parts.query:
+        raise InvalidURLError("Derived URL does not round-trip: its query contains '#'.", component="query")
+    if not parts.scheme:
+        return
+    authority_only = context.builder.compose(
+        {"scheme": parts.scheme, "userinfo": parts.userinfo, "host": parts.host, "port": parts.port, "path": "/"}
+    )
+    try:
+        reparsed = parse_components(authority_only, allow_custom_scheme=context.allow_custom_scheme)
+    except InvalidURLError as exc:
+        raise InvalidURLError(f"Derived URL does not re-parse: {exc.message}", component="url") from exc
 
-    __slots__ = ()
+    def effective_port(scheme: str | None, port: int | None) -> int | None:
+        return port if port is not None else DEFAULT_PORTS.get((scheme or "").lower())
 
-    @staticmethod
-    def copy(url: URL, **overrides: Any) -> URL:
-        """Create a copy with optional component overrides (exception values redacted unless debug)."""
-        try:
-            return _URLMutations._copy(url, **overrides)
-        except Exception as exc:
-            if not url._debug:
-                from .url import _redact_exception
-
-                _redact_exception(exc)
-            raise
-
-    @staticmethod
-    def _copy(url: URL, **overrides: Any) -> URL:
-        """Create a copy with optional component overrides.
-
-        Args:
-            url: The URL instance to copy from.
-            overrides: Components to override.
-
-        Returns:
-            A new URL instance with the specified overrides.
-
-        Raises:
-            InvalidURLError: If overrides are invalid.
-        """
-        from ._validation import _URLValidation
-
-        _URLValidation.validate_copy_overrides(overrides, allow_custom_scheme=url._parser.custom_scheme)
-        components = url._to_dict()
-        components.update(overrides)
-        components["port"] = _normalize_port(components.get("port"))
-
-        # The overridable components are stored the way the parser would
-        # store them, so the copy means exactly what its string means.
-        scheme = components.get("scheme")
-        if isinstance(scheme, str):
-            components["scheme"] = scheme = scheme.lower()
-        if "scheme" in overrides and "port" not in overrides:
-            # The old scheme's default port is not an explicit choice; carrying
-            # it over turned https://h/ into http://h:443/.
-            old_default = DEFAULT_PORTS.get((url._scheme or "").lower())
-            if url._port is not None and url._port == old_default:
-                components["port"] = DEFAULT_PORTS.get(scheme or "")
-        if overrides.get("userinfo") is not None:
-            try:
-                components["userinfo"] = normalize_userinfo(overrides["userinfo"])
-            except UnicodeEncodeError as exc:
-                raise InvalidURLError("Userinfo is not valid Unicode.", component="userinfo") from exc
-        if overrides.get("query") is not None:
-            components["query"] = normalize_percent_encoding(overrides["query"])
-        if overrides.get("fragment") is not None:
-            components["fragment"] = normalize_percent_encoding(overrides["fragment"])
-        if isinstance(overrides.get("path"), str):
-            # Exactly the parser's path normalization: .path, str(url) and a
-            # re-parse of it then agree ("/a/../b" is "/b" in all three).
-            components["path"] = normalize_path(overrides["path"])
-
-        # copy() does not go through the parser, so the RFC 3986 §6.2.2
-        # host normalization applied there has to be re-applied here --
-        # otherwise with_host("EXAMPLE.COM.") would hand back a URL whose
-        # .host defeats the caller's allowlist, reintroducing exactly the
-        # bypass that normalization exists to close.
-        #
-        # IDNA-encode first, exactly as the parser does: storing the Unicode
-        # spelling left .host non-ASCII (fullwidth "127.0.0.1" with
-        # ideographic full stops) while every HTTP client and getaddrinfo map
-        # it straight to loopback. validate_copy_overrides() has already
-        # proven the host encodes, via the same to_ascii().
-        host_override = components.get("host")
-        if isinstance(host_override, str):
-            components["host"] = canonical_host(host_override)
-        _URLMutations._reconcile_query_components(components, overrides)
-
-        # Import here to avoid circular import
-        from .url import URL as URLClass
-
-        new_url = object.__new__(URLClass)
-        # Same reason as in __init__: __setattr__ reads this on every write.
-        object.__setattr__(new_url, "_frozen", False)
-        new_url.recognized_scheme = (scheme in OFFICIAL_SCHEMES) if scheme else None
-        new_url._parser = url._parser
-        new_url._builder = url._builder
-        new_url._audit_manager = url._audit_manager
-        new_url._debug = url._debug
-        new_url._check_dns = url._check_dns
-        new_url._check_phishing = url._check_phishing
-        new_url._security_policy = url._security_policy
-        new_url._correlation_id = url._correlation_id
-        new_url._apply_parsed(components)
-        _URLMutations._assert_round_trip(new_url)
-        new_url._security_findings = []
-        new_url._security_findings = new_url.validate(raise_on_error=True)
-        object.__setattr__(new_url, "_frozen", True)
-        return new_url
-
-    @staticmethod
-    def _assert_round_trip(url: URL) -> None:
-        """Refuse a derived URL whose string would name a different destination.
-
-        A copy is assembled from components rather than parsed, so nothing
-        else guarantees that ``str(url)`` goes where ``url`` reports -- and
-        when it does not, the security checks validated one URL and the
-        caller sends another. What decides the destination is the scheme and
-        authority, plus the query not swallowing a "#". The path cannot move
-        either (the builder escapes "?" and "#" in it, and a "//" path is only
-        ever emitted after an authority or behind a "/." prefix), and the
-        fragment comes last, so they are left out -- which also
-        keeps a long percent-encoded path or fragment, longer serialized than
-        the parse limits allow, from failing a derivation. Scheme-less URLs
-        are skipped: they serialize without "//" by design (``build()``).
-        """
-        if url._query is not None and "#" in url._query:
-            raise InvalidURLError("Derived URL does not round-trip: its query contains '#'.", component="query")
-        if not url._scheme:
-            return
-        from ._parser import Parser
-
-        authority_only = url._builder.compose(
-            {"scheme": url._scheme, "userinfo": url._userinfo, "host": url._host, "port": url._port, "path": "/"}
+    comparisons = (
+        ("scheme", parts.scheme, reparsed.scheme),
+        ("userinfo", parts.userinfo, reparsed.userinfo),
+        ("host", parts.host, reparsed.host),
+        ("port", effective_port(parts.scheme, parts.port), effective_port(reparsed.scheme, reparsed.port)),
+    )
+    changed = [name for name, ours, theirs in comparisons if ours != theirs]
+    if changed:
+        raise InvalidURLError(
+            f"Derived URL does not round-trip: re-parsing it would change {', '.join(changed)}.",
+            component=changed[0],
         )
-        parser = Parser()
-        parser.custom_scheme = url._parser.custom_scheme
-        try:
-            reparsed = parser.parse(authority_only)
-        except InvalidURLError as exc:
-            raise InvalidURLError(f"Derived URL does not re-parse: {exc.message}", component="url") from exc
 
-        def effective_port(scheme: Any, port: Any) -> Any:
-            return port if port is not None else DEFAULT_PORTS.get(str(scheme or "").lower())
 
-        comparisons = (
-            ("scheme", url._scheme, reparsed["scheme"]),
-            ("userinfo", url._userinfo, reparsed["userinfo"]),
-            ("host", url._host, reparsed["host"]),
-            ("port", effective_port(url._scheme, url._port), effective_port(reparsed["scheme"], reparsed["port"])),
-        )
-        changed = [name for name, ours, theirs in comparisons if ours != theirs]
-        if changed:
-            raise InvalidURLError(
-                f"Derived URL does not round-trip: re-parsing it would change {', '.join(changed)}.",
-                component=changed[0],
-            )
+def _reconcile_query_components(components: dict[str, Any], overrides: Mapping[str, Any], builder: Builder) -> None:
+    """Keep ``query`` and ``query_pairs`` from disagreeing after an override.
 
-    @staticmethod
-    def _reconcile_query_components(
-        components: dict[str, Any],
-        overrides: Mapping[str, Any],
-    ) -> None:
-        """Keep ``query`` and ``query_pairs`` from disagreeing after an override.
+    They are two representations of one value. Overriding only one of them
+    would otherwise leave the copy carrying the *previous* value in the
+    other, so the stale one has to be re-derived from whichever the caller
+    actually supplied.
+    """
+    overrode_query = "query" in overrides
+    overrode_pairs = "query_pairs" in overrides
+    if overrode_query == overrode_pairs:
+        # Neither (already consistent) or both (caller owns both).
+        return
+    if overrode_query:
+        query = components.get("query")
+        components["query_pairs"] = builder.parse_query(query) if query else []
+    else:
+        pairs = components.get("query_pairs") or []
+        components["query"] = builder.serialize_query(list(pairs)) if pairs else None
 
-        They are two representations of one value. Overriding only one of them
-        would otherwise leave the copy carrying the *previous* value in the
-        other, so the stale one has to be re-derived from whichever the caller
-        actually supplied.
-        """
-        overrode_query = "query" in overrides
-        overrode_pairs = "query_pairs" in overrides
-        if overrode_query == overrode_pairs:
-            # Neither (already consistent) or both (caller owns both).
-            return
 
-        # Need to access builder from components context
-        # This is passed through the copy flow
-        from ._builder import Builder
+def netloc_overrides(netloc: str, scheme: str | None) -> dict[str, Any]:
+    """The ``copy()`` overrides for ``with_netloc(netloc)``."""
+    userinfo, host, port = parse_netloc(netloc, require_host=bool(netloc))
+    if port is None and scheme and host:
+        port = DEFAULT_PORTS.get(scheme.lower())
+    return {"userinfo": userinfo, "host": host, "port": port}
 
-        builder = Builder()
-        if overrode_query:
-            query = components.get("query")
-            components["query_pairs"] = builder.parse_query(query) if query else []
-        else:
-            pairs = components.get("query_pairs") or []
-            components["query"] = builder.serialize_query(pairs) if pairs else None
 
-    @staticmethod
-    def with_scheme(url: URL, scheme: str | None) -> URL:
-        """Return new URL with different scheme."""
-        if scheme is not None and not isinstance(scheme, str):
-            raise InvalidURLError(f"Invalid scheme: {scheme!r}")
-        return _URLMutations.copy(url, scheme=scheme)
-
-    @staticmethod
-    def with_host(url: URL, host: str | None) -> URL:
-        """Return new URL with different host."""
-        return _URLMutations.copy(url, host=host)
-
-    @staticmethod
-    def with_port(url: URL, port: int | None) -> URL:
-        """Return new URL with different port."""
-        return _URLMutations.copy(url, port=port)
-
-    @staticmethod
-    def with_path(url: URL, path: str) -> URL:
-        """Return new URL with different path."""
-        return _URLMutations.copy(url, path=path)
-
-    @staticmethod
-    def with_query(url: URL, query: str | None) -> URL:
-        """Return new URL with different query string."""
-        return _URLMutations.copy(url, query=query)
-
-    @staticmethod
-    def with_fragment(url: URL, fragment: str | None) -> URL:
-        """Return new URL with different fragment."""
-        return _URLMutations.copy(url, fragment=fragment)
-
-    @staticmethod
-    def with_userinfo(url: URL, userinfo: str | None) -> URL:
-        """Return new URL with different userinfo."""
-        return _URLMutations.copy(url, userinfo=userinfo)
-
-    @staticmethod
-    def with_netloc(url: URL, netloc: str) -> URL:
-        """Return new URL with different netloc (userinfo@host:port)."""
-        from ._parser import Parser
-
-        parser = Parser()
-        userinfo, host, port = parser.parse_netloc(netloc, require_host=bool(netloc))
-        if port is None and url._scheme and host:
-            port = DEFAULT_PORTS.get(url._scheme.lower())
-        return _URLMutations.copy(url, userinfo=userinfo, host=host, port=port)
-
-    @staticmethod
-    def with_query_param(url: URL, key: str, value: str | None = None) -> URL:
-        """Return new URL with added query parameter."""
-        from ._helpers import _check_type
-
-        _check_type(key, str, "key")
-        normalized_key = str(key)
-        new_query = url._builder.add_param(url._query, normalized_key, value)
-        return _URLMutations.copy(url, query=new_query)
-
-    @staticmethod
-    def without_query_param(url: URL, key: str) -> URL:
-        """Return new URL with query parameter removed."""
-        from ._helpers import _check_type
-
-        _check_type(key, str, "key")
-        normalized_key = str(key)
-        new_query = url._builder.remove_param(url._query, normalized_key)
-        return _URLMutations.copy(url, query=new_query)
-
-    @staticmethod
-    def without_query(url: URL) -> URL:
-        """Return new URL without query string or fragment."""
-        return _URLMutations.copy(url, query=None, query_pairs=[], fragment=None)
-
-    @staticmethod
-    def same_origin(url: URL, other: URL) -> bool:
-        """Check if this URL has the same origin as another URL."""
-        return url.origin == other.origin
+__all__ = ["assert_round_trip", "derive", "netloc_overrides"]

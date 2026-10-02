@@ -347,8 +347,20 @@ def parse_url(url: str, allow_custom_scheme: bool = False) -> ParseResult:
     )
 
 
+def parse_netloc(netloc: str, *, require_host: bool = False) -> tuple[str | None, str | None, int | None]:
+    """Parse ``userinfo@host:port`` into its three parts, exactly as an authority is parsed."""
+    userinfo, host_candidate = parse_userinfo(netloc)
+    host, port = parse_host(host_candidate, require_host=require_host)
+    return userinfo, host, apply_port_defaults(None, port, host)
+
+
 class Parser:
-    """URL parser class for backward compatibility."""
+    """Stateful wrapper around :func:`parse_url`, kept for backward compatibility.
+
+    ``URL`` no longer reads anything back off a parser instance; the module
+    functions are what the package itself uses. Passing a ``Parser`` to
+    ``URL(parser=...)`` is deprecated -- use ``allow_custom_scheme=``.
+    """
 
     __slots__ = ("_custom_scheme", "_port", "_query_pairs", "_recognized_scheme")
 
@@ -395,9 +407,7 @@ class Parser:
 
     def parse_netloc(self, netloc: str, *, require_host: bool = False) -> tuple[str | None, str | None, int | None]:
         """Parse a netloc string into userinfo, host, and port."""
-        userinfo, host_candidate = parse_userinfo(netloc)
-        host, port = parse_host(host_candidate, require_host=require_host)
-        return userinfo, host, apply_port_defaults(None, port, host)
+        return parse_netloc(netloc, require_host=require_host)
 
 
 #: Caches reported under the "parser" group. normalize_host and
@@ -449,6 +459,7 @@ __all__ = [
     "normalize_path",
     "parse_fragment_string",
     "parse_host",
+    "parse_netloc",
     "parse_query_string",
     "parse_scheme",
     "parse_url",

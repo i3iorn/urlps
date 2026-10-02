@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import ipaddress
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import unquote
 
 from ._cache_config import VALIDATION_CACHE_SIZE, bounded_lru_cache
 from ._host import port_number
 from ._patterns import PATTERNS
+from ._security._unicode.uts46 import to_ascii
 from .constants import (
     MAX_FRAGMENT_LENGTH,
     MAX_HOST_LENGTH,
@@ -39,13 +40,6 @@ from .constants import (
     UNSAFE_SCHEMES,
 )
 from .exceptions import InvalidURLError, UnsupportedSchemeError
-
-if TYPE_CHECKING:
-    from ._components import SecurityFinding
-    from ._security import SecurityPolicy
-    from .url import URL
-
-from ._security._unicode.uts46 import to_ascii
 
 compiled_regex = PATTERNS
 
@@ -311,11 +305,10 @@ def is_valid_userinfo(value: str, max_length: int = MAX_USERINFO_LENGTH) -> bool
 
 
 class _URLValidation:
-    """URL-level validation: copy overrides and security policies.
+    """Validation of ``copy()`` overrides against the parser's component rules.
 
-    Complements Validator (component-level) with higher-level URL operations
-    validation. Both are in one module since the project is not large enough
-    for separate validation layers.
+    Security validation is not here: it belongs to ``_security``, which sits
+    above this module, and ``URL.validate`` calls it directly.
     """
 
     __slots__ = ()
@@ -393,42 +386,6 @@ class _URLValidation:
         if Validator.is_valid_ipv4(host):
             return True
         return Validator.is_valid_host(host)
-
-    @staticmethod
-    def validate_security(
-        url: URL,
-        *,
-        policy: SecurityPolicy | None = None,
-        raise_on_error: bool = False,
-        raw_url: str | None = None,
-    ) -> list[SecurityFinding]:
-        """Validate this URL against a security policy and return findings.
-
-        Pure: the returned findings are *not* stored on the instance.
-        ``security_findings`` reports what was found at construction, so
-        ``validate(policy=stricter)`` can be used to ask a hypothetical
-        question without rewriting the URL's own recorded verdict.
-        """
-        from ._security import ParsedComponents, validate_url_security
-        from ._serialization import _URLSerialization
-
-        effective_policy = policy if policy is not None else url._security_policy
-        candidate_url = raw_url if raw_url is not None else _URLSerialization.as_string(url)
-        check_dns = None if policy is not None else url._check_dns
-        check_phishing = None if policy is not None else url._check_phishing
-        findings = validate_url_security(
-            candidate_url,
-            policy=effective_policy,
-            check_dns=check_dns,
-            check_phishing=check_phishing,
-            raise_on_error=raise_on_error,
-            # The host/port this URL actually exposes and serializes. Without
-            # it the checks re-parse candidate_url themselves and can land on
-            # a different host than the parser did.
-            parsed=ParsedComponents(host=url._host, port=url._port, userinfo=url._userinfo, path=url._path),
-            debug=url._debug,
-        )
-        return list(findings)
 
 
 __all__ = ["Validator", "_URLValidation", "is_valid_userinfo"]

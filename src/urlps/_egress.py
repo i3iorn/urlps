@@ -122,12 +122,12 @@ def resolve_and_validate(
     """
     if isinstance(url, URL):
         parsed = url
-        effective_policy = resolve_security_policy(policy) if policy is not None else url._security_policy
+        effective_policy = resolve_security_policy(policy) if policy is not None else url.security_policy
     else:
         from ._entrypoints import parse_url
 
         parsed = parse_url(url, policy=policy)
-        effective_policy = parsed._security_policy
+        effective_policy = parsed.security_policy
     if not parsed.host:
         raise InvalidURLError("URL has no host to resolve.", component="host")
 

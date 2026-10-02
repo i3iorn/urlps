@@ -10,7 +10,6 @@ import warnings
 from collections.abc import Mapping
 from typing import Any
 
-from . import _parser
 from . import url as _url
 from ._audit import AuditConfig
 from ._security.dns_guard import DNSRateLimiter
@@ -114,11 +113,9 @@ def parse_url(
         check_phishing=check_phishing,
         dns_rate_limiter=dns_rate_limiter,
     )
-    parser = _parser.Parser()
-    parser.custom_scheme = allow_custom_scheme
     return _url.URL(
         url,
-        parser=parser,
+        allow_custom_scheme=allow_custom_scheme,
         debug=debug,
         check_dns=resolved_policy.check_dns,
         check_phishing=resolved_policy.check_phishing,
@@ -202,11 +199,9 @@ def parse_url_local(
         )
     )
 
-    parser = _parser.Parser()
-    parser.custom_scheme = allow_custom_scheme
     return _url.URL(
         url,
-        parser=parser,
+        allow_custom_scheme=allow_custom_scheme,
         debug=debug,
         check_dns=resolved_policy.check_dns,
         check_phishing=resolved_policy.check_phishing,

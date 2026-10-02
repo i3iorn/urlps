@@ -84,9 +84,58 @@ class ParseResult:
             "security_findings": list(self.security_findings),
         }
 
+    @property
+    def parts(self) -> URLParts:
+        """The components alone, as a :class:`URLParts`."""
+        return URLParts(
+            scheme=self.scheme,
+            userinfo=self.userinfo,
+            host=self.host,
+            port=self.port,
+            path=self.path,
+            query=self.query,
+            fragment=self.fragment,
+            query_pairs=tuple(self.query_pairs),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class URLParts:
+    """The normalized components a :class:`~urlps.URL` holds.
+
+    One immutable value instead of seven private attributes: everything that
+    serializes, compares or derives a URL works on this, so none of it needs
+    to know how ``URL`` stores its state. ``query`` and ``query_pairs`` are
+    two views of one value and are kept consistent by whoever builds the
+    parts (the parser, or a derivation).
+    """
+
+    scheme: str | None = None
+    userinfo: str | None = None
+    host: str | None = None
+    port: int | None = None
+    path: str = ""
+    query: str | None = None
+    fragment: str | None = None
+    query_pairs: tuple[tuple[str, str | None], ...] = ()
+
+    def as_mapping(self) -> dict[str, Any]:
+        """The components as the mapping :meth:`Builder.compose` takes."""
+        return {
+            "scheme": self.scheme,
+            "userinfo": self.userinfo,
+            "host": self.host,
+            "port": self.port,
+            "path": self.path,
+            "query": self.query,
+            "fragment": self.fragment,
+            "query_pairs": list(self.query_pairs),
+        }
+
 
 __all__ = [
     "ParseResult",
     "QueryPairs",
     "SecurityFinding",
+    "URLParts",
 ]

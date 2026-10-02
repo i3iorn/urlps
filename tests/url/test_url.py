@@ -145,12 +145,32 @@ def test_with_query_and_query_params() -> None:
     assert url.query == "a=1"
 
 
-def test_allow_custom_scheme_via_parser_flag() -> None:
+def test_allow_custom_scheme_via_parser_flag_is_deprecated_but_works() -> None:
     parser = Parser()
     parser.custom_scheme = True
-    url = URL("foo+bar://example.com", parser=parser)
+    with pytest.warns(DeprecationWarning, match="allow_custom_scheme"):
+        url = URL("foo+bar://example.com", parser=parser)
     assert url.scheme == "foo+bar"
     assert url.recognized_scheme is False
+    # Derived URLs keep the setting.
+    assert url.with_path("/x").scheme == "foo+bar"
+
+
+def test_allow_custom_scheme_argument() -> None:
+    url = URL("foo+bar://example.com", allow_custom_scheme=True)
+    assert url.scheme == "foo+bar"
+    assert url.recognized_scheme is False
+    assert url.with_path("/x").scheme == "foo+bar"
+    with pytest.raises(InvalidURLError):
+        URL("foo+bar://example.com")
+
+
+def test_builder_injection_is_deprecated() -> None:
+    from urlps._builder import Builder
+
+    with pytest.warns(DeprecationWarning, match="builder"):
+        url = URL("https://example.com/", builder=Builder())
+    assert str(url) == "https://example.com/"
 
 
 def test_with_scheme_normalizes() -> None:

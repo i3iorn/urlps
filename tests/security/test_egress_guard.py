@@ -246,7 +246,7 @@ def test_parse_time_check_passes_but_guard_stops_the_rebind() -> None:
         url = parse_url("http://rebind.example/", check_dns=True, dns_rate_limiter=DNSRateLimiter())
         assert url.host == "rebind.example"  # the parse-time check was fooled
         with pytest.raises(InvalidURLError):
-            create_guarded_connection((url.host, url.effective_port), policy=url._security_policy)
+            create_guarded_connection((url.host, url.effective_port), policy=url.security_policy)
 
 
 # ---------------------------------------------------------------------------

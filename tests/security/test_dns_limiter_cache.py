@@ -78,7 +78,7 @@ def test_limiter_injected_on_the_policy_is_actually_used() -> None:
     policy = SecurityPolicy.strict(check_dns=True, dns_rate_limiter=limiter)
     with patch(RESOLVER, return_value=_answer()):
         url = parse_url("https://api.example.com/", policy=policy)
-    assert url._security_policy.dns_rate_limiter is limiter
+    assert url.security_policy.dns_rate_limiter is limiter
     assert limiter.stats()["cached_hosts"] == 1.0
     assert get_dns_rate_limiter().stats()["cached_hosts"] == 0.0
 

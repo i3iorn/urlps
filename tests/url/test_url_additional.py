@@ -16,12 +16,12 @@ class TestURL:
 
     def test_effective_port_returns_none_without_scheme(self):
         """effective_port returns None when no scheme and no port."""
+        from urlps._components import URLParts
         from urlps.url import URL
 
         # Relative URL
         url = object.__new__(URL)
-        url._scheme = None
-        url._port = None
+        object.__setattr__(url, "_parts", URLParts())
         assert url.effective_port is None
 
     def test_origin_raises_for_relative_url(self):
@@ -145,7 +145,7 @@ class TestURL:
             def parse(self, url):
                 raise ValueError("unexpected parse error")
 
-        with pytest.raises(ValueError, match="unexpected parse error"):
+        with pytest.raises(ValueError, match="unexpected parse error"), pytest.warns(DeprecationWarning):
             URL("https://example.com/", parser=BoguParser())
 
     def test_build_netloc_scheme_relative_fails_for_non_file(self):

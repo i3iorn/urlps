@@ -1,84 +1,49 @@
-"""URL serialization and string conversion helpers.
+"""URL serialization: components to string, and the canonical form.
 
-Internal module: private helpers used by the URL class to maintain immutability
-and separation of concerns. Not part of the public API.
+Plain functions over :class:`~urlps._components.URLParts` and the builder
+that spells them -- they need nothing else from a URL, so nothing here
+depends on how ``URL`` stores its state.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from ._builder import Builder
+from ._components import URLParts
 from .constants import DEFAULT_PORTS, PASSWORD_MASK
 
-if TYPE_CHECKING:
-    from .url import URL
+
+def as_string(parts: URLParts, builder: Builder, *, mask_password: bool = False) -> str:
+    """Serialize ``parts``, optionally masking the password in the userinfo."""
+    components = parts.as_mapping()
+    if mask_password and parts.userinfo and ":" in parts.userinfo:
+        username, _, _ = parts.userinfo.partition(":")
+        components["userinfo"] = f"{username}:{PASSWORD_MASK}"
+    return builder.compose(components)
 
 
-class _URLSerialization:
-    """String conversion, canonicalization, and serialization operations.
+def canonical_overrides(parts: URLParts, builder: Builder) -> dict[str, Any]:
+    """The ``copy()`` overrides that turn ``parts`` into its canonical form.
 
-    All methods are static and accept a URL instance, maintaining separation
-    of concerns without breaking immutability constraints.
+    Lowercased scheme and host, no explicit default port, normalized path,
+    and query parameters sorted by key then value. ``query`` and
+    ``query_pairs`` are passed together so the derivation keeps the sort
+    order rather than re-deriving one from the other.
     """
+    scheme = parts.scheme.lower() if parts.scheme else None
+    port = parts.port
+    if scheme and port == DEFAULT_PORTS.get(scheme):
+        port = None
+    sorted_pairs = sorted(parts.query_pairs, key=lambda pair: (pair[0], pair[1] or ""))
+    return {
+        "scheme": scheme,
+        "host": parts.host.lower() if parts.host else None,
+        "port": port,
+        "path": builder.normalize_path(parts.path) if parts.path else "",
+        "query": builder.serialize_query(sorted_pairs) if sorted_pairs else None,
+        "query_pairs": sorted_pairs,
+    }
 
-    __slots__ = ()
 
-    @staticmethod
-    def to_dict(url: URL) -> dict[str, Any]:
-        """Convert URL to dictionary of components."""
-        return {
-            "scheme": url._scheme,
-            "userinfo": url._userinfo,
-            "host": url._host,
-            "port": url._port,
-            "path": url._path,
-            "query": url._query,
-            "fragment": url._fragment,
-            "query_pairs": list(url._query_pairs),
-        }
-
-    @staticmethod
-    def as_string(url: URL, *, mask_password: bool = False) -> str:
-        """Return URL as string, optionally masking password in userinfo."""
-        components = _URLSerialization.to_dict(url)
-        if mask_password and components.get("userinfo"):
-            userinfo = components["userinfo"]
-            if ":" in userinfo:
-                username, _, _ = userinfo.partition(":")
-                components["userinfo"] = f"{username}:{PASSWORD_MASK}"
-        return url._builder.compose(components)
-
-    @staticmethod
-    def canonicalize(url: URL) -> URL:
-        """Return a canonicalized copy of this URL.
-
-        Lowercases scheme/host, sorts query parameters, normalizes path.
-        """
-        canonical_scheme = url._scheme.lower() if url._scheme else None
-        canonical_host = str(url._host).lower() if url._host else None
-        canonical_port = url._port
-        if canonical_scheme and canonical_port == DEFAULT_PORTS.get(canonical_scheme):
-            canonical_port = None
-        canonical_path = url._builder.normalize_path(url._path) if url._path else ""
-        sorted_pairs = sorted(url._query_pairs, key=lambda x: (x[0], x[1] or ""))
-        canonical_query = url._builder.serialize_query(sorted_pairs) if sorted_pairs else None
-
-        # Pass query and query_pairs together rather than writing _query_pairs
-        # afterwards: _reconcile_query_components treats "both supplied" as
-        # "caller owns both" and keeps the sort order, which a post-hoc write
-        # would otherwise have to smuggle past the immutability guard.
-        return url.copy(
-            scheme=canonical_scheme,
-            host=canonical_host,
-            port=canonical_port,
-            path=canonical_path,
-            query=canonical_query,
-            query_pairs=sorted_pairs,
-        )
-
-    @staticmethod
-    def redacted(url: URL) -> str:
-        """Return a log-safe representation with sensitive values redacted."""
-        from ._security import redact_url_for_logs
-
-        return redact_url_for_logs(_URLSerialization.as_string(url))
+__all__ = ["as_string", "canonical_overrides"]
