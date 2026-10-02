@@ -18,6 +18,7 @@ import secrets
 import socket
 import threading
 import time
+import warnings
 from collections import OrderedDict, defaultdict, deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -61,6 +62,14 @@ class DNSRateLimiterConfig:
     max_lookups_per_host: int = DEFAULT_DNS_LOOKUPS_PER_HOST
     time_window_seconds: float = DEFAULT_DNS_TIME_WINDOW_SECONDS
     cleanup_interval_seconds: float = DEFAULT_DNS_CLEANUP_INTERVAL_SECONDS
+    # Deprecated 1.2.0 cache settings; configure a DNSResolutionCache instead.
+    # Removed in 2.0. As in 1.2.0, a limiter built with a non-default value
+    # here keeps its own cache with these settings, and the DNS check uses it
+    # for that limiter's lookups unless a resolution cache is injected -- so
+    # cache_ttl_seconds=0 still turns caching off.
+    cache_ttl_seconds: float = DEFAULT_DNS_CACHE_TTL_SECONDS
+    negative_cache_ttl_seconds: float = DEFAULT_DNS_NEGATIVE_CACHE_TTL_SECONDS
+    max_cached_hosts: int = DEFAULT_DNS_MAX_CACHED_HOSTS
 
     def __post_init__(self):
         if self.max_lookups_per_second <= 0:
@@ -71,6 +80,23 @@ class DNSRateLimiterConfig:
             raise DNSRateLimiterError("time_window_seconds must be positive")
         if self.cleanup_interval_seconds <= 0:
             raise DNSRateLimiterError("cleanup_interval_seconds must be positive")
+        if self._legacy_cache_config() is not None:
+            warnings.warn(
+                "DNSRateLimiterConfig(cache_ttl_seconds=, negative_cache_ttl_seconds=, max_cached_hosts=) "
+                "is deprecated; pass SecurityServices(resolution_cache=DNSResolutionCache(DNSCacheConfig(...))) "
+                "instead. It will be removed in 2.0.",
+                DeprecationWarning,
+                stacklevel=3,  # caller -> dataclass __init__ -> here
+            )
+
+    def _legacy_cache_config(self) -> DNSCacheConfig | None:
+        """The cache the deprecated fields ask for, or None when they are all defaults."""
+        settings = (self.cache_ttl_seconds, self.negative_cache_ttl_seconds, self.max_cached_hosts)
+        defaults = (DEFAULT_DNS_CACHE_TTL_SECONDS, DEFAULT_DNS_NEGATIVE_CACHE_TTL_SECONDS, DEFAULT_DNS_MAX_CACHED_HOSTS)
+        if settings == defaults:
+            return None
+        # DNSCacheConfig validates them (negative TTLs, max_cached_hosts <= 0).
+        return DNSCacheConfig(*settings)
 
 
 class DNSRateLimiter:
@@ -101,6 +127,11 @@ class DNSRateLimiter:
 
         self._config = config
         self._time_provider = time_provider
+        legacy_cache_config = config._legacy_cache_config()
+        # Only set for the deprecated DNSRateLimiterConfig cache fields.
+        self._own_cache = (
+            DNSResolutionCache(legacy_cache_config, time_provider) if legacy_cache_config is not None else None
+        )
 
         now = self._time_provider()
         self._tokens: float = config.max_lookups_per_second
@@ -216,13 +247,15 @@ class DNSRateLimiter:
             return max(0.0, wait)
 
     def reset(self) -> None:
-        """Reset limiter state to its initial configuration."""
+        """Reset limiter state to its initial configuration (and its own cache, if it has one)."""
         with self._lock:
             now = self._now()
             self._tokens = self._config.max_lookups_per_second
             self._last_update_seconds = now
             self._host_lookups.clear()
             self._last_cleanup_seconds = now
+        if self._own_cache is not None:
+            self._own_cache.reset()
 
     def stats(self) -> dict[str, float]:
         """Return current limiter statistics.
@@ -233,11 +266,40 @@ class DNSRateLimiter:
         with self._lock:
             self._refill_tokens()
             total_recent_lookups = sum(len(timestamps) for timestamps in self._host_lookups.values())
-            return {
+            stats = {
                 "tokens": float(self._tokens),
                 "tracked_hosts": float(len(self._host_lookups)),
                 "total_recent_lookups": float(total_recent_lookups),
             }
+        # 1.2.0 reported its cache here; keep the key.
+        stats.update(self._compat_cache().stats())
+        return stats
+
+    # -- Deprecated 1.2.0 cache API (removed in 2.0) -----------------------
+
+    def _compat_cache(self) -> DNSResolutionCache:
+        """The cache this limiter's lookups use when none is injected."""
+        return self._own_cache if self._own_cache is not None else get_resolution_cache()
+
+    def cached_resolution(self, host: str) -> CachedResolution | None:
+        """Deprecated: use :meth:`DNSResolutionCache.get`. Removed in 2.0."""
+        _warn_cache_method("cached_resolution", "get")
+        return self._compat_cache().get(host)
+
+    def store_resolution(self, host: str, addr_info: AddrInfo | None, error: ErrorCode | None = None) -> None:
+        """Deprecated: use :meth:`DNSResolutionCache.store`. Removed in 2.0."""
+        _warn_cache_method("store_resolution", "store")
+        self._compat_cache().store(host, addr_info, error)
+
+
+def _warn_cache_method(name: str, replacement: str) -> None:
+    warnings.warn(
+        f"DNSRateLimiter.{name}() is deprecated; the resolution cache is separate from the limiter now. "
+        f"Use DNSResolutionCache.{replacement}() (the process-global one is get_resolution_cache()). "
+        "It will be removed in 2.0.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
 
 
 @dataclass(frozen=True)
@@ -457,12 +519,14 @@ def get_dns_rate_limiter() -> DNSRateLimiter:
 
 
 def reset_dns_rate_limiter() -> None:
-    """Reset the process-global DNS rate limiter state.
+    """Reset the process-global DNS rate limiter, and the process-global resolution cache.
 
     Compatibility API for integrations still using the process-global limiter.
+    The cache is reset too because in 1.2.0 it belonged to this limiter, so
+    a reset between tests also forgot every cached answer.
     """
-    limiter = get_dns_rate_limiter()
-    limiter.reset()
+    get_dns_rate_limiter().reset()
+    reset_resolution_cache()
 
 
 _GLOBAL_RESOLUTION_CACHE = DNSResolutionCache()
@@ -542,7 +606,12 @@ def check_host_resolution(
     if direct_result is not None:
         return DNSCheckResult(None if direct_result else ErrorCode.SSRF_RISK)
 
-    effective_cache = cache if cache is not None else get_resolution_cache()
+    if cache is not None:
+        effective_cache = cache
+    elif limiter is not None and limiter._own_cache is not None:
+        effective_cache = limiter._own_cache  # deprecated 1.2.0 limiter cache settings
+    else:
+        effective_cache = get_resolution_cache()
     cached = effective_cache.get(normalized_host)
     if cached is not None:
         if cached.addr_info is None:
