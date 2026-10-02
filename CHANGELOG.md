@@ -2,6 +2,27 @@
 
 All notable changes to `urlps` are documented here.
 
+## [1.2.0](https://github.com/i3iorn/urlps/compare/v1.1.4...v1.2.0) (2026-10-02)
+
+
+### Added
+
+* **security:** connect-time SSRF guard; drop the no-op DNS verification connect ([e637224](https://github.com/i3iorn/urlps/commit/e6372242b131e7e84c3bf12441df491625913277))
+
+
+### Fixed
+
+* **cli:** escape non-printable output; reject C1 control characters ([abcf003](https://github.com/i3iorn/urlps/commit/abcf00379e1b46c7bdc0d35768a7cd84529d4a8c))
+* **security:** accept only standard schemes unless allow_custom_scheme ([2895526](https://github.com/i3iorn/urlps/commit/289552628e50b495d9571fdb33cf90763034d974))
+* **security:** bound the memory caches can pin with hostile input ([67ff35d](https://github.com/i3iorn/urlps/commit/67ff35daf2a545aceb11a940a1d22f8523ba1f6e))
+* **security:** cache DNS resolutions; isolate injected limiters; bound DNS time ([9afa3fa](https://github.com/i3iorn/urlps/commit/9afa3fae96a01be1741e11ac96649f3d09efce2c))
+* **security:** derived URLs must mean what their string means ([6feb4da](https://github.com/i3iorn/urlps/commit/6feb4da3a9564c12413596ab58b22c1e910dfb39))
+* **security:** keep credentials and tokens out of exceptions and logs ([607f9e2](https://github.com/i3iorn/urlps/commit/607f9e28db644e931299eafc431a9d5df36f584f))
+* **security:** never let a DNS attempt's timeout exceed the deadline ([cd37d4f](https://github.com/i3iorn/urlps/commit/cd37d4f62a1a429009fa46c264fbbe282bb96d63))
+* **security:** refresh, match subdomains, and optionally pin/fail closed on the phishing feed ([24b205a](https://github.com/i3iorn/urlps/commit/24b205a28139f7afd6605398ffa6f3d081a258b6))
+* **security:** treat every non-global address as internal; add address rules ([32be3db](https://github.com/i3iorn/urlps/commit/32be3db750e32ba59a2ee187ea17385afca19d2d))
+* **security:** validate the host the parser produced, not a re-parse ([afc2446](https://github.com/i3iorn/urlps/commit/afc2446fe8957b36fd4f15f181e50d7b6913c9a9))
+
 ## [1.1.4](https://github.com/i3iorn/urlps/compare/v1.1.3...v1.1.4) (2026-09-14)
 
 
