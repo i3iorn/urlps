@@ -272,7 +272,7 @@ class URL:
         if len(url) > MAX_URL_LENGTH:
             raise URLParseError("URL length exceeds maximum allowed size.")
         if not Validator.is_url_safe_string(url):
-            raise URLParseError("URL contains invalid control characters.")
+            raise URLParseError("URL contains invalid control characters or surrogates.")
 
         context = self._context
         try:
@@ -647,10 +647,18 @@ class URL:
         return self.as_string()
 
     def __repr__(self) -> str:
-        """Return a string representation of the URL object."""
+        """Return a string representation of the URL object.
+
+        ``UnicodeError`` is included so repr()ing a URL can never crash a
+        caller's logging path: only ``InvalidURLError`` can escape validation
+        itself, but if a URL ever holds a character that cannot be encoded,
+        a failing repr() would turn a data problem into a crash in whoever
+        printed it. (Surrogates are rejected at parse time; this is defense
+        in depth, e.g. for pickled URLs or future paths.)
+        """
         try:
             url = self.as_string()
-        except InvalidURLError:
+        except (InvalidURLError, UnicodeError):
             url = "<invalid>"
         return f"URL('{url}')"
 

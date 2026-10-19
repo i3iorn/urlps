@@ -27,7 +27,7 @@ class TestPhishingDBBasicFunctionality:
     def test_check_against_phishing_db_detects_known_host(self):
         fake_text = "malicious.example.com\nphish.bad\n"
         mock_resp = MagicMock()
-        mock_resp.__enter__().read.return_value = fake_text.encode("utf-8")
+        mock_resp.__enter__().read.side_effect = [fake_text.encode("utf-8"), b""]
         mock_resp.__enter__().status = 200
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp) as mocked_get:
@@ -37,7 +37,7 @@ class TestPhishingDBBasicFunctionality:
     def test_check_against_phishing_db_returns_false_for_safe_host(self):
         fake_text = "malicious.example.com\nphish.bad\n"
         mock_resp = MagicMock()
-        mock_resp.__enter__().read.return_value = fake_text.encode("utf-8")
+        mock_resp.__enter__().read.side_effect = [fake_text.encode("utf-8"), b""]
         mock_resp.__enter__().status = 200
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
@@ -46,7 +46,7 @@ class TestPhishingDBBasicFunctionality:
     def test_url_raises_on_phishing_domain(self):
         fake_text = "evil.com\n"
         mock_resp = MagicMock()
-        mock_resp.__enter__().read.return_value = fake_text.encode("utf-8")
+        mock_resp.__enter__().read.side_effect = [fake_text.encode("utf-8"), b""]
         mock_resp.__enter__().status = 200
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
@@ -61,7 +61,7 @@ class TestPhishingDBBasicFunctionality:
         """Host matching should be case-insensitive."""
         fake_text = "malicious.example.com\n"
         mock_resp = MagicMock()
-        mock_resp.__enter__().read.return_value = fake_text.encode("utf-8")
+        mock_resp.__enter__().read.side_effect = [fake_text.encode("utf-8"), b""]
         mock_resp.__enter__().status = 200
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
@@ -72,7 +72,7 @@ class TestPhishingDBBasicFunctionality:
         """Hosts with trailing dots should be normalized."""
         fake_text = "malicious.example.com\n"
         mock_resp = MagicMock()
-        mock_resp.__enter__().read.return_value = fake_text.encode("utf-8")
+        mock_resp.__enter__().read.side_effect = [fake_text.encode("utf-8"), b""]
         mock_resp.__enter__().status = 200
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
@@ -159,7 +159,7 @@ class TestPhishingDBResponseHandling:
         mock_resp = MagicMock()
         mock_resp.__enter__().status = 200
         # Invalid UTF-8 bytes
-        mock_resp.__enter__().read.return_value = b"valid.host\n\xff\xfe\ninvalid\xc0\xc1.host\n"
+        mock_resp.__enter__().read.side_effect = [b"valid.host\n\xff\xfe\ninvalid\xc0\xc1.host\n", b""]
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
             # Should still work with valid entries, ignoring invalid bytes
@@ -170,7 +170,7 @@ class TestPhishingDBResponseHandling:
         """Empty lines and whitespace should be handled."""
         mock_resp = MagicMock()
         mock_resp.__enter__().status = 200
-        mock_resp.__enter__().read.return_value = b"\n\n  \nphish.bad\n  \n\nother.bad\n\n"
+        mock_resp.__enter__().read.side_effect = [b"\n\n  \nphish.bad\n  \n\nother.bad\n\n", b""]
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
             assert check_against_phishing_db("phish.bad") is True
@@ -185,7 +185,7 @@ class TestPhishingDBResponseHandling:
 
         mock_resp = MagicMock()
         mock_resp.__enter__().status = 200
-        mock_resp.__enter__().read.return_value = fake_text.encode("utf-8")
+        mock_resp.__enter__().read.side_effect = [fake_text.encode("utf-8"), b""]
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
             assert check_against_phishing_db("host0.example.com") is True
@@ -200,7 +200,7 @@ class TestDownloadPhishingDBDirectly:
         """Should return a set of hostnames on success."""
         mock_resp = MagicMock()
         mock_resp.__enter__().status = 200
-        mock_resp.__enter__().read.return_value = b"host1.com\nhost2.com\n"
+        mock_resp.__enter__().read.side_effect = [b"host1.com\nhost2.com\n", b""]
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
             result = refresh_phishing_db()
@@ -217,7 +217,7 @@ class TestPhishingDBRefresh:
         # First, set up initial database
         mock_resp1 = MagicMock()()
         mock_resp1.__enter__().status = 200
-        mock_resp1.__enter__().read.return_value = b"old.domain.com\n"
+        mock_resp1.__enter__().read.side_effect = [b"old.domain.com\n", b""]
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp1):
             check_against_phishing_db("old.domain.com")
@@ -227,7 +227,7 @@ class TestPhishingDBRefresh:
         # Now refresh with new data
         mock_resp2 = MagicMock()()
         mock_resp2.__enter__().status = 200
-        mock_resp2.__enter__().read.return_value = b"new.domain.com\n"
+        mock_resp2.__enter__().read.side_effect = [b"new.domain.com\n", b""]
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp2):
             count = refresh_phishing_db()
@@ -239,7 +239,7 @@ class TestPhishingDBRefresh:
         """refresh_phishing_db should return the number of hostnames."""
         mock_resp = MagicMock()
         mock_resp.__enter__().status = 200
-        mock_resp.__enter__().read.return_value = b"host1.com\nhost2.com\nhost3.com\n"
+        mock_resp.__enter__().read.side_effect = [b"host1.com\nhost2.com\nhost3.com\n", b""]
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
             count = refresh_phishing_db()
@@ -255,7 +255,7 @@ class TestPhishingDBRefresh:
         """get_phishing_db_info should show loaded after first use."""
         mock_resp = MagicMock()
         mock_resp.__enter__().status = 200
-        mock_resp.__enter__().read.return_value = b"host1.com\nhost2.com\n"
+        mock_resp.__enter__().read.side_effect = [b"host1.com\nhost2.com\n", b""]
 
         with patch("urlps._security.phishing_db.request.urlopen", return_value=mock_resp):
             check_against_phishing_db("any.host")

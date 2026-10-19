@@ -85,7 +85,13 @@ class URLpError(Exception):
         code: Typed error code (optional).
     """
 
-    __slots__ = ("code", "component", "message", "value")
+    # Deliberately NOT __slots__: ``DNSResolutionError`` is also an OSError
+    # (so the create_guarded_connection() drop-in contract works -- resolution
+    # failures surface as socket-error-family exceptions to urllib3/requests
+    # retry logic), and OSError is dict-backed, which the exact layout of a
+    # __slots__-based hierarchy cannot be combined with in multiple
+    # inheritance ("multiple bases have instance lay-out conflict"). The
+    # per-instance dict is a negligible cost on the exception path.
 
     def __init__(
         self,
@@ -204,8 +210,17 @@ class DNSRateLimitError(DNSRebindingError):
         self.retry_after: float | None = retry_after
 
 
-class DNSResolutionError(DNSRebindingError):
-    """Raised when DNS resolution fails."""
+class DNSResolutionError(DNSRebindingError, OSError):
+    """Raised when DNS resolution fails.
+
+    Also an :class:`OSError`, because ``create_guarded_connection()`` is a
+    drop-in for ``socket.create_connection`` and urllib3's ``create_connection``
+    -- and the failure it reports (``getaddrinfo`` could not resolve a name)
+    would in the un-guarded stack surface as ``socket.gaierror``, an OSError
+    everyone's retry logic catches. A plain-Exception escape here bypasses
+    `except OSError`/socket-error handling in consuming HTTP clients.
+    Both hierarchies remain true, so ``except InvalidURLError`` keeps working.
+    """
 
 
 class DNSConnectionError(DNSRebindingError):

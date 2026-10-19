@@ -20,7 +20,9 @@ from urllib.error import URLError
 
 from .._patterns import PATTERNS
 from ..constants import (
+    DEFAULT_PHISHING_DATABASE_DOWNLOAD_DEADLINE_SECONDS,
     DEFAULT_PHISHING_DATABASE_MAX_BYTES,
+    DEFAULT_PHISHING_DATABASE_READ_CHUNK_BYTES,
     DEFAULT_PHISHING_DATABASE_REFRESH_SECONDS,
     DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS,
     DEFAULT_PHISHING_DATABASE_TIMEOUT_SECONDS,
@@ -80,17 +82,36 @@ Fetch = Callable[[str, float, int], bytes]
 
 
 def fetch_over_http(url: str, timeout_seconds: float, max_bytes: int) -> bytes:
-    """Download the feed with urllib, refusing a non-200 answer or more than ``max_bytes``."""
+    """Download the feed with urllib, refusing a non-200 answer or more than ``max_bytes``.
+
+    Reads in chunks instead of one ``read(max_bytes)``: a socket timeout only
+    bounds a single read, so a feed (or a hostile mirror of one) that trickles
+    bytes just under the timeout could keep the read -- and the refresh lock
+    every ``check_phishing=True`` parse is queued behind -- alive for as long
+    as it kept trickling. Each read here stays bounded by the socket timeout,
+    and the whole download by a wall-clock deadline
+    (:data:`~urlps.constants.DEFAULT_PHISHING_DATABASE_DOWNLOAD_DEADLINE_SECONDS`).
+    """
+    deadline = time.monotonic() + DEFAULT_PHISHING_DATABASE_DOWNLOAD_DEADLINE_SECONDS
+    chunks: list[bytes] = []
+    received = 0
     with request.urlopen(  # nosec B310 -- the configured feed URL, an https:// constant by default
         url,
         timeout=timeout_seconds,
     ) as response:
         if response.status != 200:
             raise FeedUnavailable(f"unexpected_status:{response.status}")
-        body = response.read(max_bytes + 1)
-    if len(body) > max_bytes:
-        raise FeedUnavailable("download_too_large")
-    return bytes(body)
+        while True:
+            if time.monotonic() >= deadline:
+                raise FeedUnavailable("download_deadline_exceeded")
+            chunk = response.read(DEFAULT_PHISHING_DATABASE_READ_CHUNK_BYTES)
+            if not chunk:
+                break
+            received += len(chunk)
+            if received > max_bytes:
+                raise FeedUnavailable("download_too_large")
+            chunks.append(chunk)
+    return b"".join(chunks)
 
 
 # ---------------------------------------------------------------------------

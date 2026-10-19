@@ -30,21 +30,70 @@ from __future__ import annotations
 
 import functools
 import os
+import warnings
 from collections.abc import Callable
-from typing import Any, ParamSpec, Protocol, TypeVar, cast
+from typing import Any, Final, ParamSpec, Protocol, TypeVar, cast
+
+#: Ceiling on any cache entry count set through a ``URLPS_CACHE_SIZE_*``
+#: environment variable. Sizes are baked in at import, so an entry count is
+#: memory the process can pin for its whole life: maxsize x (key + result),
+#: with keys up to CACHE_MAX_KEY_LENGTH and results up to ~12x for encoders.
+#: 65,536 leaves ~4x headroom over the largest default (8,192) while capping
+#: the worst case at a few hundred MB instead of allowing near-unbounded growth.
+_CACHE_ENTRY_CEILING: Final[int] = 65_536
+
+#: Ceiling on ``URLPS_CACHE_MAX_KEY_LENGTH``. The key-length guard exists so
+#: attacker-supplied maximal-length inputs are computed uncached; raising it
+#: to e.g. a URL-length cap turns the guard off entirely. 8,192 still admits
+#: keys 8x the default while keeping maxsize x key bounded.
+_CACHE_KEY_LENGTH_CEILING: Final[int] = 8_192
 
 
-def _cache_size(env_var: str, default: int) -> int:
+def _cache_size(env_var: str, default: int, ceiling: int = _CACHE_ENTRY_CEILING) -> int:
+    """Read a cache-size environment variable, warning and bounding bad values.
+
+    Invalid values (non-integer or non-positive) are ignored with a warning
+    and the default returned -- mirroring the ``URLPS_MAX_*`` constants' env
+    helpers, which warn rather than fall back silently. Oversized values are
+    clamped with a warning: a large entry count combined with long keys pins
+    significant memory per cache for the life of the process (the ~450 MB
+    cache-pinning incident in :func:`bounded_lru_cache`'s docstring was one
+    such combination).
+    """
     raw = os.environ.get(env_var)
     if raw is None:
         return default
 
+    # stacklevel=2 so the warning is attributed to the importer, matching the
+    # helpers in constants.py.
     try:
         value = int(raw)
     except ValueError:
+        warnings.warn(
+            f"Environment variable {env_var} must be an integer; ignoring value.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return default
 
-    return value if value > 0 else default
+    if value <= 0:
+        warnings.warn(
+            f"Environment variable {env_var} must be a positive integer; ignoring value.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return default
+
+    if value > ceiling:
+        warnings.warn(
+            f"Environment variable {env_var} = {value} exceeds the ceiling of {ceiling}; clamping to {ceiling}. "
+            "Raising a built-in bound expands memory pinned by attacker-supplied inputs.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return ceiling
+
+    return value
 
 
 # Security/host/URL-shape checks (is_ssrf_risk, is_private_ip,
@@ -79,10 +128,10 @@ POLICY_CACHE_SIZE = _cache_size("URLPS_CACHE_SIZE_POLICY", 16)
 # Longer inputs are simply computed uncached; results are identical.
 #
 # URL- and component-level caches (whole URLs, paths, hosts, labels):
-CACHE_MAX_KEY_LENGTH = _cache_size("URLPS_CACHE_MAX_KEY_LENGTH", 1024)
+CACHE_MAX_KEY_LENGTH = _cache_size("URLPS_CACHE_MAX_KEY_LENGTH", 1024, _CACHE_KEY_LENGTH_CEILING)
 # Per-value encoders (query keys/values, path segments), whose caches are
 # much larger (8,192 entries by default) and whose results expand up to 12x:
-CACHE_MAX_VALUE_KEY_LENGTH = _cache_size("URLPS_CACHE_MAX_VALUE_KEY_LENGTH", 128)
+CACHE_MAX_VALUE_KEY_LENGTH = _cache_size("URLPS_CACHE_MAX_VALUE_KEY_LENGTH", 128, _CACHE_KEY_LENGTH_CEILING)
 
 P = ParamSpec("P")
 R = TypeVar("R")

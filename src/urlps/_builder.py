@@ -143,7 +143,13 @@ class Builder:
             # build("https", "example.com", path="api") used to emit
             # "https://example.comapi", a different host.
             path = "/" + path
-        normalized_path = self.normalize_path(path)
+        try:
+            normalized_path = self.normalize_path(path)
+        except UnicodeEncodeError as exc:
+            # A lone surrogate cannot be encoded to bytes; without this it
+            # escapes as a raw UnicodeEncodeError instead of URLBuildError,
+            # dodging every `except InvalidURLError` handler.
+            raise URLBuildError("Path is not valid Unicode.", component="path") from exc
         if not normalized_path and host:
             normalized_path = "/"
 
@@ -152,7 +158,10 @@ class Builder:
         if query is not None:
             serialized_query = query
         elif query_pairs:
-            serialized_query = self.serialize_query(query_pairs)
+            try:
+                serialized_query = self.serialize_query(query_pairs)
+            except UnicodeEncodeError as exc:
+                raise URLBuildError("Query is not valid Unicode.", component="query") from exc
         else:
             serialized_query = None
 
@@ -344,18 +353,34 @@ class Builder:
         return self._serialize_query_impl(params, self.QUERY_SAFE)
 
     def _serialize_query_impl(self, params: QueryPairs, query_safe: str) -> str:
-        """Shared implementation for query serialization."""
+        """Shared implementation for query serialization.
+
+        A surrogate key/value cannot be percent-encoded, so the encode step
+        raises UnicodeEncodeError; mapped to URLBuildError here because every
+        caller (serialize_query, add_param, remove_param, and the derivation
+        path through ``with_query_param``) is a public surface that promises
+        urlps exception types.
+        """
         if not params:
             return ""
         encoded: list[str] = []
         # _encode_for_query is a module-level LRU cache; called directly (no
         # per-call closure) to reduce repeated encoding work across calls.
         for key, value in params:
-            encoded_key = _encode_for_query(key, query_safe)
+            try:
+                encoded_key = _encode_for_query(key, query_safe)
+            except UnicodeEncodeError as exc:
+                # ``key`` is already type-checked upstream (str); a Unicode
+                # failure means an unencodable character. The offending value
+                # is withheld (default redaction behaviour for a raw key).
+                raise URLBuildError("Query key is not valid Unicode.", component="query") from exc
             if value is None:
                 encoded.append(encoded_key)
             else:
-                encoded_value = _encode_for_query(str(value), query_safe)
+                try:
+                    encoded_value = _encode_for_query(str(value), query_safe)
+                except UnicodeEncodeError as exc:
+                    raise URLBuildError("Query value is not valid Unicode.", component="query") from exc
                 encoded.append(f"{encoded_key}={encoded_value}")
         return "&".join(encoded)
 
