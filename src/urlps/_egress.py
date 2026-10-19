@@ -68,6 +68,14 @@ def _vetted_addrinfo(
         raise DNSResolutionError(
             f"Could not resolve host: {exc}", component="host", value=host, code=ErrorCode.DNS_RESOLUTION_FAILED
         ) from exc
+    except UnicodeError as exc:
+        # getaddrinfo enforces IDNA in-process and raises UnicodeError (not
+        # gaierror) for a label its codec cannot encode. Mapping it here
+        # keeps the exception contract: everything escaping this resolver
+        # shape is DNSResolutionError or an OSError.
+        raise DNSResolutionError(
+            f"Could not resolve host: {exc}", component="host", value=host, code=ErrorCode.DNS_RESOLUTION_FAILED
+        ) from exc
     except TimeoutError as exc:
         raise DNSResolutionError(
             "DNS resolution timed out.", component="host", value=host, code=ErrorCode.DNS_RESOLUTION_FAILED

@@ -62,10 +62,26 @@ def test_phishing_database_url_valid_override(monkeypatch):
     assert const.PHISHING_DATABASE_URL == "https://mirror.internal/phish.lst"
 
 
-def test_phishing_database_url_allows_plain_http(monkeypatch):
+def test_phishing_database_url_allows_plain_http_but_warns(monkeypatch):
+    # Accepted (some feeds can only be served over an unencrypted internal
+    # channel), but never silently: the blocklist can be tampered with in
+    # transit over http.
     monkeypatch.setenv("URLPS_PHISHING_DATABASE_URL", "http://mirror.internal/phish.lst")
-    const = _import_constants_fresh()
+    sys.modules.pop("urlps.constants", None)
+    with pytest.warns(RuntimeWarning, match="unencrypted http:// feed"):
+        const = importlib.import_module("urlps.constants")
     assert const.PHISHING_DATABASE_URL == "http://mirror.internal/phish.lst"
+
+
+def test_phishing_database_url_https_does_not_warn(monkeypatch):
+    monkeypatch.setenv("URLPS_PHISHING_DATABASE_URL", "https://mirror.internal/phish.lst")
+    sys.modules.pop("urlps.constants", None)
+    import warnings as _warnings
+
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error")
+        const = importlib.import_module("urlps.constants")
+    assert const.PHISHING_DATABASE_URL == "https://mirror.internal/phish.lst"
 
 
 def test_phishing_database_url_invalid_warns_and_ignores(monkeypatch):

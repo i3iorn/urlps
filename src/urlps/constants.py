@@ -123,6 +123,19 @@ def _get_url_from_env(env_name: str, default: str) -> str:
         )
         return default
 
+    if raw_value.startswith("http://"):
+        # Accepted: some deployments can only serve their feed over an
+        # unencrypted internal channel. But it is a real weakening (the
+        # downloaded list is DNS-blocklist data that can be tampered with or
+        # truncated in transit), so it is never silent.
+        warnings.warn(
+            f"Environment variable {env_name} points at an unencrypted http:// feed; "
+            "the downloaded list can be tampered with in transit. Prefer https://, "
+            "or pin the snapshot with URLPS_PHISHING_DATABASE_SHA256.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
     return raw_value
 
 
@@ -270,6 +283,17 @@ PHISHING_DATABASE_URL: Final[str] = _get_url_from_env(
     "URLPS_PHISHING_DATABASE_URL", "https://phish.co.za/latest/ALL-phishing-domains.lst"
 )
 DEFAULT_PHISHING_DATABASE_MAX_BYTES: Final[int] = 25 * 1024 * 1024
+# Chunk size (bytes) for the feed download. Reads in chunks rather than one
+# read(max_bytes) so each read is bounded by the socket timeout *and* the
+# whole download hits a hard wall-clock deadline below.
+DEFAULT_PHISHING_DATABASE_READ_CHUNK_BYTES: Final[int] = 1024 * 1024
+# Wall-clock bound on one feed download. A per-socket-operation timeout
+# (2.0s) alone still lets a feed that trickles one byte every couple of
+# seconds hold the download (and the refresh lock every check_phishing=True
+# parser is queued behind) for as long as it likes -- unbounded time in a
+# parse_url() call path. A hostile or just wedged feed now trips the
+# deadline, so the worst case is bounded time per download attempt.
+DEFAULT_PHISHING_DATABASE_DOWNLOAD_DEADLINE_SECONDS: Final[float] = 30.0
 # Socket timeout for the feed download. It used to borrow DEFAULT_DNS_TIMEOUT,
 # coupling two unrelated settings; the value is unchanged.
 DEFAULT_PHISHING_DATABASE_TIMEOUT_SECONDS: Final[float] = 2.0
@@ -303,7 +327,9 @@ __all__ = [
     "DEFAULT_DNS_NEGATIVE_CACHE_TTL_SECONDS",
     "DEFAULT_DNS_TIMEOUT",
     "DEFAULT_DNS_TIME_WINDOW_SECONDS",
+    "DEFAULT_PHISHING_DATABASE_DOWNLOAD_DEADLINE_SECONDS",
     "DEFAULT_PHISHING_DATABASE_MAX_BYTES",
+    "DEFAULT_PHISHING_DATABASE_READ_CHUNK_BYTES",
     "DEFAULT_PHISHING_DATABASE_REFRESH_SECONDS",
     "DEFAULT_PHISHING_DATABASE_RETRY_COOLDOWN_SECONDS",
     "DEFAULT_PHISHING_DATABASE_TIMEOUT_SECONDS",

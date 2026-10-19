@@ -427,10 +427,19 @@ def _secure_jitter_seconds(max_jitter_seconds: float) -> float:
 
 
 def _validate_host(host: str) -> str | None:
-    """Return a normalized host or None if invalid."""
+    """Return a normalized host or None if invalid.
+
+    Trailing FQDN dots are stripped ("example.com." -> "example.com"): the
+    OS resolver treats them as the same name, but without stripping they
+    would be distinct cache keys and distinct rate-limiter hosts -- an
+    attacker cycling trailing-dot spellings gets a fresh per-host lookup
+    budget each time, and a failed resolution of one spelling is not
+    negative-cached for the plain spelling. Resolving the stripped form is
+    a no-op semantically: getaddrinfo ignores empty trailing labels too.
+    """
     if not isinstance(host, str):
         return None
-    stripped = host.strip()
+    stripped = host.strip().rstrip(".")
     if not stripped:
         return None
     return ip_literal_text(stripped)
@@ -647,6 +656,14 @@ def check_host_resolution(
         try:
             addr_info: AddrInfo = resolver(normalized_host, min(options.timeout_seconds, remaining))
         except socket.gaierror:
+            last_error = ErrorCode.DNS_RESOLUTION_FAILED
+        except UnicodeError:
+            # `socket.getaddrinfo` enforces IDNA in-process and raises
+            # UnicodeError (not gaierror) for a label the IDNA 2003 codec
+            # cannot encode -- e.g. a 64-character label. That escapes the
+            # except clauses below both times (it is a ValueError, not an
+            # OSError); treated like an unresolvable name, and deterministic
+            # enough to negative-cache.
             last_error = ErrorCode.DNS_RESOLUTION_FAILED
         except (TimeoutError, OSError):
             last_error = ErrorCode.DNS_CONNECTION_FAILED

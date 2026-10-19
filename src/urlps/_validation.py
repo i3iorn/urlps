@@ -191,10 +191,16 @@ class Validator:
     @staticmethod
     @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE, group="validation")
     def is_url_safe_string(url: str) -> bool:
-        """Check if string contains only URL-safe characters (no control characters).
+        """Check if string contains only URL-safe characters (no control characters or lone surrogates).
 
         This is a predicate function that checks character safety without
         performing full validation logic.
+
+        Surrogates (U+D800-U+DFFF) are rejected because they cannot be encoded
+        to bytes in any encoding a URL can be transmitted in (UTF-8 forbids
+        them): a string containing one would pass parsing and then raise
+        ``UnicodeEncodeError`` at serialization time -- inside callers' own
+        str()/logging paths, not at the ``parse_url`` call site.
 
         Args:
             url: The string to check.
@@ -203,7 +209,7 @@ class Validator:
         """
         if not isinstance(url, str):
             return False
-        return not compiled_regex["control_chars"].search(url)
+        return not compiled_regex["control_chars"].search(url) and not compiled_regex["surrogates"].search(url)
 
     @staticmethod
     @bounded_lru_cache(maxsize=VALIDATION_CACHE_SIZE, group="validation")
@@ -329,7 +335,9 @@ class _URLValidation:
         for key in ("path", "query"):
             value = overrides.get(key)
             if value is not None and not Validator.is_url_safe_string(value):
-                raise InvalidURLError(f"{key} contains invalid control characters.", value=value, component=key)
+                raise InvalidURLError(
+                    f"{key} contains invalid control characters or surrogates.", value=value, component=key
+                )
 
         # A raw "#" in a query override would be emitted as-is and re-parse as
         # the start of a fragment, so the URL's .query and what str(url)

@@ -22,6 +22,11 @@ PATTERNS: dict[str, Pattern[str]] = {
     # C0, DEL and C1 (\x80-\x9F, which includes the 8-bit CSI \x9B some
     # terminals honour) -- all control characters, none legal in a URL.
     "control_chars": re.compile(r"[\s\x00-\x1F\x7F-\x9F]"),
+    # Lone surrogate code points (U+D800-U+DFFF). UTF-8 cannot encode them, so
+    # a component holding one serializes to nothing: percent-encoding it (or
+    # quote()-ing it in the builder) raises UnicodeEncodeError, which turned
+    # into a crash inside *callers'* str()/logging paths rather than a URLpError.
+    "surrogates": re.compile("[\ud800-\udfff]"),
     "percent_encode": re.compile(r"%[0-9a-fA-F]{2}"),
     "double_encode": re.compile(r"%25[0-9A-Fa-f]{2}"),
     "userinfo": re.compile(r"^[^:@]+(?::[^@]*)?$"),

@@ -40,15 +40,32 @@ coordinated.
 Opt-in via `SecurityPolicy` (off by default — see the README for why):
 `block_dangerous_ports`, `reject_credentials`.
 
-Optional, always off by default, and both do blocking network I/O:
-`check_dns=True` (rejects hosts that resolve to internal addresses at parse
-time; cached and rate-limited) and `check_phishing=True` (downloaded domain
-blocklist, matched with parent domains, refreshed daily). `check_phishing=True`
-trusts a single third-party feed (`phish.co.za`) by default; set
-`URLPS_PHISHING_DATABASE_URL` to self-host the list or point at a feed you
-trust, `URLPS_PHISHING_DATABASE_SHA256` to pin a snapshot, and
+Optional, always off by default, and **both do blocking network I/O on the
+thread that calls `parse_url()`** — warm them up (or run with expected
+latency) rather than first paying it on a live request:
+
+- `check_dns=True` (rejects hosts that resolve to internal addresses at parse
+  time; cached and rate-limited). One check is bounded by a ~5s total
+  deadline, but a slow or black-holed resolver can leave up to one abandoned
+  worker thread per attempt behind it, so per-parse latency is the resolver's
+  problem under attack. Prefer `create_guarded_connection()` for the
+  connect-time guarantee.
+- `check_phishing=True` (downloaded domain blocklist, matched with parent
+  domains, refreshed daily). The download is lazy, under a lock: a slow feed
+  could otherwise hold every concurrent `check_phishing=True` parse behind
+  one in-flight download, so the download is capped (25 MB) and
+  wall-clock-bounded (~30s). Call `refresh_phishing_db()` at startup to pay
+  the download off the request path.
+
+`check_phishing=True` trusts a single third-party feed (`phish.co.za`) by
+default; set `URLPS_PHISHING_DATABASE_URL` to self-host the list or point at a
+feed you trust, `URLPS_PHISHING_DATABASE_SHA256` to pin a snapshot, and
 `phishing_fail_closed=True` on the policy to reject URLs when the feed is
-unavailable.
+unavailable. Fail-closed is opt-in here and the default is fail-open: without
+it, an unreachable feed means the host was *not* checked — check
+`get_phishing_db_info()` for `loaded`/`last_error` when relying on the
+feature. A `http://` feed URL is accepted (for unencrypted internal mirrors)
+but warned about at import, because the list can be tampered with in transit.
 
 ## What parse-time checks cannot do
 
@@ -98,9 +115,30 @@ dev_url = parse_url_local("http://localhost:3000/api")
 - **Credentials in URLs** are deprecated; `URL.as_string(mask_password=True)`
   or `URL.redacted()` for logging. Exception values and audit callbacks are
   redacted by default (password, sensitive query keys, fragment values);
-  `debug=True` keeps the raw input in exceptions.
+  `debug=True` keeps the raw input in exceptions — including in anything an
+  audit callback receives — and never belongs on a path that can reach
+  shared logs.
+- **Encoding-unsafe input fails fast.** A URL containing a lone surrogate
+  (U+D800-U+DFFF, e.g. from a decoder producing unpaired surrogates) is
+  rejected at parse time: such characters cannot be encoded to bytes, so
+  they would otherwise crash *consumers'* `str()`/logging paths with a raw
+  `UnicodeEncodeError` instead of a `urlps.InvalidURLError`. Similarly,
+  `build()`/`compose_url()`/`with_query_param()` raise `URLBuildError` for
+  surrogate components.
+- **Exception shapes to plan for.** `parse_url()` and the URL methods raise
+  `urlps`'s own exception family under `InvalidURLError`. DNS resolution
+  failures raised by `create_guarded_connection()` / `resolve_and_validate()`
+  are `DNSResolutionError` — both an `InvalidURLError` and an `OSError`, so
+  socket-error-family retry logic (urllib3/`requests`, `except OSError`
+  handlers) catches them like a native resolution failure would. Calling
+  the DNS layer directly with a host no IDNA codec can encode also yields a
+  `DNSResolutionError`, not a raw `UnicodeError`.
 - **Length limits** are overridable via `URLPS_MAX_*` environment variables.
-  Raising them expands attack surface — only do so with a reason.
+  Raising them expands attack surface — only do so with a reason. The same
+  is true for `URLPS_CACHE_SIZE_*` and `URLPS_CACHE_MAX_KEY_LENGTH`: cache
+  sizes and key lengths bound the memory attacker-supplied distinct inputs
+  can pin for the life of the process, so oversized values are clamped (with
+  a warning) rather than honored.
 - **Supply chain.** CI generates a CycloneDX SBOM (`urlps-sbom.json`) for
   every build, uploaded as a build artifact alongside the sdist/wheel. Every
   GitHub Action is pinned to a commit SHA; releases are built from

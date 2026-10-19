@@ -2,6 +2,13 @@
 
 All notable changes to `urlps` are documented here.
 
+## [1.2.2](https://github.com/i3iorn/urlps/compare/v1.2.1...v1.2.2) (2026-10-02)
+
+
+### Fixed
+
+* **security:** reject lone surrogates and harden DNS, phishing feed, and env bounds ([4974d29](https://github.com/i3iorn/urlps/commit/4974d29f23c4c31428846cc3772857a78cd3eaa9))
+
 ## [1.2.1](https://github.com/i3iorn/urlps/compare/v1.2.0...v1.2.1) (2026-10-02)
 
 

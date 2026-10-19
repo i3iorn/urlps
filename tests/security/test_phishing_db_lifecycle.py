@@ -33,7 +33,7 @@ FEED = b"evil.example\nphish.bad\nonly.sub.example\n203.0.113.9\n"
 def _response(body: bytes = FEED, status: int = 200) -> MagicMock:
     response = MagicMock()
     response.status = status
-    response.read.return_value = body
+    response.read.side_effect = [body, b""]  # one body, then EOF -- fetch_over_http reads in chunks
     context = MagicMock()
     context.__enter__.return_value = response
     return context
