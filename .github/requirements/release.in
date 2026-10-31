@@ -5,5 +5,5 @@
 #   --universal .github/requirements/release.in -o .github/requirements/release.txt
 build
 twine
-setuptools>=77.0
+setuptools>=84.1.0
 wheel
