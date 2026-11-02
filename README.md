@@ -155,6 +155,129 @@ allow. An invalid rule (`"10.0.0.0/33"`, `"*.example.com"`) raises
 `SecurityPolicyError` when the policy is built, never silently matching
 nothing.
 
+### Schemes
+
+Every preset allows the standard web and file-transfer schemes by default:
+`http`, `https`, `ftp`, `ftps`, `sftp`, `ws`, `wss`. This set is broad because
+urlps is a general-purpose URL library; if your use case is strictly HTTP
+clients (SSRF enforcement for outbound requests), narrow the scheme list:
+
+```python
+from urlps import SecurityPolicy, parse_url, InvalidURLError
+
+# HTTP-only SSRF enforcement -- ftp/ws/etc. are rejected
+http_only = SecurityPolicy.strict(allowed_schemes={"http", "https"})
+parse_url("https://example.com/", policy=http_only)      # ok
+try:
+    parse_url("ws://example.com/", policy=http_only)         # rejected: unsupported_scheme
+except InvalidURLError as exc:
+    print(exc.code)  # ErrorCode.UNSUPPORTED_SCHEME
+```
+
+`allow_custom_scheme=True` (or `parse_url(url, allow_custom_scheme=True)`)
+accepts any well-formed scheme, including `javascript:`, `data:`, `file:`,
+etc. Use only when you need to validate non-HTTP URLs (e.g. WebSocket configs)
+and cannot pre-filter them.
+
+### Deriving a modified policy
+
+Presets accept **any** `SecurityPolicy` field as a keyword override. This is
+the supported way to tweak a preset:
+
+```python
+from urlps import SecurityPolicy
+
+# Disable DNS resolution but keep all other strict checks
+p = SecurityPolicy.strict(check_dns=False)
+
+# Narrow schemes + disable DNS
+p = SecurityPolicy.balanced(allowed_schemes={"http", "https"}, check_dns=False)
+```
+
+**Common pattern: fail-open on DNS outage without losing literal-IP protection**
+
+`check_dns=True` resolves the host and rejects if any answer is internal, but
+a DNS failure (timeout, SERVFAIL, NXDOMAIN) can be treated as "unknown" rather
+than "blocked" -- while the built-in SSRF check still blocks literal internal
+IPs and known metadata names at parse time:
+
+```python
+from urlps import SecurityPolicy, parse_url, InvalidURLError, ErrorCode
+
+# Strict SSRF, but DNS failures don't block (fail-open on DNS)
+policy = SecurityPolicy.strict(check_dns=True)  # default dns_deadline_seconds=5
+
+# In real code, user_input comes from an untrusted source
+user_input = "https://api.example.com/data"
+
+try:
+    url = parse_url(user_input, policy=policy)
+except InvalidURLError as exc:
+    if exc.code is ErrorCode.DNS_RESOLUTION_FAILED:
+        # DNS couldn't resolve -- but literal IPs and known metadata names
+        # were already rejected by the parse-time SSRF check
+        print("DNS resolution failed, treating as unknown")
+    raise
+```
+
+(To disable DNS entirely, pass `check_dns=False` on the policy or at the call
+site: `parse_url(url, policy="strict", check_dns=False)`.)
+
+**Gotcha**: `SecurityPolicy(check_dns=False)` raises `TypeError` ("missing
+required argument: name") because `name` is a positional field. Use the preset
+form `SecurityPolicy.strict(check_dns=False)` or construct directly:
+`SecurityPolicy(name="mine", check_dns=False)`. Passing a dict to
+`parse_url(policy={...})` is not supported and raises
+`SecurityPolicyError("Unsupported security policy: {...}")`.
+
+### Validating URLs before template expansion
+
+API clients and importers (OpenAPI, Postman, request builders) often validate
+URLs **before** variables like `{{BASE_URL}}` are expanded. Template URLs with
+a placeholder in the authority position fail strict host grammar:
+
+```python
+from urlps import parse_url_local, HostValidationError
+
+try:
+    parse_url_local("https://{{BASE_URL}}/api")  # HostValidationError
+except HostValidationError as exc:
+    print(exc)  # Host contains invalid characters. (component='host', value='{{BASE_URL}}')
+```
+
+The host grammar allows only RFC-compliant labels (`[A-Za-z0-9-]`), so `{{...}}`
+is correctly rejected. To validate the *shape* of a template URL before
+expansion:
+
+1. **Recommended**: substitute a syntactically valid stand-in, then re-validate
+   after expansion:
+
+```python
+import re
+from urlps import parse_url
+
+template = "https://{{BASE_URL}}/api?token=secret"
+# Substitute a valid host for validation
+candidate = re.sub(r"\{\{[^}]*\}\}", "example.com", template)
+url = parse_url(candidate)  # validates shape, SSRF, etc.
+# After real expansion, re-run parse_url() on the expanded URL
+```
+
+2. **Log redaction without parsing**: `redact_url_for_logs()` works on the raw
+   string and masks credentials and sensitive query parameters even when the
+   host is a template:
+
+```python
+from urlps import redact_url_for_logs
+
+redacted = redact_url_for_logs("https://{{BASE_URL}}/api?token=supersecret&user=bob&password=letmein")
+print(redacted)
+# -> "https://{{BASE_URL}}/api?token=%2A%2A%2A&user=bob&password=%2A%2A%2A"
+```
+
+**Warning**: placeholder-masked URLs must never be sent over the wire. Full
+enforcement (SSRF, DNS, phishing) must re-run after variable expansion.
+
 ### What SSRF protection covers
 
 There are three layers, and only the last one is complete:

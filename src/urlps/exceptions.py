@@ -73,6 +73,10 @@ class ErrorCode(Enum):
     #: A scheme that executes code or reaches local resources (javascript:,
     #: data:, file:, ...), not allowed unless ``allow_custom_scheme``.
     UNSAFE_SCHEME = "unsafe_scheme"
+    #: A script-like payload detected in the URL path (e.g. <script>...).
+    SCRIPT_PAYLOAD_IN_PATH = "script_payload_in_path"
+    #: An inline event handler detected in the URL path or query (e.g. onload=...).
+    INLINE_EVENT_HANDLER = "inline_event_handler"
 
 
 class URLpError(Exception):

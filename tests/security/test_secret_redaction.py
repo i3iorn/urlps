@@ -187,3 +187,16 @@ def test_url_redacted_uses_the_same_rules() -> None:
     url = parse_url("https://u:hunter2@example.com/cb?code=SECRET#access_token=SECRET", policy="balanced")
     redacted = url.redacted()
     assert "hunter2" not in redacted and "SECRET" not in redacted
+
+
+def test_template_host_url_is_redacted_without_parsing() -> None:
+    """Template URLs like https://{{BASE_URL}}/... can't be parsed, but redaction
+    must still mask query secrets and credentials without raising."""
+    template_url = "https://{{BASE_URL}}/api?token=supersecret&user=bob&password=letmein"
+    redacted = redact_url_for_logs(template_url)
+    assert "supersecret" not in redacted
+    assert "letmein" not in redacted
+    # The template host should pass through unchanged
+    assert "{{BASE_URL}}" in redacted
+    # But sensitive query params are masked
+    assert "token=%2A%2A%2A" in redacted

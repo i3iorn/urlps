@@ -84,6 +84,7 @@ from ._entrypoints import (
     parse_url_local,
     parse_url_unsafe,
 )
+from ._redaction import redact_url_for_logs
 from ._security.dns_guard import DNSCacheConfig, DNSRateLimiter, DNSRateLimiterConfig, DNSResolutionCache
 from ._security.phishing_db import PhishingDatabaseManager, PhishingFeedConfig
 from ._security.policy import PolicyInput, SecurityPolicy
@@ -160,5 +161,6 @@ __all__ = [
     "parse_url",
     "parse_url_local",
     "parse_url_unsafe",
+    "redact_url_for_logs",
     "resolve_and_validate",
 ]

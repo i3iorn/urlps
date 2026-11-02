@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from typing import NamedTuple
-from urllib.parse import SplitResult, urlsplit
+from urllib.parse import SplitResult, unquote, urlsplit
 
 from .._cache_config import cache_info
 from .._cache_config import clear_caches as clear_registered_caches
@@ -99,6 +100,16 @@ _REMEDIATION_BY_CODE: dict[ErrorCode, str] = {
     ),
     ErrorCode.CONFUSABLE_HOST: (
         'If this domain is legitimate, use policy="internal" or set enforce_confusable_host=False.'
+    ),
+    ErrorCode.SCRIPT_PAYLOAD_IN_PATH: (
+        "Script tag payloads in URLs are often XSS probes. If this is a legitimate "
+        "code-sharing or pastebin-style URL, the finding is informational; disable "
+        "with flag_injection_payloads=False (the default) if not wanted."
+    ),
+    ErrorCode.INLINE_EVENT_HANDLER: (
+        "Inline event handlers in URLs are often XSS probes. If this is a legitimate "
+        "URL with handler-like parameter names, the finding is informational; disable "
+        "with flag_injection_payloads=False (the default) if not wanted."
     ),
 }
 
@@ -360,6 +371,118 @@ def _port_findings(ctx: _CheckContext) -> list[SecurityFinding]:
     return []
 
 
+def _injection_payload_findings(ctx: _CheckContext) -> list[SecurityFinding]:
+    """Detect XSS-shaped payloads in path and query when flag_injection_payloads is enabled.
+
+    Runs on decoded component values to catch percent-encoded variants.
+    Emits "warning" severity findings (advisory, not blocking) by design.
+    """
+    if not ctx.policy.flag_injection_payloads:
+        return []
+
+    findings: list[SecurityFinding] = []
+
+    # Check path spellings for script tags - both raw and decoded
+    script_pattern = re.compile(r"<script\b[^>]*>", re.IGNORECASE)
+
+    # Check path spellings (raw and decoded)
+    for path in ctx.path_spellings:
+        if not path:
+            continue
+        # Check raw path
+        if script_pattern.search(path):
+            findings.append(
+                _finding(
+                    "warning",
+                    ErrorCode.SCRIPT_PAYLOAD_IN_PATH,
+                    "URL path contains a script tag payload.",
+                    "path",
+                )
+            )
+            break
+        # Check decoded path
+        try:
+            decoded = unquote(path)
+            if decoded != path and script_pattern.search(decoded):
+                findings.append(
+                    _finding(
+                        "warning",
+                        ErrorCode.SCRIPT_PAYLOAD_IN_PATH,
+                        "URL path contains a script tag payload (percent-encoded).",
+                        "path",
+                    )
+                )
+                break
+        except Exception:
+            pass
+
+    # Check path and query for inline event handlers (onload=, onclick=, etc.)
+    # Match on...= followed by non-whitespace, in either path or query
+    event_handler_pattern = re.compile(r"\bon\w+\s*=", re.IGNORECASE)
+
+    # Check path spellings (raw and decoded)
+    for path in ctx.path_spellings:
+        if not path:
+            continue
+        if event_handler_pattern.search(path):
+            findings.append(
+                _finding(
+                    "warning",
+                    ErrorCode.INLINE_EVENT_HANDLER,
+                    "URL path contains an inline event handler.",
+                    "path",
+                )
+            )
+            break
+        # Check decoded path
+        try:
+            decoded = unquote(path)
+            if decoded != path and event_handler_pattern.search(decoded):
+                findings.append(
+                    _finding(
+                        "warning",
+                        ErrorCode.INLINE_EVENT_HANDLER,
+                        "URL path contains an inline event handler (percent-encoded).",
+                        "path",
+                    )
+                )
+                break
+        except Exception:
+            pass
+
+    # Check query (raw and decoded)
+    if ctx.encoded_target:
+        query_part = ctx.encoded_target.split("?", 1)[1] if "?" in ctx.encoded_target else ""
+        if query_part:
+            # Check raw query
+            if event_handler_pattern.search(query_part):
+                findings.append(
+                    _finding(
+                        "warning",
+                        ErrorCode.INLINE_EVENT_HANDLER,
+                        "URL query contains an inline event handler.",
+                        "query",
+                    )
+                )
+            else:
+                # Check decoded query
+                try:
+                    decoded = unquote(query_part)
+                    if decoded != query_part and event_handler_pattern.search(decoded):
+                        findings.append(
+                            _finding(
+                                "warning",
+                                ErrorCode.INLINE_EVENT_HANDLER,
+                                "URL query contains an inline event handler (percent-encoded).",
+                                "query",
+                            )
+                        )
+                except Exception:
+                    pass
+
+    return findings
+
+
 def _dns_findings(ctx: _CheckContext) -> list[SecurityFinding]:
     """Resolve the host and check every address under the policy.
 
@@ -429,6 +552,7 @@ _CHECKS_WITH_AUTHORITY = (
     _structure_findings,
     _credential_findings,
     _port_findings,
+    _injection_payload_findings,
     _dns_findings,
     _phishing_findings,
 )

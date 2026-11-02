@@ -66,6 +66,8 @@ EXPECTED_ALL = {
     "DNSRateLimitError",
     "DNSResolutionError",
     "DNSConnectionError",
+    # Log redaction
+    "redact_url_for_logs",
     # Metadata
     "__version__",
 }
@@ -93,6 +95,9 @@ EXPECTED_ERROR_CODES = {
     "invalid_punycode",
     "unsupported_scheme",
     "unsafe_scheme",
+    # Injection payload detection (opt-in, warning severity)
+    "script_payload_in_path",
+    "inline_event_handler",
     # Deprecated, retained so downstream `except ... e.code is X` keeps
     # importing. Never emitted; removed in 2.0.
     "query_injection",

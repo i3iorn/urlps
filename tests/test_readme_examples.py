@@ -43,12 +43,13 @@ def _extract_python_blocks() -> list[tuple[int, str]]:
 
 
 def _populate_expected_raises(blocks: list[tuple[int, str]]) -> None:
-    """Locate the two documented-raise blocks by content, not a hardcoded
+    """Locate the documented-raise blocks by content, not a hardcoded
     line number, so a README edit that shifts line numbers doesn't silently
     stop testing the right block."""
     from urlps.exceptions import InvalidURLError
 
     for line_number, source in blocks:
+        # Original documented-raise block: join with open redirect
         if 'join("https://example.com/a/", "//localhost/admin")' in source:
             _EXPECTED_TO_RAISE[line_number] = InvalidURLError
 
