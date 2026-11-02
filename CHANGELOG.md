@@ -2,6 +2,13 @@
 
 All notable changes to `urlps` are documented here.
 
+## [2.1.0](https://github.com/i3iorn/urlps/compare/v2.0.0...v2.1.0) (2026-11-02)
+
+
+### Added
+
+* release 2.1.0 ([#81](https://github.com/i3iorn/urlps/issues/81)) ([bc8ccfa](https://github.com/i3iorn/urlps/commit/bc8ccfa72c372b0ac7d45c613dee3647d8f94941))
+
 ## [2.0.0](https://github.com/i3iorn/urlps/compare/v1.2.2...v2.0.0) (2026-10-19)
 
 
