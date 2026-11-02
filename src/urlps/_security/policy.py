@@ -142,6 +142,11 @@ class SecurityPolicy:
     # which is what parse_url(..., allow_custom_scheme=True) sets.
     allowed_schemes: AbstractSet[str] = STANDARD_SCHEMES
     allow_custom_scheme: bool = False
+    # Opt-in: when True, emit "warning" severity findings for XSS-shaped
+    # payloads in path and query (script tags, inline event handlers).
+    # Default off in all presets. Match on decoded component values so
+    # percent-encoded variants are also caught. Does not block by default.
+    flag_injection_payloads: bool = False
 
     def __post_init__(self) -> None:
         # Compile here so an invalid rule fails at policy construction, not on
@@ -398,6 +403,13 @@ def resolve_security_policy(
     elif isinstance(policy, str) and policy in _PRESETS:
         base = _resolve_named_policy(policy)
     else:
+        # Helpful message for the common mistake of passing a dict
+        if isinstance(policy, dict):
+            raise SecurityPolicyError(
+                f"Unsupported security policy: {policy!r} -- pass a SecurityPolicy instance "
+                "or a preset name (strict/balanced/internal/local). To derive from a preset, "
+                "use SecurityPolicy.strict(check_dns=False) etc."
+            )
         raise SecurityPolicyError(f"Unsupported security policy: {policy!r}")
     return _apply_overrides(
         base,
