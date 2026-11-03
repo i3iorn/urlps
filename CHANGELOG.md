@@ -2,6 +2,18 @@
 
 All notable changes to `urlps` are documented here.
 
+## [2.1.0](https://github.com/i3iorn/urlps/compare/v2.0.0...v2.1.0) (2026-11-03)
+
+
+### Fixed
+
+* **security:** add `flag_injection_payloads` opt-in to `SecurityPolicy` (default off) to detect script tags and inline event handlers in decoded path/query components (#78)
+* **docs:** document default schemes and HTTP-only override pattern in README (#77)
+* **docs:** add "Deriving a modified policy" section with DNS fail-open recipe; improve `resolve_security_policy` error message for dict inputs (#76)
+* **docs:** add "Validating URLs before template expansion" section with stand-in substitution pattern and `redact_url_for_logs` example (#75)
+* **api:** export `redact_url_for_logs` from public API and add redaction test (#74)
+* **docs:** add comment noting mask-token inconsistency (#73)
+
 ## [2.0.0](https://github.com/i3iorn/urlps/compare/v1.2.2...v2.0.0) (2026-10-19)
 
 
