@@ -2,6 +2,13 @@
 
 All notable changes to `urlps` are documented here.
 
+## [2.1.1](https://github.com/i3iorn/urlps/compare/v2.1.0...v2.1.1) (2026-11-04)
+
+
+### Fixed
+
+* **security:** require urllib3&gt;=2.8.0 in dev extra (PYSEC-2026-4175/-4176/-4177) ([#85](https://github.com/i3iorn/urlps/issues/85)) ([ac36441](https://github.com/i3iorn/urlps/commit/ac3644193e576d0ef85009e858de7b0f5e206b89))
+
 ## [2.1.0](https://github.com/i3iorn/urlps/compare/v2.0.0...v2.1.0) (2026-11-02)
 
 
