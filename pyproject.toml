@@ -58,8 +58,10 @@ dev = [
     "idna>=3.11",
     # Test-only: tests/security/test_egress_guard.py exercises the documented
     # urllib3/requests integration of urlps.create_guarded_connection()
-    # end to end. urlps itself never imports urllib3.
-    "urllib3>=2.0",
+    # end to end. urlps itself never imports urllib3. Floor is set to the
+    # first release fixing PYSEC-2026-4175/-4176/-4177 so a dev environment
+    # can no longer silently resolve below a known-vulnerable version (#83).
+    "urllib3>=2.8.0",
     # Generator-only: tools/gen_unicode_tables.py reads UCD Script data from
     # regex to produce src/urlps/_unicode/_tables.py, which is checked
     # in. urlps itself never imports regex at runtime. Pinned exactly (not
